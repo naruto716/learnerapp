@@ -17,7 +17,7 @@ export default function IconButton({
       aria-label={ariaLabel}
       title={ariaLabel}
       onClick={onClick}
-      className="app-no-drag flex h-8 w-8 items-center justify-center rounded-md hover:bg-white/10 transition-colors duration-200"
+      className="app-no-drag flex h-6 w-6 items-center justify-center rounded-lg hover:bg-white/10 transition-colors duration-200"
     >
       {icon}
     </button>

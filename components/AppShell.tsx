@@ -11,7 +11,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     <div className="flex">
       <SideBar isSidebarOpen={isSidebarOpen} />
       <div className="flex-1">
-        <TopBar toggleSidebar={() => setIsSidebarOpen((isOpen) => !isOpen)} />
+        <TopBar isSidebarOpen={isSidebarOpen} toggleSidebar={() => setIsSidebarOpen((isOpen) => !isOpen)} />
         <main className="p-4">{children}</main>
       </div>
     </div>

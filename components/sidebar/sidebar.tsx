@@ -6,7 +6,7 @@ export default function SideBar({ isSidebarOpen }: { isSidebarOpen: boolean }) {
     ];
 
     return (
-        <div className={`h-screen bg-white/5 p-4 transition-all duration-300 ease-in-out ${isSidebarOpen ? "w-64" : "w-0 opacity-0"}`}>
+        <div className={`h-screen bg-white/5 transition-all duration-300 ease-in-out ${isSidebarOpen ? "w-64" : "w-0 opacity-0"}`}>
             <ul className="space-y-2">
                 {menuItems.map((item) => (
                     <li key={item.name}>
