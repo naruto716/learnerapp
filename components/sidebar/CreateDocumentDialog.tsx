@@ -3,16 +3,16 @@
 import type { FormEvent } from "react";
 import Dialog from "../Dialog";
 
-export type CreateMarkdownKind = "folder" | "file";
+export type CreateDocumentKind = "folder" | "file";
 
-export default function CreateMarkdownDialog({
+export default function CreateDocumentDialog({
   kind,
   onClose,
   onPathChange,
   onSubmit,
   path,
 }: {
-  kind: CreateMarkdownKind | null;
+  kind: CreateDocumentKind | null;
   onClose: () => void;
   onPathChange: (path: string) => void;
   onSubmit: (path: string) => void;
@@ -20,8 +20,8 @@ export default function CreateMarkdownDialog({
 }) {
   if (!kind) return null;
 
-  const formId = "create-markdown-form";
-  const title = kind === "folder" ? "New folder" : "New markdown file";
+  const formId = "create-document-form";
+  const title = kind === "folder" ? "New folder" : "New document";
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -36,14 +36,14 @@ export default function CreateMarkdownDialog({
       display={
         <form id={formId} onSubmit={handleSubmit}>
           <label className="mb-2 block text-xs text-white/60" htmlFor="create-path">
-            Name
+            Path
           </label>
           <input
             id="create-path"
             autoFocus
             value={path}
             onChange={(event) => onPathChange(event.target.value)}
-            placeholder={kind === "folder" ? "Course 1" : "Course 1/intro.md"}
+            placeholder={kind === "folder" ? "Course 1" : "Course 1/intro.json"}
             className="w-full rounded-md border border-white/10 bg-black/20 px-3 py-2 text-sm outline-none focus:border-white/30"
           />
         </form>

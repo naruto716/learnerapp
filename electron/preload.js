@@ -2,16 +2,19 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("learner", {
   platform: process.platform,
-  listMarkdownFiles: () => {
-    return ipcRenderer.invoke("markdown:list");
+  listDocuments: () => {
+    return ipcRenderer.invoke("document:list");
   },
-  readMarkdownFile: (filePath) => {
-    return ipcRenderer.invoke("markdown:read", filePath);
+  readDocument: (filePath) => {
+    return ipcRenderer.invoke("document:read", filePath);
   },
-  createMarkdownFolder: (folderPath) => {
-    return ipcRenderer.invoke("markdown:createFolder", folderPath);
+  saveDocument: (filePath, document) => {
+    return ipcRenderer.invoke("document:save", filePath, document);
   },
-  createMarkdownFile: (filePath) => {
-    return ipcRenderer.invoke("markdown:createFile", filePath);
+  createDocumentFolder: (folderPath) => {
+    return ipcRenderer.invoke("document:createFolder", folderPath);
+  },
+  createDocumentFile: (filePath) => {
+    return ipcRenderer.invoke("document:createFile", filePath);
   },
 });

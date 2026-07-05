@@ -1,3 +1,10 @@
+"use client";
+
+import { useDocumentSelection } from "@/components/DocumentContext";
+import TiptapEditor from "@/components/editor/TiptapEditor";
+
 export default function Home() {
-  return <p>Hello, Next.js!</p>;
+  const { selectedDocumentPath } = useDocumentSelection();
+
+  return <TiptapEditor documentPath={selectedDocumentPath} />;
 }

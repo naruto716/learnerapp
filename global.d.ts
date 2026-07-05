@@ -2,28 +2,35 @@
 export {};
 
 declare global {
-  type MarkdownNode = {
+  type TiptapDocument = {
+    type: string;
+    content?: unknown[];
+    [key: string]: unknown;
+  };
+
+  type DocumentNode = {
     name: string;
     path: string;
     type: "file" | "folder";
-    children?: MarkdownNode[];
+    children?: DocumentNode[];
   };
 
   interface Window {
     learner?: {
       platform: NodeJS.Platform;
-      listMarkdownFiles: () => Promise<{
+      listDocuments: () => Promise<{
         directory: string;
-        tree: MarkdownNode[];
+        tree: DocumentNode[];
       }>;
-      readMarkdownFile: (filePath: string) => Promise<string>;
-      createMarkdownFolder: (folderPath: string) => Promise<{
+      readDocument: (filePath: string) => Promise<TiptapDocument>;
+      saveDocument: (filePath: string, document: TiptapDocument) => Promise<void>;
+      createDocumentFolder: (folderPath: string) => Promise<{
         directory: string;
-        tree: MarkdownNode[];
+        tree: DocumentNode[];
       }>;
-      createMarkdownFile: (filePath: string) => Promise<{
+      createDocumentFile: (filePath: string) => Promise<{
         directory: string;
-        tree: MarkdownNode[];
+        tree: DocumentNode[];
       }>;
     };
   }

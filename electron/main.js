@@ -3,12 +3,13 @@ const fs = require("fs");
 const path = require("path");
 const { pathToFileURL } = require("url");
 const {
-  createMarkdownFile,
-  createMarkdownFolder,
-  getMarkdownRoot,
-  listMarkdownTree,
-  readMarkdownFile,
-} = require("./mdUtil");
+  createDocumentFile,
+  createDocumentFolder,
+  getDocumentRoot,
+  listDocumentTree,
+  readDocumentFile,
+  saveDocumentFile,
+} = require("./documentUtil");
 
 const appProtocol = "learner";
 const devServerUrl = process.env.NEXT_DEV_SERVER_URL;
@@ -105,29 +106,33 @@ app.on("window-all-closed", () => {
   }
 });
 
-ipcMain.handle("markdown:list", async () => {
+ipcMain.handle("document:list", async () => {
   return {
-    directory: getMarkdownRoot(),
-    tree: await listMarkdownTree(),
+    directory: getDocumentRoot(),
+    tree: await listDocumentTree(),
   };
 });
 
-ipcMain.handle("markdown:read", async (_event, filePath) => {
-  return readMarkdownFile(filePath);
+ipcMain.handle("document:read", async (_event, filePath) => {
+  return readDocumentFile(filePath);
 });
 
-ipcMain.handle("markdown:createFolder", async (_event, folderPath) => {
-  await createMarkdownFolder(folderPath);
+ipcMain.handle("document:save", async (_event, filePath, document) => {
+  await saveDocumentFile(filePath, document);
+});
+
+ipcMain.handle("document:createFolder", async (_event, folderPath) => {
+  await createDocumentFolder(folderPath);
   return {
-    directory: getMarkdownRoot(),
-    tree: await listMarkdownTree(),
+    directory: getDocumentRoot(),
+    tree: await listDocumentTree(),
   };
 });
 
-ipcMain.handle("markdown:createFile", async (_event, filePath) => {
-  await createMarkdownFile(filePath);
+ipcMain.handle("document:createFile", async (_event, filePath) => {
+  await createDocumentFile(filePath);
   return {
-    directory: getMarkdownRoot(),
-    tree: await listMarkdownTree(),
+    directory: getDocumentRoot(),
+    tree: await listDocumentTree(),
   };
 });
