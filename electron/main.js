@@ -1,7 +1,14 @@
-const { app, BrowserWindow, net, protocol, shell } = require("electron");
+const { app, BrowserWindow, ipcMain, net, protocol, shell } = require("electron");
 const fs = require("fs");
 const path = require("path");
 const { pathToFileURL } = require("url");
+const {
+  createMarkdownFile,
+  createMarkdownFolder,
+  getMarkdownRoot,
+  listMarkdownTree,
+  readMarkdownFile,
+} = require("./mdUtil");
 
 const appProtocol = "learner";
 const devServerUrl = process.env.NEXT_DEV_SERVER_URL;
@@ -99,13 +106,28 @@ app.on("window-all-closed", () => {
 });
 
 ipcMain.handle("markdown:list", async () => {
-  const markdownRoot = getMarkdownRoot();
-  const files = await listMarkdownFiles(markdownRoot, markdownRoot);
-  return { directory: markdownRoot, files };
-})
+  return {
+    directory: getMarkdownRoot(),
+    tree: await listMarkdownTree(),
+  };
+});
 
-ipcMain.handle("markdown:read", async (event, fileName) => {
-  const filePath = await resolveMarkdownPath(fileName);
-  const content = await fs.readFile(filePath, "utf-8");
-  return content;
+ipcMain.handle("markdown:read", async (_event, filePath) => {
+  return readMarkdownFile(filePath);
+});
+
+ipcMain.handle("markdown:createFolder", async (_event, folderPath) => {
+  await createMarkdownFolder(folderPath);
+  return {
+    directory: getMarkdownRoot(),
+    tree: await listMarkdownTree(),
+  };
+});
+
+ipcMain.handle("markdown:createFile", async (_event, filePath) => {
+  await createMarkdownFile(filePath);
+  return {
+    directory: getMarkdownRoot(),
+    tree: await listMarkdownTree(),
+  };
 });
