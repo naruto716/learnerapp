@@ -48,12 +48,14 @@ function resolveStaticFile(requestUrl) {
 }
 
 function createWindow() {
+  const isMac = process.platform === "darwin";
   const win = new BrowserWindow({
     width: 1200,
     height: 800,
     minWidth: 900,
     minHeight: 600,
     title: "Learner",
+    ...(isMac ? { titleBarStyle: "hiddenInset", trafficLightPosition: { x: 14, y: 12 } } : { frame: false }),
     backgroundColor: "#1f1f1f",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),

@@ -1,4 +1,4 @@
-export default function SideBar() {
+export default function SideBar({ isSidebarOpen }: { isSidebarOpen: boolean }) {
     const menuItems = [
         { name: "Home", href: "/" },
         { name: "Course", href: "/courses" },
@@ -6,7 +6,7 @@ export default function SideBar() {
     ];
 
     return (
-        <div className="w-64 h-screen bg-white/5 p-4">
+        <div className={`h-screen bg-white/5 p-4 transition-all duration-300 ease-in-out ${isSidebarOpen ? "w-64" : "w-0 opacity-0"}`}>
             <ul className="space-y-2">
                 {menuItems.map((item) => (
                     <li key={item.name}>
@@ -20,5 +20,5 @@ export default function SideBar() {
                 ))}
             </ul>
         </div>
-    )
+    );
 }
