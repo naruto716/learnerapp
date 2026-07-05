@@ -97,3 +97,15 @@ app.on("window-all-closed", () => {
     app.quit();
   }
 });
+
+ipcMain.handle("markdown:list", async () => {
+  const markdownRoot = getMarkdownRoot();
+  const files = await listMarkdownFiles(markdownRoot, markdownRoot);
+  return { directory: markdownRoot, files };
+})
+
+ipcMain.handle("markdown:read", async (event, fileName) => {
+  const filePath = await resolveMarkdownPath(fileName);
+  const content = await fs.readFile(filePath, "utf-8");
+  return content;
+});
