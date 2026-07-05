@@ -17,4 +17,7 @@ contextBridge.exposeInMainWorld("learner", {
   createDocumentFile: (filePath) => {
     return ipcRenderer.invoke("document:createFile", filePath);
   },
+  moveDocumentEntry: (sourcePath, targetFolderPath) => {
+    return ipcRenderer.invoke("document:move", sourcePath, targetFolderPath);
+  },
 });

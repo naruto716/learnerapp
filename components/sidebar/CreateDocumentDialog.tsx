@@ -6,12 +6,14 @@ import Dialog from "../Dialog";
 export type CreateDocumentKind = "folder" | "file";
 
 export default function CreateDocumentDialog({
+  basePath = "",
   kind,
   onClose,
   onPathChange,
   onSubmit,
   path,
 }: {
+  basePath?: string;
   kind: CreateDocumentKind | null;
   onClose: () => void;
   onPathChange: (path: string) => void;
@@ -22,6 +24,7 @@ export default function CreateDocumentDialog({
 
   const formId = "create-document-form";
   const title = kind === "folder" ? "New folder" : "New document";
+  const label = basePath ? "Name" : "Path";
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -36,14 +39,15 @@ export default function CreateDocumentDialog({
       display={
         <form id={formId} onSubmit={handleSubmit}>
           <label className="mb-2 block text-xs text-white/60" htmlFor="create-path">
-            Path
+            {label}
           </label>
+          {basePath && <p className="mb-2 truncate text-xs text-white/40">Inside {basePath}</p>}
           <input
             id="create-path"
             autoFocus
             value={path}
             onChange={(event) => onPathChange(event.target.value)}
-            placeholder={kind === "folder" ? "Course 1" : "Course 1/intro.json"}
+            placeholder={kind === "folder" ? "Course 1" : "intro"}
             className="w-full rounded-md border border-white/10 bg-black/20 px-3 py-2 text-sm outline-none focus:border-white/30"
           />
         </form>

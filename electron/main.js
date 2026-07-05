@@ -7,6 +7,7 @@ const {
   createDocumentFolder,
   getDocumentRoot,
   listDocumentTree,
+  moveDocumentEntry,
   readDocumentFile,
   saveDocumentFile,
 } = require("./documentUtil");
@@ -131,6 +132,14 @@ ipcMain.handle("document:createFolder", async (_event, folderPath) => {
 
 ipcMain.handle("document:createFile", async (_event, filePath) => {
   await createDocumentFile(filePath);
+  return {
+    directory: getDocumentRoot(),
+    tree: await listDocumentTree(),
+  };
+});
+
+ipcMain.handle("document:move", async (_event, sourcePath, targetFolderPath) => {
+  await moveDocumentEntry(sourcePath, targetFolderPath);
   return {
     directory: getDocumentRoot(),
     tree: await listDocumentTree(),

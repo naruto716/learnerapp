@@ -32,6 +32,10 @@ declare global {
         directory: string;
         tree: DocumentNode[];
       }>;
+      moveDocumentEntry: (sourcePath: string, targetFolderPath: string) => Promise<{
+        directory: string;
+        tree: DocumentNode[];
+      }>;
     };
   }
 }

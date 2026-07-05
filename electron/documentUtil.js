@@ -110,6 +110,52 @@ async function createDocumentFile(filePath) {
   await fs.writeFile(fullPath, `${JSON.stringify(emptyDocument, null, 2)}\n`, { flag: "wx" });
 }
 
+async function pathExists(fullPath) {
+  try {
+    await fs.access(fullPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function moveDocumentEntry(sourcePath, targetFolderPath = "") {
+  await ensureDocumentRoot();
+
+  const sourceFullPath = resolveInsideDocumentRoot(sourcePath);
+  const sourceStat = await fs.stat(sourceFullPath);
+
+  if (sourceStat.isFile() && path.extname(sourceFullPath).toLowerCase() !== ".json") {
+    throw new Error("Only Tiptap document files can be moved.");
+  }
+
+  const targetFolderFullPath = targetFolderPath
+    ? resolveInsideDocumentRoot(targetFolderPath)
+    : getDocumentRoot();
+  const targetFolderStat = await fs.stat(targetFolderFullPath);
+
+  if (!targetFolderStat.isDirectory()) {
+    throw new Error("Target must be a folder.");
+  }
+
+  const destinationFullPath = path.join(targetFolderFullPath, path.basename(sourceFullPath));
+  const relativeDestination = path.relative(sourceFullPath, destinationFullPath);
+
+  if (sourceStat.isDirectory() && relativeDestination && !relativeDestination.startsWith("..")) {
+    throw new Error("A folder cannot be moved into itself.");
+  }
+
+  if (sourceFullPath === destinationFullPath) {
+    return;
+  }
+
+  if (await pathExists(destinationFullPath)) {
+    throw new Error("A file or folder with that name already exists.");
+  }
+
+  await fs.rename(sourceFullPath, destinationFullPath);
+}
+
 module.exports = {
   getDocumentRoot,
   listDocumentTree,
@@ -117,4 +163,5 @@ module.exports = {
   saveDocumentFile,
   createDocumentFolder,
   createDocumentFile,
+  moveDocumentEntry,
 };
