@@ -169,6 +169,20 @@ export default function AppShell() {
     }));
   }
 
+  function closeTab(documentPath: string) {
+    setOpenTabs((current) => {
+      const tabIndex = current.indexOf(documentPath);
+      const nextTabs = current.filter((path) => path !== documentPath);
+
+      if (documentPath === activeDocumentPath) {
+        const nextActivePath = nextTabs[tabIndex] ?? nextTabs[tabIndex - 1] ?? null;
+        router.push(nextActivePath ? documentPathToRoute(nextActivePath) : "/");
+      }
+
+      return nextTabs;
+    });
+  }
+
   return (
     <div className="flex h-screen overflow-hidden">
       <SideBar
@@ -187,6 +201,7 @@ export default function AppShell() {
           activeDocumentPath={activeDocumentPath}
           isSidebarOpen={isSidebarOpen}
           openTabs={openTabs}
+          onCloseTab={closeTab}
           onReorderTabs={(sourcePath, targetPath, position) => {
             setOpenTabs((current) => reorderList(current, sourcePath, targetPath, position));
           }}

@@ -1,6 +1,6 @@
 "use client";
 
-import { CaretLeftIcon, CaretRightIcon, SidebarIcon } from "@phosphor-icons/react";
+import { CaretLeftIcon, CaretRightIcon, SidebarIcon, XIcon } from "@phosphor-icons/react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import IconButton from "../IconButton";
@@ -14,6 +14,7 @@ type TabDragTarget = {
 export default function TopBar({
   activeDocumentPath,
   isSidebarOpen,
+  onCloseTab,
   onReorderTabs,
   onSelectTab,
   openTabs,
@@ -21,6 +22,7 @@ export default function TopBar({
 }: {
   activeDocumentPath: string | null;
   isSidebarOpen: boolean;
+  onCloseTab: (documentPath: string) => void;
   onReorderTabs: (sourcePath: string, targetPath: string, position: "before" | "after") => void;
   onSelectTab: (documentPath: string) => void;
   openTabs: string[];
@@ -52,9 +54,8 @@ export default function TopBar({
 
       <div className="app-no-drag flex min-w-0 flex-1 items-stretch self-stretch overflow-x-auto">
         {openTabs.map((documentPath, index, array) => (
-          <button
+          <div
             key={documentPath}
-            type="button"
             draggable
             onDragStart={(event) => {
               event.dataTransfer.effectAllowed = "move";
@@ -80,8 +81,7 @@ export default function TopBar({
               setDragTarget(null);
               onReorderTabs(sourcePath, documentPath, position);
             }}
-            onClick={() => onSelectTab(documentPath)}
-            className={`relative min-w-36 max-w-56 truncate border-l ${index === array.length - 1 ? "border-r" : ""} border-white/10 px-4 text-left text-sm transition-colors ${
+            className={`group relative flex min-w-36 max-w-56 items-center gap-2 border-l ${index === array.length - 1 ? "border-r" : ""} border-white/10 pl-4 pr-2 text-sm transition-colors ${
               activeDocumentPath === documentPath
                 ? "bg-white/10 text-white"
                 : "text-white/60 hover:bg-white/5 hover:text-white"
@@ -93,8 +93,20 @@ export default function TopBar({
             {dragTarget?.path === documentPath && dragTarget.position === "after" && (
               <span className="pointer-events-none absolute bottom-1 right-0 top-1 w-0.5 rounded-full bg-white/70" />
             )}
-            {documentTitle(documentPath)}
-          </button>
+            <button
+              type="button"
+              onClick={() => onSelectTab(documentPath)}
+              className="min-w-0 flex-1 truncate py-2 text-left"
+            >
+              {documentTitle(documentPath)}
+            </button>
+            <IconButton
+              ariaLabel={`Close ${documentTitle(documentPath)}`}
+              className="h-5 w-5 shrink-0 opacity-0 group-hover:opacity-60 focus:opacity-100 hover:opacity-100"
+              icon={<XIcon size={13} />}
+              onClick={() => onCloseTab(documentPath)}
+            />
+          </div>
         ))}
       </div>
     </div>

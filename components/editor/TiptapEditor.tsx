@@ -1,10 +1,14 @@
 "use client";
 
-import type { JSONContent } from "@tiptap/core";
+import { mergeAttributes, type JSONContent } from "@tiptap/core";
+import Image from "@tiptap/extension-image";
+import { Mathematics } from "@tiptap/extension-mathematics";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { KeyboardEvent, useEffect, useRef, useState } from "react";
 import { documentTitle } from "../documentPaths";
+import EditMathDialog, { type EditableMath } from "./EditMathDialog";
+import { LatexDelimiters } from "./LatexDelimiters";
 
 export type PersistedEditorState = {
   selection?: {
@@ -25,6 +29,120 @@ const emptyDocument: JSONContent = {
   ],
 };
 
+function resolveDocumentImageSrc(src: unknown) {
+  if (typeof src !== "string") return "";
+
+  if (/^(https?:|data:|blob:|learner:)/i.test(src)) {
+    return src;
+  }
+
+  return `learner://documents/${src
+    .replace(/^\/+/g, "")
+    .split("/")
+    .map((part) => encodeURIComponent(part))
+    .join("/")}`;
+}
+
+const LearnerImage = Image.extend({
+  renderHTML({ HTMLAttributes }) {
+    return [
+      "img",
+      mergeAttributes(this.options.HTMLAttributes, HTMLAttributes, {
+        src: resolveDocumentImageSrc(HTMLAttributes.src),
+      }),
+    ];
+  },
+});
+
+function pastedImageName(file: File, index: number) {
+  if (file.name) return file.name;
+
+  const extension = file.type.split("/")[1]?.replace("jpeg", "jpg") || "png";
+  return `pasted-image-${Date.now()}-${index}.${extension}`;
+}
+
+function appendInlineLatexContent(content: JSONContent[], text: string) {
+  const inlineMathRegex = /\\\(([\s\S]+?)\\\)/g;
+  let lastIndex = 0;
+
+  for (const match of text.matchAll(inlineMathRegex)) {
+    const index = match.index ?? 0;
+    const before = text.slice(lastIndex, index);
+    const latex = match[1]?.trim();
+
+    if (before) {
+      content.push({ type: "text", text: before });
+    }
+
+    if (latex) {
+      content.push({ type: "inlineMath", attrs: { latex } });
+    } else {
+      content.push({ type: "text", text: match[0] });
+    }
+
+    lastIndex = index + match[0].length;
+  }
+
+  const after = text.slice(lastIndex);
+  if (after) {
+    content.push({ type: "text", text: after });
+  }
+}
+
+function paragraphFromText(text: string): JSONContent | null {
+  const lines = text.split("\n");
+  const content: JSONContent[] = [];
+
+  lines.forEach((line, index) => {
+    if (index > 0) {
+      content.push({ type: "hardBreak" });
+    }
+
+    appendInlineLatexContent(content, line);
+  });
+
+  return content.length > 0 ? { type: "paragraph", content } : null;
+}
+
+function appendTextContent(nodes: JSONContent[], text: string) {
+  const paragraphs = text.split(/\n{2,}/);
+
+  for (const paragraph of paragraphs) {
+    const node = paragraphFromText(paragraph);
+    if (node) {
+      nodes.push(node);
+    }
+  }
+}
+
+function parseLatexDelimitedText(text: string) {
+  if (!text.includes("\\(") && !text.includes("\\[")) return null;
+
+  const nodes: JSONContent[] = [];
+  const blockMathRegex = /\\\[([\s\S]+?)\\\]/g;
+  let lastIndex = 0;
+
+  for (const match of text.matchAll(blockMathRegex)) {
+    const index = match.index ?? 0;
+    const before = text.slice(lastIndex, index);
+    const latex = match[1]?.trim();
+
+    appendTextContent(nodes, before);
+
+    if (latex) {
+      nodes.push({ type: "blockMath", attrs: { latex } });
+    } else {
+      appendTextContent(nodes, match[0]);
+    }
+
+    lastIndex = index + match[0].length;
+  }
+
+  appendTextContent(nodes, text.slice(lastIndex));
+
+  return nodes.length > 0 ? nodes : null;
+}
+
 export default function TiptapEditor({
   active,
   documentPath,
@@ -39,6 +157,7 @@ export default function TiptapEditor({
   onRename: (oldPath: string, newPath: string) => void;
 }) {
   const [error, setError] = useState("");
+  const [editingMath, setEditingMath] = useState<EditableMath | null>(null);
   const [title, setTitle] = useState(documentTitle(documentPath));
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const editorScrollRef = useRef<HTMLDivElement | null>(null);
@@ -46,12 +165,61 @@ export default function TiptapEditor({
   const loadedRef = useRef(false);
 
   const editor = useEditor({
-    extensions: [StarterKit],
+    extensions: [
+      StarterKit,
+      LearnerImage.configure({
+        allowBase64: false,
+      }),
+      LatexDelimiters,
+      Mathematics.configure({
+        inlineOptions: {
+          onClick: (node, pos) => {
+            setEditingMath({
+              kind: "inline",
+              latex: String(node.attrs.latex ?? ""),
+              pos,
+            });
+          },
+        },
+        blockOptions: {
+          onClick: (node, pos) => {
+            setEditingMath({
+              kind: "block",
+              latex: String(node.attrs.latex ?? ""),
+              pos,
+            });
+          },
+        },
+        katexOptions: {
+          throwOnError: false,
+        },
+      }),
+    ],
     content: emptyDocument,
     immediatelyRender: false,
     editorProps: {
       attributes: {
         class: "min-h-[calc(100vh-12rem)] px-6 pb-10 outline-none",
+      },
+      handlePaste: (_view, event) => {
+        const files = Array.from(event.clipboardData?.files ?? []).filter((file) => file.type.startsWith("image/"));
+
+        if (files.length > 0) {
+          event.preventDefault();
+          void insertPastedImages(files);
+          return true;
+        }
+
+        const text = event.clipboardData?.getData("text/plain") ?? "";
+        const content = parseLatexDelimitedText(text);
+
+        if (!content) {
+          return false;
+        }
+
+        event.preventDefault();
+        editor?.chain().focus().insertContent(content).run();
+        return true;
       },
     },
     onSelectionUpdate({ editor }) {
@@ -170,6 +338,52 @@ export default function TiptapEditor({
     }
   }
 
+  async function insertPastedImages(files: File[]) {
+    if (!editor) return;
+
+    try {
+      for (const [index, file] of files.entries()) {
+        const data = new Uint8Array(await file.arrayBuffer());
+        const imagePath = await window.learner?.saveDocumentImage(pastedImageName(file, index), data);
+
+        if (imagePath) {
+          editor.chain().focus().setImage({ src: imagePath }).run();
+        }
+      }
+
+      setError("");
+    } catch (imageError) {
+      setError(imageError instanceof Error ? imageError.message : "Failed to import image.");
+    }
+  }
+
+  function updateEditingMathLatex(latex: string) {
+    setEditingMath((current) => (current ? { ...current, latex } : current));
+  }
+
+  function closeMathEditor() {
+    setEditingMath(null);
+  }
+
+  function saveMathEdit() {
+    if (!editor || !editingMath) return;
+
+    const latex = editingMath.latex.trim();
+
+    if (!latex) {
+      setEditingMath(null);
+      return;
+    }
+
+    if (editingMath.kind === "inline") {
+      editor.chain().focus().updateInlineMath({ latex, pos: editingMath.pos }).run();
+    } else {
+      editor.chain().focus().updateBlockMath({ latex, pos: editingMath.pos }).run();
+    }
+
+    setEditingMath(null);
+  }
+
   return (
     <section className={`${active ? "block" : "hidden"} h-full min-h-0`}>
       <div
@@ -199,6 +413,13 @@ export default function TiptapEditor({
 
         <EditorContent className="min-h-full" editor={editor} />
       </div>
+
+      <EditMathDialog
+        math={editingMath}
+        onClose={closeMathEditor}
+        onLatexChange={updateEditingMathLatex}
+        onSubmit={saveMathEdit}
+      />
     </section>
   );
 }

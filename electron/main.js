@@ -11,6 +11,8 @@ const {
   reorderDocumentEntry,
   renameDocumentFile,
   readDocumentFile,
+  resolveDocumentAssetPath,
+  saveDocumentImage,
   saveDocumentFile,
 } = require("./documentUtil");
 
@@ -58,6 +60,11 @@ function resolveStaticFile(requestUrl) {
   return path.join(outDir, "index.html");
 }
 
+function resolveDocumentAsset(requestUrl) {
+  const url = new URL(requestUrl);
+  return resolveDocumentAssetPath(decodeURIComponent(url.pathname).replace(/^\/+/g, ""));
+}
+
 function createWindow() {
   const isMac = process.platform === "darwin";
   const win = new BrowserWindow({
@@ -90,6 +97,16 @@ function createWindow() {
 
 app.whenReady().then(() => {
   protocol.handle(appProtocol, (request) => {
+    const url = new URL(request.url);
+
+    if (url.hostname === "documents") {
+      try {
+        return net.fetch(pathToFileURL(resolveDocumentAsset(request.url)).toString());
+      } catch {
+        return new Response("Not found", { status: 404 });
+      }
+    }
+
     const filePath = resolveStaticFile(request.url);
     return net.fetch(pathToFileURL(filePath).toString());
   });
@@ -163,4 +180,8 @@ ipcMain.handle("document:reorder", async (_event, reorderRequest) => {
     directory: getDocumentRoot(),
     tree: await listDocumentTree(),
   };
+});
+
+ipcMain.handle("document:saveImage", async (_event, fileName, data) => {
+  return saveDocumentImage(fileName, data);
 });

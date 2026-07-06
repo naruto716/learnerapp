@@ -26,4 +26,7 @@ contextBridge.exposeInMainWorld("learner", {
   reorderDocumentEntry: (reorderRequest) => {
     return ipcRenderer.invoke("document:reorder", reorderRequest);
   },
+  saveDocumentImage: (fileName, data) => {
+    return ipcRenderer.invoke("document:saveImage", fileName, data);
+  },
 });

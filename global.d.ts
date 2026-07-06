@@ -51,6 +51,7 @@ declare global {
         directory: string;
         tree: DocumentNode[];
       }>;
+      saveDocumentImage: (fileName: string, data: Uint8Array) => Promise<string>;
     };
   }
 }

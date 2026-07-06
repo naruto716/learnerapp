@@ -1,4 +1,5 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100;200;300;400;500;600;700;800;900&display=swap');
+@import "katex/dist/katex.min.css";
 @import "tailwindcss";
 
 :root {
@@ -68,4 +69,29 @@ html[data-platform="darwin"] .mac-traffic-spacer {
 
 .ProseMirror ol {
   list-style: decimal;
+}
+
+.ProseMirror img {
+  display: block;
+  max-width: min(100%, 720px);
+  height: auto;
+  margin: 0 0 0.75rem;
+  border-radius: 6px;
+}
+
+.ProseMirror .tiptap-mathematics-render {
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.ProseMirror .tiptap-mathematics-render--editable {
+  background: rgba(255, 255, 255, 0.06);
+  outline: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.ProseMirror .tiptap-mathematics-render[data-type="block-math"] {
+  display: block;
+  margin: 0 0 0.75rem;
+  padding: 0.75rem;
+  overflow-x: auto;
 }

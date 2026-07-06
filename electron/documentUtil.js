@@ -11,6 +11,8 @@ const emptyDocument = {
   ],
 };
 const orderFileName = ".documents-order.json";
+const imageFolderName = "images";
+const allowedImageExtensions = new Set([".avif", ".gif", ".jpeg", ".jpg", ".png", ".svg", ".webp"]);
 
 function getDocumentRoot() {
   return path.join(app.getPath("userData"), "documents");
@@ -32,6 +34,11 @@ function getParentPath(relativePath) {
 
 function getBaseName(relativePath) {
   return path.basename(relativePath);
+}
+
+function isReservedImagePath(relativePath) {
+  const cleanPath = String(relativePath || "").replace(/^\/+/g, "").replace(/\/+$/g, "");
+  return cleanPath === imageFolderName || cleanPath.startsWith(`${imageFolderName}/`);
 }
 
 function resolveInsideDocumentRoot(relativePath, options = {}) {
@@ -68,6 +75,10 @@ async function listDocumentTree(dir = getDocumentRoot(), rootDir = getDocumentRo
     }
 
     const fullPath = path.join(dir, entry.name);
+
+    if (dir === rootDir && entry.isDirectory() && entry.name === imageFolderName) {
+      continue;
+    }
 
     if (entry.isDirectory()) {
       nodes.push({
@@ -155,7 +166,17 @@ async function saveDocumentFile(filePath, document) {
 
 async function createDocumentFolder(folderPath) {
   await ensureDocumentRoot();
+
+  if (isReservedImagePath(folderPath)) {
+    throw new Error("The images folder is reserved for document assets.");
+  }
+
   const fullPath = resolveInsideDocumentRoot(folderPath);
+
+  if (path.dirname(fullPath) === getDocumentRoot() && path.basename(fullPath) === imageFolderName) {
+    throw new Error("The images folder is reserved for document assets.");
+  }
+
   await fs.mkdir(fullPath, { recursive: true });
   await appendToFolderOrder(path.dirname(fullPath), path.basename(fullPath));
 }
@@ -163,6 +184,11 @@ async function createDocumentFolder(folderPath) {
 async function createDocumentFile(filePath) {
   await ensureDocumentRoot();
   const finalPath = filePath.toLowerCase().endsWith(".json") ? filePath : `${filePath}.json`;
+
+  if (isReservedImagePath(finalPath)) {
+    throw new Error("The images folder is reserved for document assets.");
+  }
+
   const fullPath = resolveInsideDocumentRoot(finalPath, { documentOnly: true });
 
   await fs.mkdir(path.dirname(fullPath), { recursive: true });
@@ -292,10 +318,73 @@ async function reorderDocumentEntry({ sourcePath, targetPath, position }) {
   await writeOrder(folderFullPath, normalizedOrder);
 }
 
+function cleanImageFileName(fileName) {
+  const extension = path.extname(fileName).toLowerCase();
+  const baseName = path.basename(fileName, path.extname(fileName));
+  const cleanBaseName = baseName
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  return `${cleanBaseName || "image"}${extension}`;
+}
+
+async function writeImageFile(fileName, data) {
+  await ensureDocumentRoot();
+
+  const extension = path.extname(fileName).toLowerCase();
+
+  if (!allowedImageExtensions.has(extension)) {
+    throw new Error("Unsupported image type.");
+  }
+
+  const imageFolderPath = path.join(getDocumentRoot(), imageFolderName);
+  await fs.mkdir(imageFolderPath, { recursive: true });
+
+  const cleanName = cleanImageFileName(path.basename(fileName));
+  const baseName = path.basename(cleanName, extension);
+  let destinationName = cleanName;
+  let destinationPath = path.join(imageFolderPath, destinationName);
+  let index = 1;
+
+  while (await pathExists(destinationPath)) {
+    destinationName = `${baseName}-${index}${extension}`;
+    destinationPath = path.join(imageFolderPath, destinationName);
+    index += 1;
+  }
+
+  await fs.writeFile(destinationPath, data);
+
+  return `${imageFolderName}/${destinationName}`;
+}
+
+async function saveDocumentImage(fileName, data) {
+  return writeImageFile(fileName, Buffer.from(data));
+}
+
+function resolveDocumentAssetPath(relativePath) {
+  const cleanPath = String(relativePath || "").replace(/^\/+/g, "");
+
+  if (!cleanPath.startsWith(`${imageFolderName}/`)) {
+    throw new Error("Only document images can be loaded.");
+  }
+
+  const fullPath = resolveInsideDocumentRoot(cleanPath);
+  const extension = path.extname(fullPath).toLowerCase();
+
+  if (!allowedImageExtensions.has(extension)) {
+    throw new Error("Unsupported image type.");
+  }
+
+  return fullPath;
+}
+
 module.exports = {
   getDocumentRoot,
   listDocumentTree,
   readDocumentFile,
+  resolveDocumentAssetPath,
+  saveDocumentImage,
   saveDocumentFile,
   createDocumentFolder,
   createDocumentFile,
