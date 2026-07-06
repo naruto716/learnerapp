@@ -6,6 +6,8 @@ import SideBar from "@/components/sidebar/sidebar";
 import TopBar from "@/components/topbar/topbar";
 import TiptapEditor, { type PersistedEditorState } from "@/components/editor/TiptapEditor";
 import { documentPathToRoute, routeToDocumentPath } from "@/components/documentPaths";
+import ChatBubble from "./ai/ChatBubble";
+import ChatPanel from "./ai/ChatPanel";
 
 const workspaceStorageKey = "learner.workspace.v1";
 
@@ -65,6 +67,7 @@ export default function AppShell() {
   const activeDocumentPath = useMemo(() => routeToDocumentPath(pathname), [pathname]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [openTabs, setOpenTabs] = useState<string[]>([]);
+  const [isBubbleOpen, setIsBubbleOpen] = useState(false);
   const [editorStates, setEditorStates] = useState<Record<string, PersistedEditorState>>({});
   const [documentsVersion, setDocumentsVersion] = useState(0);
   const [workspaceLoaded, setWorkspaceLoaded] = useState(false);
@@ -225,6 +228,12 @@ export default function AppShell() {
           )}
         </main>
       </div>
+      <ChatPanel
+        isOpen={isBubbleOpen}
+        isSidebarOpen={isSidebarOpen}
+        onClose={() => setIsBubbleOpen(false)}
+      />
+      <ChatBubble isOpen={isBubbleOpen} toggleBubbleOpen={() => setIsBubbleOpen((isOpen) => !isOpen)} />
     </div>
   );
 }

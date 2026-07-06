@@ -220,3 +220,76 @@ html[data-platform="darwin"] .mac-traffic-spacer {
 .ProseMirror .tiptap-mathematics-render[data-type="inline-math"]:hover {
   background: rgba(255, 255, 255, 0.04);
 }
+
+.learner-ai-markdown {
+  color: rgba(255, 255, 255, 0.88);
+  font-size: 0.875rem;
+  line-height: 1.65;
+}
+
+.learner-ai-markdown > *:first-child {
+  margin-top: 0;
+}
+
+.learner-ai-markdown > *:last-child {
+  margin-bottom: 0;
+}
+
+.learner-ai-markdown p,
+.learner-ai-markdown ul,
+.learner-ai-markdown ol,
+.learner-ai-markdown blockquote,
+.learner-ai-markdown pre {
+  margin: 0 0 0.65rem;
+}
+
+.learner-ai-markdown ul,
+.learner-ai-markdown ol {
+  padding-left: 1.1rem;
+}
+
+.learner-ai-markdown ul {
+  list-style: disc;
+}
+
+.learner-ai-markdown ol {
+  list-style: decimal;
+}
+
+.learner-ai-markdown strong {
+  color: rgba(255, 255, 255, 0.96);
+  font-weight: 650;
+}
+
+.learner-ai-markdown a {
+  color: #c8ecba;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.learner-ai-markdown code {
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.09);
+  padding: 0.08rem 0.28rem;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 0.82em;
+}
+
+.learner-ai-markdown pre {
+  overflow-x: auto;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.38);
+  padding: 0.75rem 0.85rem;
+}
+
+.learner-ai-markdown pre code {
+  display: block;
+  background: transparent;
+  padding: 0;
+}
+
+.learner-ai-markdown blockquote {
+  border-left: 2px solid rgba(200, 236, 186, 0.55);
+  padding-left: 0.75rem;
+  color: rgba(255, 255, 255, 0.68);
+}
