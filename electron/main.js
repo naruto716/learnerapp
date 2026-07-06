@@ -8,6 +8,7 @@ const {
   getDocumentRoot,
   listDocumentTree,
   moveDocumentEntry,
+  renameDocumentFile,
   readDocumentFile,
   saveDocumentFile,
 } = require("./documentUtil");
@@ -142,6 +143,15 @@ ipcMain.handle("document:move", async (_event, sourcePath, targetFolderPath) => 
   await moveDocumentEntry(sourcePath, targetFolderPath);
   return {
     directory: getDocumentRoot(),
+    tree: await listDocumentTree(),
+  };
+});
+
+ipcMain.handle("document:rename", async (_event, filePath, newTitle) => {
+  const newPath = await renameDocumentFile(filePath, newTitle);
+  return {
+    directory: getDocumentRoot(),
+    newPath,
     tree: await listDocumentTree(),
   };
 });

@@ -156,6 +156,40 @@ async function moveDocumentEntry(sourcePath, targetFolderPath = "") {
   await fs.rename(sourceFullPath, destinationFullPath);
 }
 
+async function renameDocumentFile(filePath, newTitle) {
+  await ensureDocumentRoot();
+
+  const cleanTitle = String(newTitle || "").trim();
+  if (!cleanTitle) {
+    throw new Error("Document title is required.");
+  }
+
+  if (cleanTitle.includes("/") || cleanTitle.includes("\\")) {
+    throw new Error("Document title cannot contain path separators.");
+  }
+
+  const sourceFullPath = resolveInsideDocumentRoot(filePath, { documentOnly: true });
+  const finalName = cleanTitle.toLowerCase().endsWith(".json") ? cleanTitle : `${cleanTitle}.json`;
+  const destinationFullPath = path.join(path.dirname(sourceFullPath), finalName);
+  const documentRoot = getDocumentRoot();
+  const relativeDestination = path.relative(documentRoot, destinationFullPath);
+
+  if (relativeDestination.startsWith("..") || path.isAbsolute(relativeDestination)) {
+    throw new Error("Path must stay inside the documents folder.");
+  }
+
+  if (sourceFullPath === destinationFullPath) {
+    return toAppPath(documentRoot, destinationFullPath);
+  }
+
+  if (await pathExists(destinationFullPath)) {
+    throw new Error("A document with that name already exists.");
+  }
+
+  await fs.rename(sourceFullPath, destinationFullPath);
+  return toAppPath(documentRoot, destinationFullPath);
+}
+
 module.exports = {
   getDocumentRoot,
   listDocumentTree,
@@ -164,4 +198,5 @@ module.exports = {
   createDocumentFolder,
   createDocumentFile,
   moveDocumentEntry,
+  renameDocumentFile,
 };

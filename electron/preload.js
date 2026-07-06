@@ -20,4 +20,7 @@ contextBridge.exposeInMainWorld("learner", {
   moveDocumentEntry: (sourcePath, targetFolderPath) => {
     return ipcRenderer.invoke("document:move", sourcePath, targetFolderPath);
   },
+  renameDocumentFile: (filePath, newTitle) => {
+    return ipcRenderer.invoke("document:rename", filePath, newTitle);
+  },
 });

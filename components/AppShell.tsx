@@ -1,28 +1,198 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useMemo, useRef, useState } from "react";
 import SideBar from "@/components/sidebar/sidebar";
 import TopBar from "@/components/topbar/topbar";
-import { DocumentProvider } from "@/components/DocumentContext";
+import TiptapEditor, { type PersistedEditorState } from "@/components/editor/TiptapEditor";
+import { documentPathToRoute, routeToDocumentPath } from "@/components/documentPaths";
 
-export default function AppShell({ children }: { children: React.ReactNode }) {
+const workspaceStorageKey = "learner.workspace.v1";
+
+type WorkspaceState = {
+  openTabs: string[];
+  lastActivePath: string | null;
+  editorStates: Record<string, PersistedEditorState>;
+};
+
+function readWorkspaceState(): WorkspaceState {
+  if (typeof window === "undefined") {
+    return { openTabs: [], lastActivePath: null, editorStates: {} };
+  }
+
+  try {
+    const stored = localStorage.getItem(workspaceStorageKey);
+    if (!stored) {
+      return { openTabs: [], lastActivePath: null, editorStates: {} };
+    }
+
+    const parsed = JSON.parse(stored) as Partial<WorkspaceState>;
+    return {
+      openTabs: Array.isArray(parsed.openTabs) ? parsed.openTabs : [],
+      lastActivePath: parsed.lastActivePath ?? null,
+      editorStates: parsed.editorStates ?? {},
+    };
+  } catch {
+    return { openTabs: [], lastActivePath: null, editorStates: {} };
+  }
+}
+
+function replacePath(paths: string[], oldPath: string, newPath: string) {
+  return paths.map((path) => {
+    if (path === oldPath) return newPath;
+    if (path.startsWith(`${oldPath}/`)) return path.replace(oldPath, newPath);
+    return path;
+  });
+}
+
+export default function AppShell() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const activeDocumentPath = useMemo(() => routeToDocumentPath(pathname), [pathname]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [selectedDocumentPath, setSelectedDocumentPath] = useState<string | null>(null);
+  const [openTabs, setOpenTabs] = useState<string[]>([]);
+  const [editorStates, setEditorStates] = useState<Record<string, PersistedEditorState>>({});
+  const [documentsVersion, setDocumentsVersion] = useState(0);
+  const [workspaceLoaded, setWorkspaceLoaded] = useState(false);
+  const restoredWorkspaceRef = useRef(false);
 
   useEffect(() => {
+    if (restoredWorkspaceRef.current) return;
+    restoredWorkspaceRef.current = true;
+
     const platform = window.learner?.platform ?? navigator.platform.toLowerCase();
     document.documentElement.dataset.platform = platform === "darwin" || platform.includes("mac") ? "darwin" : platform;
-  }, []);
+
+    const workspace = readWorkspaceState();
+    const timer = window.setTimeout(() => {
+      setOpenTabs(workspace.openTabs);
+      setEditorStates(workspace.editorStates);
+      setWorkspaceLoaded(true);
+
+      if (pathname === "/" && workspace.lastActivePath) {
+        router.replace(documentPathToRoute(workspace.lastActivePath));
+      }
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [pathname, router]);
+
+  useEffect(() => {
+    if (!workspaceLoaded) return;
+
+    const previousWorkspace = readWorkspaceState();
+
+    localStorage.setItem(
+      workspaceStorageKey,
+      JSON.stringify({
+        openTabs,
+        lastActivePath: activeDocumentPath ?? previousWorkspace.lastActivePath,
+        editorStates,
+      }),
+    );
+  }, [activeDocumentPath, editorStates, openTabs, workspaceLoaded]);
+
+  useEffect(() => {
+    if (!activeDocumentPath) return;
+
+    const timer = window.setTimeout(() => {
+      setOpenTabs((current) => {
+        if (current.includes(activeDocumentPath)) return current;
+        return [...current, activeDocumentPath];
+      });
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [activeDocumentPath]);
+
+  function openDocument(documentPath: string) {
+    setOpenTabs((current) => (current.includes(documentPath) ? current : [...current, documentPath]));
+    router.push(documentPathToRoute(documentPath));
+  }
+
+  function markDocumentsChanged() {
+    setDocumentsVersion((version) => version + 1);
+  }
+
+  function handleDocumentMoved(oldPath: string, newPath: string) {
+    setOpenTabs((current) => replacePath(current, oldPath, newPath));
+    setEditorStates((current) => {
+      const next = { ...current };
+      for (const [path, state] of Object.entries(current)) {
+        if (path === oldPath || path.startsWith(`${oldPath}/`)) {
+          delete next[path];
+          next[path.replace(oldPath, newPath)] = state;
+        }
+      }
+      return next;
+    });
+
+    if (activeDocumentPath === oldPath || activeDocumentPath?.startsWith(`${oldPath}/`)) {
+      router.replace(documentPathToRoute(activeDocumentPath.replace(oldPath, newPath)));
+    }
+
+    markDocumentsChanged();
+  }
+
+  function handleDocumentRenamed(oldPath: string, newPath: string) {
+    setOpenTabs((current) => current.map((path) => (path === oldPath ? newPath : path)));
+    setEditorStates((current) => {
+      const next = { ...current };
+      if (next[oldPath]) {
+        next[newPath] = next[oldPath];
+        delete next[oldPath];
+      }
+      return next;
+    });
+    router.replace(documentPathToRoute(newPath));
+    markDocumentsChanged();
+  }
+
+  function updateEditorState(documentPath: string, state: PersistedEditorState) {
+    setEditorStates((current) => ({
+      ...current,
+      [documentPath]: state,
+    }));
+  }
 
   return (
-    <DocumentProvider value={{ selectedDocumentPath, setSelectedDocumentPath }}>
-      <div className="flex">
-        <SideBar isSidebarOpen={isSidebarOpen} />
-        <div className="flex-1">
-          <TopBar isSidebarOpen={isSidebarOpen} toggleSidebar={() => setIsSidebarOpen((isOpen) => !isOpen)} />
-          <main className="p-4">{children}</main>
-        </div>
+    <div className="flex h-screen overflow-hidden">
+      <SideBar
+        activeDocumentPath={activeDocumentPath}
+        documentsVersion={documentsVersion}
+        isSidebarOpen={isSidebarOpen}
+        onDocumentCreated={(documentPath) => {
+          markDocumentsChanged();
+          openDocument(documentPath);
+        }}
+        onDocumentMoved={handleDocumentMoved}
+        onOpenDocument={openDocument}
+      />
+      <div className="flex min-w-0 flex-1 flex-col">
+        <TopBar
+          activeDocumentPath={activeDocumentPath}
+          isSidebarOpen={isSidebarOpen}
+          openTabs={openTabs}
+          onSelectTab={openDocument}
+          toggleSidebar={() => setIsSidebarOpen((isOpen) => !isOpen)}
+        />
+        <main className="min-h-0 flex-1 overflow-hidden">
+          {openTabs.length === 0 ? (
+            <div className="p-4 text-sm text-white/50">Select or create a document.</div>
+          ) : (
+            openTabs.map((documentPath) => (
+              <TiptapEditor
+                active={documentPath === activeDocumentPath}
+                documentPath={documentPath}
+                initialState={editorStates[documentPath]}
+                key={documentPath}
+                onPersistedStateChange={(state) => updateEditorState(documentPath, state)}
+                onRename={handleDocumentRenamed}
+              />
+            ))
+          )}
+        </main>
       </div>
-    </DocumentProvider>
+    </div>
   );
 }

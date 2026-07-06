@@ -8,8 +8,8 @@ import {
   FolderPlusIcon,
 } from "@phosphor-icons/react";
 import { DragEvent, useEffect, useState } from "react";
-import { useDocumentSelection } from "../DocumentContext";
 import IconButton from "../IconButton";
+import { filePathWithExtension } from "../documentPaths";
 import CreateDocumentDialog, { type CreateDocumentKind } from "./CreateDocumentDialog";
 
 function displayName(node: DocumentNode) {
@@ -22,22 +22,31 @@ function joinPath(parentPath: string, childPath: string) {
   return cleanParent ? `${cleanParent}/${cleanChild}` : cleanChild;
 }
 
-function filePathWithExtension(filePath: string) {
-  return filePath.toLowerCase().endsWith(".json") ? filePath : `${filePath}.json`;
-}
-
 function movedPath(sourcePath: string, targetFolderPath: string) {
   return joinPath(targetFolderPath, sourcePath.split("/").at(-1) ?? sourcePath);
 }
 
-export default function SideBar({ isSidebarOpen }: { isSidebarOpen: boolean }) {
+export default function SideBar({
+  activeDocumentPath,
+  documentsVersion,
+  isSidebarOpen,
+  onDocumentCreated,
+  onDocumentMoved,
+  onOpenDocument,
+}: {
+  activeDocumentPath: string | null;
+  documentsVersion: number;
+  isSidebarOpen: boolean;
+  onDocumentCreated: (documentPath: string) => void;
+  onDocumentMoved: (oldPath: string, newPath: string) => void;
+  onOpenDocument: (documentPath: string) => void;
+}) {
   const [nodes, setNodes] = useState<DocumentNode[]>([]);
   const [error, setError] = useState("");
   const [createKind, setCreateKind] = useState<CreateDocumentKind | null>(null);
   const [createParentPath, setCreateParentPath] = useState("");
   const [draftPath, setDraftPath] = useState("");
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
-  const { selectedDocumentPath, setSelectedDocumentPath } = useDocumentSelection();
 
   function openCreateDialog(kind: CreateDocumentKind, parentPath = "") {
     setCreateKind(kind);
@@ -81,7 +90,7 @@ export default function SideBar({ isSidebarOpen }: { isSidebarOpen: boolean }) {
         if (createKind === "folder") {
           setExpandedFolders((current) => new Set(current).add(finalPath));
         } else {
-          setSelectedDocumentPath(filePathWithExtension(finalPath));
+          onDocumentCreated(filePathWithExtension(finalPath));
         }
         closeCreateDialog();
       }
@@ -101,11 +110,7 @@ export default function SideBar({ isSidebarOpen }: { isSidebarOpen: boolean }) {
       setNodes(result.tree);
       setError("");
 
-      if (selectedDocumentPath === sourcePath) {
-        setSelectedDocumentPath(nextPath);
-      } else if (selectedDocumentPath?.startsWith(`${sourcePath}/`)) {
-        setSelectedDocumentPath(selectedDocumentPath.replace(sourcePath, nextPath));
-      }
+      onDocumentMoved(sourcePath, nextPath);
     } catch (moveError) {
       setError(moveError instanceof Error ? moveError.message : "Failed to move item.");
     }
@@ -144,7 +149,7 @@ export default function SideBar({ isSidebarOpen }: { isSidebarOpen: boolean }) {
     return () => {
       ignore = true;
     };
-  }, []);
+  }, [documentsVersion]);
 
   return (
     <div
@@ -178,9 +183,9 @@ export default function SideBar({ isSidebarOpen }: { isSidebarOpen: boolean }) {
           nodes={nodes}
           onCreate={openCreateDialog}
           onMove={moveEntry}
-          onSelectFile={setSelectedDocumentPath}
+          onSelectFile={onOpenDocument}
           onToggleFolder={toggleFolder}
-          selectedPath={selectedDocumentPath}
+          selectedPath={activeDocumentPath}
         />
       )}
 

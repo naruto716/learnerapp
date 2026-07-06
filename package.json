@@ -7,9 +7,9 @@
   "scripts": {
     "dev": "next dev",
     "electron:dev": "concurrently -k -s first -n NEXT,ELECTRON -c blue,green \"next dev -p 3000\" \"wait-on http://localhost:3000 && cross-env NEXT_DEV_SERVER_URL=http://localhost:3000 electron .\"",
-    "electron:preview": "next build && electron .",
-    "electron:dist": "next build && electron-builder",
-    "build": "next build",
+    "electron:preview": "npm run build && electron .",
+    "electron:dist": "npm run build && electron-builder",
+    "build": "cross-env NEXT_OUTPUT_EXPORT=1 next build",
     "start": "serve out",
     "lint": "eslint"
   },

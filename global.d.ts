@@ -36,6 +36,11 @@ declare global {
         directory: string;
         tree: DocumentNode[];
       }>;
+      renameDocumentFile: (filePath: string, newTitle: string) => Promise<{
+        directory: string;
+        newPath: string;
+        tree: DocumentNode[];
+      }>;
     };
   }
 }
