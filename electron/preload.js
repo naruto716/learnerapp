@@ -23,4 +23,7 @@ contextBridge.exposeInMainWorld("learner", {
   renameDocumentFile: (filePath, newTitle) => {
     return ipcRenderer.invoke("document:rename", filePath, newTitle);
   },
+  reorderDocumentEntry: (reorderRequest) => {
+    return ipcRenderer.invoke("document:reorder", reorderRequest);
+  },
 });

@@ -26,6 +26,16 @@ function movedPath(sourcePath: string, targetFolderPath: string) {
   return joinPath(targetFolderPath, sourcePath.split("/").at(-1) ?? sourcePath);
 }
 
+function reorderedPath(sourcePath: string, targetPath: string) {
+  const targetParent = targetPath.split("/").slice(0, -1).join("/");
+  return movedPath(sourcePath, targetParent);
+}
+
+type DragTarget =
+  | { type: "row"; path: string; position: "before" | "after" }
+  | { type: "container"; folderPath: string }
+  | null;
+
 export default function SideBar({
   activeDocumentPath,
   documentsVersion,
@@ -46,6 +56,7 @@ export default function SideBar({
   const [createKind, setCreateKind] = useState<CreateDocumentKind | null>(null);
   const [createParentPath, setCreateParentPath] = useState("");
   const [draftPath, setDraftPath] = useState("");
+  const [dragTarget, setDragTarget] = useState<DragTarget>(null);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
 
   function openCreateDialog(kind: CreateDocumentKind, parentPath = "") {
@@ -100,7 +111,10 @@ export default function SideBar({
   }
 
   async function moveEntry(sourcePath: string, targetFolderPath: string) {
-    if (!sourcePath || sourcePath === targetFolderPath) return;
+    if (!sourcePath || sourcePath === targetFolderPath) {
+      setDragTarget(null);
+      return;
+    }
 
     try {
       const result = await window.learner?.moveDocumentEntry(sourcePath, targetFolderPath);
@@ -109,6 +123,7 @@ export default function SideBar({
       const nextPath = movedPath(sourcePath, targetFolderPath);
       setNodes(result.tree);
       setError("");
+      setDragTarget(null);
 
       onDocumentMoved(sourcePath, nextPath);
     } catch (moveError) {
@@ -116,10 +131,42 @@ export default function SideBar({
     }
   }
 
+  async function reorderEntry(reorderRequest: DocumentReorderRequest) {
+    if (!reorderRequest.sourcePath || reorderRequest.sourcePath === reorderRequest.targetPath) {
+      setDragTarget(null);
+      return;
+    }
+
+    try {
+      const result = await window.learner?.reorderDocumentEntry(reorderRequest);
+      if (!result) return;
+
+      const nextPath = reorderedPath(reorderRequest.sourcePath, reorderRequest.targetPath);
+      setNodes(result.tree);
+      setError("");
+      setDragTarget(null);
+      onDocumentMoved(reorderRequest.sourcePath, nextPath);
+    } catch (reorderError) {
+      setError(reorderError instanceof Error ? reorderError.message : "Failed to reorder item.");
+    }
+  }
+
   function handleRootDrop(event: DragEvent<HTMLDivElement>) {
+    if (event.target !== event.currentTarget) return;
+
+    handleContainerDrop(event, "");
+  }
+
+  function handleContainerDrop(event: DragEvent<HTMLElement>, folderPath: string) {
     event.preventDefault();
     event.stopPropagation();
-    moveEntry(event.dataTransfer.getData("application/x-learner-path"), "");
+    moveEntry(event.dataTransfer.getData("application/x-learner-path"), folderPath);
+  }
+
+  function handleContainerDragOver(event: DragEvent<HTMLElement>, folderPath: string) {
+    event.preventDefault();
+    event.stopPropagation();
+    setDragTarget({ type: "container", folderPath });
   }
 
   useEffect(() => {
@@ -155,7 +202,12 @@ export default function SideBar({
     <div
       onDragOver={(event) => event.preventDefault()}
       onDrop={handleRootDrop}
-      className={`border-r border-white/10 h-screen overflow-hidden bg-white/5 transition-all duration-300 ease-in-out ${
+      onDragEnd={() => setDragTarget(null)}
+      onDragLeave={(event) => {
+        if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+        setDragTarget(null);
+      }}
+      className={`flex h-screen flex-col overflow-hidden border-r border-white/10 bg-white/5 transition-all duration-300 ease-in-out ${
         isSidebarOpen ? "w-64" : "w-0 opacity-0"
       }`}
     >
@@ -178,15 +230,28 @@ export default function SideBar({
       {error ? (
         <p className="px-3 text-xs text-red-300">{error}</p>
       ) : (
-        <FileTree
-          expandedFolders={expandedFolders}
-          nodes={nodes}
-          onCreate={openCreateDialog}
-          onMove={moveEntry}
-          onSelectFile={onOpenDocument}
-          onToggleFolder={toggleFolder}
-          selectedPath={activeDocumentPath}
-        />
+        <div
+          className={`min-h-0 flex-1 transition-colors ${
+            dragTarget?.type === "container" && dragTarget.folderPath === "" ? "bg-white/[0.03]" : ""
+          }`}
+          onDragOver={(event) => handleContainerDragOver(event, "")}
+          onDrop={(event) => handleContainerDrop(event, "")}
+        >
+          <FileTree
+            dragTarget={dragTarget}
+            expandedFolders={expandedFolders}
+            folderPath=""
+            nodes={nodes}
+            onCreate={openCreateDialog}
+            onContainerDragOver={handleContainerDragOver}
+            onDropIntoFolder={handleContainerDrop}
+            onRowDragOver={setDragTarget}
+            onReorder={reorderEntry}
+            onSelectFile={onOpenDocument}
+            onToggleFolder={toggleFolder}
+            selectedPath={activeDocumentPath}
+          />
+        </div>
       )}
 
       <CreateDocumentDialog
@@ -202,35 +267,54 @@ export default function SideBar({
 }
 
 function FileTree({
+  dragTarget,
   expandedFolders,
+  folderPath,
   nodes,
   onCreate,
-  onMove,
+  onContainerDragOver,
+  onDropIntoFolder,
+  onRowDragOver,
+  onReorder,
   onSelectFile,
   onToggleFolder,
   selectedPath,
 }: {
+  dragTarget: DragTarget;
   expandedFolders: Set<string>;
+  folderPath: string;
   nodes: DocumentNode[];
   onCreate: (kind: CreateDocumentKind, parentPath?: string) => void;
-  onMove: (sourcePath: string, targetFolderPath: string) => void;
+  onContainerDragOver: (event: DragEvent<HTMLElement>, folderPath: string) => void;
+  onDropIntoFolder: (event: DragEvent<HTMLElement>, folderPath: string) => void;
+  onRowDragOver: (target: DragTarget) => void;
+  onReorder: (reorderRequest: DocumentReorderRequest) => void;
   onSelectFile: (path: string) => void;
   onToggleFolder: (path: string) => void;
   selectedPath: string | null;
 }) {
-  if (nodes.length === 0) {
-    return <p className="px-3 text-xs text-white/50">No documents yet.</p>;
-  }
+  const isContainerTarget = dragTarget?.type === "container" && dragTarget.folderPath === folderPath;
 
   return (
-    <ul className="space-y-1 px-2">
+    <ul
+      onDragOver={(event) => onContainerDragOver(event, folderPath)}
+      onDrop={(event) => onDropIntoFolder(event, folderPath)}
+      className={`min-h-8 px-2 py-1 transition-colors ${
+        isContainerTarget ? "rounded-md bg-white/[0.04] ring-1 ring-white/10" : ""
+      }`}
+    >
+      {nodes.length === 0 && <li className="px-1 text-xs text-white/50">No documents yet.</li>}
       {nodes.map((node) => (
         <FileTreeItem
+          dragTarget={dragTarget}
           expandedFolders={expandedFolders}
           key={node.path}
           node={node}
           onCreate={onCreate}
-          onMove={onMove}
+          onContainerDragOver={onContainerDragOver}
+          onDropIntoFolder={onDropIntoFolder}
+          onRowDragOver={onRowDragOver}
+          onReorder={onReorder}
           onSelectFile={onSelectFile}
           onToggleFolder={onToggleFolder}
           selectedPath={selectedPath}
@@ -241,18 +325,26 @@ function FileTree({
 }
 
 function FileTreeItem({
+  dragTarget,
   expandedFolders,
   node,
   onCreate,
-  onMove,
+  onContainerDragOver,
+  onDropIntoFolder,
+  onRowDragOver,
+  onReorder,
   onSelectFile,
   onToggleFolder,
   selectedPath,
 }: {
+  dragTarget: DragTarget;
   expandedFolders: Set<string>;
   node: DocumentNode;
   onCreate: (kind: CreateDocumentKind, parentPath?: string) => void;
-  onMove: (sourcePath: string, targetFolderPath: string) => void;
+  onContainerDragOver: (event: DragEvent<HTMLElement>, folderPath: string) => void;
+  onDropIntoFolder: (event: DragEvent<HTMLElement>, folderPath: string) => void;
+  onRowDragOver: (target: DragTarget) => void;
+  onReorder: (reorderRequest: DocumentReorderRequest) => void;
   onSelectFile: (path: string) => void;
   onToggleFolder: (path: string) => void;
   selectedPath: string | null;
@@ -265,24 +357,53 @@ function FileTreeItem({
     event.dataTransfer.setData("application/x-learner-path", node.path);
   }
 
-  function handleDrop(event: DragEvent<HTMLDivElement>) {
-    if (!isFolder) return;
-    event.preventDefault();
-    event.stopPropagation();
-    onMove(event.dataTransfer.getData("application/x-learner-path"), node.path);
+  function handleDragEnd() {
+    onRowDragOver(null);
   }
 
+  function handleDrop(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    const sourcePath = event.dataTransfer.getData("application/x-learner-path");
+    const rect = event.currentTarget.getBoundingClientRect();
+    const y = event.clientY - rect.top;
+
+    onReorder({
+      sourcePath,
+      targetPath: node.path,
+      position: y < rect.height / 2 ? "before" : "after",
+    });
+  }
+
+  function handleRowDragOver(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = event.currentTarget.getBoundingClientRect();
+    const y = event.clientY - rect.top;
+    onRowDragOver({
+      type: "row",
+      path: node.path,
+      position: y < rect.height / 2 ? "before" : "after",
+    });
+  }
+
+  const rowDropPosition =
+    dragTarget?.type === "row" && dragTarget.path === node.path ? dragTarget.position : null;
+
   return (
-    <li>
+    <li className="relative">
+      {rowDropPosition === "before" && (
+        <div className="pointer-events-none absolute left-2 right-2 top-0 z-10 h-0.5 rounded-full bg-white/70" />
+      )}
       <div
         draggable
+        onDragEnd={handleDragEnd}
         onDragStart={handleDragStart}
-        onDragOver={(event) => {
-          if (isFolder) event.preventDefault();
-        }}
+        onDragOver={handleRowDragOver}
         onDrop={handleDrop}
-        className={`group flex h-8 items-center gap-1 rounded-md px-2 text-sm hover:bg-white/10 ${
+        className={`group flex h-8 items-center gap-1 rounded-md px-2 text-sm transition-colors hover:bg-white/10 ${
           selectedPath === node.path ? "bg-white/10 text-white" : ""
+        } ${rowDropPosition ? "bg-white/[0.06]" : ""
         }`}
       >
         {isFolder ? (
@@ -329,14 +450,30 @@ function FileTreeItem({
           </div>
         )}
       </div>
+      {rowDropPosition === "after" && (
+        <div className="pointer-events-none absolute bottom-0 left-2 right-2 z-10 h-0.5 rounded-full bg-white/70" />
+      )}
 
       {isFolder && isExpanded && node.children && (
-        <div className="pl-4">
+        <div
+          onDragOver={(event) => onContainerDragOver(event, node.path)}
+          onDrop={(event) => onDropIntoFolder(event, node.path)}
+          className={`pl-4 transition-colors ${
+            dragTarget?.type === "container" && dragTarget.folderPath === node.path
+              ? "rounded-md bg-white/[0.04] ring-1 ring-white/10"
+              : ""
+          }`}
+        >
           <FileTree
+            dragTarget={dragTarget}
             expandedFolders={expandedFolders}
+            folderPath={node.path}
             nodes={node.children}
             onCreate={onCreate}
-            onMove={onMove}
+            onContainerDragOver={onContainerDragOver}
+            onDropIntoFolder={onDropIntoFolder}
+            onRowDragOver={onRowDragOver}
+            onReorder={onReorder}
             onSelectFile={onSelectFile}
             onToggleFolder={onToggleFolder}
             selectedPath={selectedPath}

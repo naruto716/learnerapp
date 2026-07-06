@@ -2,23 +2,32 @@
 
 import { CaretLeftIcon, CaretRightIcon, SidebarIcon } from "@phosphor-icons/react";
 import { useRouter } from "next/navigation";
+import { useState } from "react";
 import IconButton from "../IconButton";
 import { documentTitle } from "../documentPaths";
+
+type TabDragTarget = {
+  path: string;
+  position: "before" | "after";
+} | null;
 
 export default function TopBar({
   activeDocumentPath,
   isSidebarOpen,
+  onReorderTabs,
   onSelectTab,
   openTabs,
   toggleSidebar,
 }: {
   activeDocumentPath: string | null;
   isSidebarOpen: boolean;
+  onReorderTabs: (sourcePath: string, targetPath: string, position: "before" | "after") => void;
   onSelectTab: (documentPath: string) => void;
   openTabs: string[];
   toggleSidebar: () => void;
 }) {
   const router = useRouter();
+  const [dragTarget, setDragTarget] = useState<TabDragTarget>(null);
 
   return (
     <div className="app-drag flex h-10 w-full items-center gap-3 border-b border-white/10 bg-white/5 pr-2">
@@ -46,13 +55,44 @@ export default function TopBar({
           <button
             key={documentPath}
             type="button"
+            draggable
+            onDragStart={(event) => {
+              event.dataTransfer.effectAllowed = "move";
+              event.dataTransfer.setData("application/x-learner-tab", documentPath);
+            }}
+            onDragEnd={() => setDragTarget(null)}
+            onDragLeave={() => {
+              if (dragTarget?.path === documentPath) setDragTarget(null);
+            }}
+            onDragOver={(event) => {
+              event.preventDefault();
+              const rect = event.currentTarget.getBoundingClientRect();
+              const x = event.clientX - rect.left;
+              setDragTarget({
+                path: documentPath,
+                position: x < rect.width / 2 ? "before" : "after",
+              });
+            }}
+            onDrop={(event) => {
+              event.preventDefault();
+              const sourcePath = event.dataTransfer.getData("application/x-learner-tab");
+              const position = dragTarget?.path === documentPath ? dragTarget.position : "before";
+              setDragTarget(null);
+              onReorderTabs(sourcePath, documentPath, position);
+            }}
             onClick={() => onSelectTab(documentPath)}
-            className={`min-w-36 max-w-56 truncate border-l ${index === array.length - 1 ? "border-r" : ""} border-white/10 px-4 text-left text-sm ${
+            className={`relative min-w-36 max-w-56 truncate border-l ${index === array.length - 1 ? "border-r" : ""} border-white/10 px-4 text-left text-sm transition-colors ${
               activeDocumentPath === documentPath
                 ? "bg-white/10 text-white"
                 : "text-white/60 hover:bg-white/5 hover:text-white"
-            }`}
+            } ${dragTarget?.path === documentPath ? "bg-white/[0.08]" : ""}`}
           >
+            {dragTarget?.path === documentPath && dragTarget.position === "before" && (
+              <span className="pointer-events-none absolute bottom-1 left-0 top-1 w-0.5 rounded-full bg-white/70" />
+            )}
+            {dragTarget?.path === documentPath && dragTarget.position === "after" && (
+              <span className="pointer-events-none absolute bottom-1 right-0 top-1 w-0.5 rounded-full bg-white/70" />
+            )}
             {documentTitle(documentPath)}
           </button>
         ))}

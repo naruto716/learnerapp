@@ -45,6 +45,20 @@ function replacePath(paths: string[], oldPath: string, newPath: string) {
   });
 }
 
+function reorderList(items: string[], source: string, target: string, position: "before" | "after") {
+  if (source === target) return items;
+
+  const next = items.filter((item) => item !== source);
+  const targetIndex = next.indexOf(target);
+
+  if (targetIndex === -1) {
+    return items;
+  }
+
+  next.splice(position === "before" ? targetIndex : targetIndex + 1, 0, source);
+  return next;
+}
+
 export default function AppShell() {
   const router = useRouter();
   const pathname = usePathname();
@@ -173,6 +187,9 @@ export default function AppShell() {
           activeDocumentPath={activeDocumentPath}
           isSidebarOpen={isSidebarOpen}
           openTabs={openTabs}
+          onReorderTabs={(sourcePath, targetPath, position) => {
+            setOpenTabs((current) => reorderList(current, sourcePath, targetPath, position));
+          }}
           onSelectTab={openDocument}
           toggleSidebar={() => setIsSidebarOpen((isOpen) => !isOpen)}
         />

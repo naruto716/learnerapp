@@ -15,6 +15,12 @@ declare global {
     children?: DocumentNode[];
   };
 
+  type DocumentReorderRequest = {
+    sourcePath: string;
+    targetPath: string;
+    position: "before" | "after";
+  };
+
   interface Window {
     learner?: {
       platform: NodeJS.Platform;
@@ -39,6 +45,10 @@ declare global {
       renameDocumentFile: (filePath: string, newTitle: string) => Promise<{
         directory: string;
         newPath: string;
+        tree: DocumentNode[];
+      }>;
+      reorderDocumentEntry: (reorderRequest: DocumentReorderRequest) => Promise<{
+        directory: string;
         tree: DocumentNode[];
       }>;
     };

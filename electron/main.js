@@ -8,6 +8,7 @@ const {
   getDocumentRoot,
   listDocumentTree,
   moveDocumentEntry,
+  reorderDocumentEntry,
   renameDocumentFile,
   readDocumentFile,
   saveDocumentFile,
@@ -152,6 +153,14 @@ ipcMain.handle("document:rename", async (_event, filePath, newTitle) => {
   return {
     directory: getDocumentRoot(),
     newPath,
+    tree: await listDocumentTree(),
+  };
+});
+
+ipcMain.handle("document:reorder", async (_event, reorderRequest) => {
+  await reorderDocumentEntry(reorderRequest);
+  return {
+    directory: getDocumentRoot(),
     tree: await listDocumentTree(),
   };
 });

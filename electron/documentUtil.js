@@ -10,6 +10,7 @@ const emptyDocument = {
     },
   ],
 };
+const orderFileName = ".documents-order.json";
 
 function getDocumentRoot() {
   return path.join(app.getPath("userData"), "documents");
@@ -23,6 +24,14 @@ async function ensureDocumentRoot() {
 
 function toAppPath(rootDir, fullPath) {
   return path.relative(rootDir, fullPath).split(path.sep).join("/");
+}
+
+function getParentPath(relativePath) {
+  return path.dirname(relativePath).replace(/\\/g, "/").replace(/^\.$/, "");
+}
+
+function getBaseName(relativePath) {
+  return path.basename(relativePath);
 }
 
 function resolveInsideDocumentRoot(relativePath, options = {}) {
@@ -54,6 +63,10 @@ async function listDocumentTree(dir = getDocumentRoot(), rootDir = getDocumentRo
   const nodes = [];
 
   for (const entry of entries) {
+    if (entry.name === orderFileName) {
+      continue;
+    }
+
     const fullPath = path.join(dir, entry.name);
 
     if (entry.isDirectory()) {
@@ -74,13 +87,58 @@ async function listDocumentTree(dir = getDocumentRoot(), rootDir = getDocumentRo
     }
   }
 
-  return nodes.sort((a, b) => {
-    if (a.type !== b.type) {
-      return a.type === "folder" ? -1 : 1;
-    }
+  return sortAndNormalizeNodes(dir, nodes);
+}
 
-    return a.name.localeCompare(b.name);
-  });
+async function readOrder(folderFullPath) {
+  try {
+    const content = await fs.readFile(path.join(folderFullPath, orderFileName), "utf8");
+    const parsed = JSON.parse(content);
+    return Array.isArray(parsed.children) ? parsed.children.filter((name) => typeof name === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+async function writeOrder(folderFullPath, children) {
+  await fs.writeFile(
+    path.join(folderFullPath, orderFileName),
+    `${JSON.stringify({ children }, null, 2)}\n`,
+    "utf8",
+  );
+}
+
+async function sortAndNormalizeNodes(folderFullPath, nodes) {
+  const existingNames = nodes.map((node) => node.name);
+  const order = await readOrder(folderFullPath);
+  const normalizedOrder = [
+    ...order.filter((name) => existingNames.includes(name)),
+    ...existingNames.filter((name) => !order.includes(name)),
+  ];
+  const orderIndex = new Map(normalizedOrder.map((name, index) => [name, index]));
+
+  await writeOrder(folderFullPath, normalizedOrder);
+
+  return nodes.sort((a, b) => (orderIndex.get(a.name) ?? 0) - (orderIndex.get(b.name) ?? 0));
+}
+
+async function appendToFolderOrder(folderFullPath, childName) {
+  const order = await readOrder(folderFullPath);
+  await writeOrder(folderFullPath, [...order.filter((name) => name !== childName), childName]);
+}
+
+async function removeFromFolderOrder(folderFullPath, childName) {
+  const order = await readOrder(folderFullPath);
+  await writeOrder(folderFullPath, order.filter((name) => name !== childName));
+}
+
+async function renameInFolderOrder(folderFullPath, oldName, newName) {
+  const order = await readOrder(folderFullPath);
+  const nextOrder = order.map((name) => (name === oldName ? newName : name));
+  if (!nextOrder.includes(newName)) {
+    nextOrder.push(newName);
+  }
+  await writeOrder(folderFullPath, nextOrder.filter((name, index, array) => array.indexOf(name) === index));
 }
 
 async function readDocumentFile(filePath) {
@@ -99,6 +157,7 @@ async function createDocumentFolder(folderPath) {
   await ensureDocumentRoot();
   const fullPath = resolveInsideDocumentRoot(folderPath);
   await fs.mkdir(fullPath, { recursive: true });
+  await appendToFolderOrder(path.dirname(fullPath), path.basename(fullPath));
 }
 
 async function createDocumentFile(filePath) {
@@ -108,6 +167,7 @@ async function createDocumentFile(filePath) {
 
   await fs.mkdir(path.dirname(fullPath), { recursive: true });
   await fs.writeFile(fullPath, `${JSON.stringify(emptyDocument, null, 2)}\n`, { flag: "wx" });
+  await appendToFolderOrder(path.dirname(fullPath), path.basename(fullPath));
 }
 
 async function pathExists(fullPath) {
@@ -154,6 +214,8 @@ async function moveDocumentEntry(sourcePath, targetFolderPath = "") {
   }
 
   await fs.rename(sourceFullPath, destinationFullPath);
+  await removeFromFolderOrder(path.dirname(sourceFullPath), path.basename(sourceFullPath));
+  await appendToFolderOrder(targetFolderFullPath, path.basename(destinationFullPath));
 }
 
 async function renameDocumentFile(filePath, newTitle) {
@@ -187,7 +249,47 @@ async function renameDocumentFile(filePath, newTitle) {
   }
 
   await fs.rename(sourceFullPath, destinationFullPath);
+  await renameInFolderOrder(path.dirname(sourceFullPath), path.basename(sourceFullPath), path.basename(destinationFullPath));
   return toAppPath(documentRoot, destinationFullPath);
+}
+
+async function reorderDocumentEntry({ sourcePath, targetPath, position }) {
+  await ensureDocumentRoot();
+
+  if (!["before", "after"].includes(position)) {
+    throw new Error("Invalid reorder position.");
+  }
+
+  const targetFullPath = resolveInsideDocumentRoot(targetPath);
+  const sourceParentPath = getParentPath(sourcePath);
+  const targetParentPath = getParentPath(targetPath);
+
+  if (sourcePath === targetPath) {
+    return;
+  }
+
+  if (sourceParentPath !== targetParentPath) {
+    await moveDocumentEntry(sourcePath, targetParentPath);
+  }
+
+  const folderFullPath = path.dirname(targetFullPath);
+  const sourceName = getBaseName(sourcePath);
+  const targetName = getBaseName(targetPath);
+  const entries = await fs.readdir(folderFullPath, { withFileTypes: true });
+  const existingNames = entries
+    .map((entry) => entry.name)
+    .filter((name) => name !== orderFileName);
+  const order = await readOrder(folderFullPath);
+  const normalizedOrder = [
+    ...order.filter((name) => existingNames.includes(name)),
+    ...existingNames.filter((name) => !order.includes(name)),
+  ].filter((name) => name !== sourceName);
+
+  const targetIndex = normalizedOrder.indexOf(targetName);
+  const insertIndex = targetIndex === -1 ? normalizedOrder.length : targetIndex + (position === "after" ? 1 : 0);
+  normalizedOrder.splice(insertIndex, 0, sourceName);
+
+  await writeOrder(folderFullPath, normalizedOrder);
 }
 
 module.exports = {
@@ -199,4 +301,5 @@ module.exports = {
   createDocumentFile,
   moveDocumentEntry,
   renameDocumentFile,
+  reorderDocumentEntry,
 };
