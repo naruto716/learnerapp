@@ -299,7 +299,7 @@ function FileTree({
     <ul
       onDragOver={(event) => onContainerDragOver(event, folderPath)}
       onDrop={(event) => onDropIntoFolder(event, folderPath)}
-      className={`min-h-8 px-2 py-1 transition-colors ${
+      className={`min-h-8 space-y-0.5 px-2 py-1 transition-colors ${
         isContainerTarget ? "rounded-md bg-white/[0.04] ring-1 ring-white/10" : ""
       }`}
     >
