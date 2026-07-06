@@ -1,10 +1,13 @@
 "use client";
 
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import SideBar from "@/components/sidebar/sidebar";
 import TopBar from "@/components/topbar/topbar";
-import TiptapEditor, { type PersistedEditorState } from "@/components/editor/TiptapEditor";
+import TiptapEditor, {
+  type CurrentDocumentAgentTools,
+  type PersistedEditorState,
+} from "@/components/editor/TiptapEditor";
 import { documentPathToRoute, routeToDocumentPath } from "@/components/documentPaths";
 import ChatBubble from "./ai/ChatBubble";
 import ChatPanel from "./ai/ChatPanel";
@@ -72,6 +75,7 @@ export default function AppShell() {
   const [documentsVersion, setDocumentsVersion] = useState(0);
   const [workspaceLoaded, setWorkspaceLoaded] = useState(false);
   const restoredWorkspaceRef = useRef(false);
+  const editorAgentToolsRef = useRef<Record<string, CurrentDocumentAgentTools>>({});
 
   useEffect(() => {
     if (restoredWorkspaceRef.current) return;
@@ -186,6 +190,19 @@ export default function AppShell() {
     });
   }
 
+  const updateEditorAgentTools = useCallback((documentPath: string, tools: CurrentDocumentAgentTools | null) => {
+    if (tools) {
+      editorAgentToolsRef.current[documentPath] = tools;
+    } else {
+      delete editorAgentToolsRef.current[documentPath];
+    }
+  }, []);
+
+  const getCurrentDocumentTools = useCallback(() => {
+    if (!activeDocumentPath) return null;
+    return editorAgentToolsRef.current[activeDocumentPath] ?? null;
+  }, [activeDocumentPath]);
+
   return (
     <div className="flex h-screen overflow-hidden">
       <SideBar
@@ -221,6 +238,7 @@ export default function AppShell() {
                 documentPath={documentPath}
                 initialState={editorStates[documentPath]}
                 key={documentPath}
+                onAgentToolsChange={updateEditorAgentTools}
                 onPersistedStateChange={(state) => updateEditorState(documentPath, state)}
                 onRename={handleDocumentRenamed}
               />
@@ -229,6 +247,7 @@ export default function AppShell() {
         </main>
       </div>
       <ChatPanel
+        getCurrentDocumentTools={getCurrentDocumentTools}
         isOpen={isBubbleOpen}
         isSidebarOpen={isSidebarOpen}
         onClose={() => setIsBubbleOpen(false)}

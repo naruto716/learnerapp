@@ -14,7 +14,10 @@ import {
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import type { ProposedDocumentPatch } from "./documentPatch";
 import type { ChangeEvent, DragEvent, FormEvent, KeyboardEvent, ClipboardEvent } from "react";
+import { runStudyAgent, type AgentContextState } from "./studyAgent";
+import type { CurrentDocumentAgentTools } from "@/components/editor/TiptapEditor";
 
 const sessionsStorageKey = "learner.ai.sessions.v1";
 const currentSessionStorageKey = "learner.ai.currentSession.v1";
@@ -30,12 +33,14 @@ type ChatMessage = {
   content: string;
   createdAt: number;
   images?: string[];
+  patches?: ProposedDocumentPatch[];
 };
 
 type ChatSession = {
   id: string;
   title: string;
   messages: ChatMessage[];
+  agentContextState?: AgentContextState;
   createdAt: number;
   updatedAt: number;
 };
@@ -59,6 +64,45 @@ function validMessage(message: unknown): message is ChatMessage {
     typeof candidate.id === "string" &&
     (candidate.role === "user" || candidate.role === "assistant") &&
     typeof candidate.content === "string" &&
+    typeof candidate.createdAt === "number" &&
+    (typeof candidate.patches === "undefined" ||
+      (Array.isArray(candidate.patches) && candidate.patches.every(validPatch)))
+  );
+}
+
+function validAgentContextState(contextState: unknown): contextState is AgentContextState {
+  if (!contextState || typeof contextState !== "object") return false;
+
+  const candidate = contextState as Partial<AgentContextState>;
+  return (
+    (typeof candidate.summary === "undefined" || typeof candidate.summary === "string") &&
+    (typeof candidate.summarizedThroughMessageIndex === "undefined" ||
+      typeof candidate.summarizedThroughMessageIndex === "number")
+  );
+}
+
+function validPatch(patch: unknown): patch is ProposedDocumentPatch {
+  if (!patch || typeof patch !== "object") return false;
+
+  const candidate = patch as Partial<ProposedDocumentPatch>;
+  const changeType = candidate.changeType ?? "patch";
+
+  if (changeType !== "patch" && changeType !== "replace") {
+    return false;
+  }
+
+  const hasValidContent =
+    changeType === "replace"
+      ? typeof candidate.replacementMarkdown === "string"
+      : typeof candidate.patchText === "string";
+
+  return (
+    typeof candidate.id === "string" &&
+    typeof candidate.documentPath === "string" &&
+    typeof candidate.baseHash === "string" &&
+    typeof candidate.summary === "string" &&
+    hasValidContent &&
+    ["pending", "previewing", "applied", "rejected", "error"].includes(candidate.status ?? "") &&
     typeof candidate.createdAt === "number"
   );
 }
@@ -69,6 +113,99 @@ function titleFromMessages(messages: ChatMessage[]) {
 
   const title = firstUserMessage.content.trim();
   return title.length > 40 ? `${title.slice(0, 40)}...` : title;
+}
+
+function PatchPreview({
+  onApply,
+  onPreview,
+  onReject,
+  patch,
+}: {
+  onApply: (patchId: string) => void;
+  onPreview: (patchId: string) => void;
+  onReject: (patchId: string) => void;
+  patch: ProposedDocumentPatch;
+}) {
+  const [showDetails, setShowDetails] = useState(false);
+  const canReviewPatch = patch.status === "pending" || patch.status === "previewing" || patch.status === "error";
+  const changeType = patch.changeType ?? "patch";
+  const detailsText = changeType === "replace" ? patch.replacementMarkdown : patch.patchText;
+
+  return (
+    <div className="mt-3 rounded-xl bg-black/20 p-3 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.12)]">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold uppercase tracking-wide text-white/48">
+            {changeType === "replace" ? "Proposed Replacement" : "Proposed Patch"}
+          </p>
+          <p className="mt-1 text-sm text-white/88">{patch.summary}</p>
+          <p className="mt-1 text-xs text-white/42">
+            {patch.status === "previewing"
+              ? "Preview is active in the editor."
+              : "Review the visual preview in the editor before applying."}
+          </p>
+        </div>
+        <span
+          className={`shrink-0 rounded-full px-2 py-1 text-[11px] ${
+            patch.status === "pending"
+              ? "bg-amber-300/12 text-amber-200/90"
+              : patch.status === "previewing"
+                ? "bg-sky-300/12 text-sky-200/90"
+                : patch.status === "applied"
+                  ? "bg-emerald-300/12 text-emerald-200/90"
+                  : patch.status === "error"
+                    ? "bg-red-300/12 text-red-200/90"
+                    : "bg-white/10 text-white/55"
+          }`}
+        >
+          {patch.status === "previewing" ? "previewing" : patch.status}
+        </span>
+      </div>
+
+      {showDetails && (
+        <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap rounded-lg bg-black/30 p-3 text-xs leading-5 text-white/72">
+          {detailsText}
+        </pre>
+      )}
+
+      {patch.error && <p className="mt-3 rounded-lg bg-red-300/10 px-2 py-1.5 text-xs text-red-200">{patch.error}</p>}
+
+      {canReviewPatch && (
+        <div className="mt-3 flex justify-end gap-2">
+          <button
+            type="button"
+            className="rounded-full px-3 py-1.5 text-xs text-white/55 transition hover:bg-white/[0.08] hover:text-white/85"
+            onClick={() => setShowDetails((detailsVisible) => !detailsVisible)}
+          >
+            {showDetails ? "Hide patch" : "Details"}
+          </button>
+          <button
+            type="button"
+            className="rounded-full px-3 py-1.5 text-xs text-white/55 transition hover:bg-white/[0.08] hover:text-white/85"
+            onClick={() => onPreview(patch.id)}
+          >
+            {patch.status === "previewing" ? "Show in editor" : "Preview"}
+          </button>
+          <button
+            type="button"
+            className="rounded-full px-3 py-1.5 text-xs text-white/55 transition hover:bg-white/[0.08] hover:text-white/85"
+            onClick={() => onReject(patch.id)}
+          >
+            Reject
+          </button>
+          {(patch.status === "pending" || patch.status === "previewing") && (
+            <button
+              type="button"
+              className="rounded-full bg-white/90 px-3 py-1.5 text-xs font-medium text-black transition hover:bg-white"
+              onClick={() => onApply(patch.id)}
+            >
+              Apply
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function readSessions() {
@@ -85,6 +222,7 @@ function readSessions() {
             typeof session.title === "string" &&
             Array.isArray(session.messages) &&
             session.messages.every(validMessage) &&
+            (typeof session.agentContextState === "undefined" || validAgentContextState(session.agentContextState)) &&
             typeof session.createdAt === "number" &&
             typeof session.updatedAt === "number"
           );
@@ -148,10 +286,12 @@ function MessageContent({ message }: { message: ChatMessage }) {
 }
 
 export default function ChatPanel({
+  getCurrentDocumentTools,
   isSidebarOpen,
   isOpen,
   onClose,
 }: {
+  getCurrentDocumentTools: () => CurrentDocumentAgentTools | null;
   isSidebarOpen: boolean;
   isOpen: boolean;
   onClose: () => void;
@@ -162,11 +302,14 @@ export default function ChatPanel({
   const [historyOpen, setHistoryOpen] = useState(false);
   const [input, setInput] = useState("");
   const [images, setImages] = useState<PendingImage[]>([]);
+  const [isAgentRunning, setIsAgentRunning] = useState(false);
+  const [agentContextState, setAgentContextState] = useState<AgentContextState>({});
   const [isDragOver, setIsDragOver] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [storageLoaded, setStorageLoaded] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const messagesRef = useRef<ChatMessage[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const imagesRef = useRef<PendingImage[]>([]);
@@ -182,6 +325,7 @@ export default function ChatPanel({
       setSessions(loadedSessions);
       setCurrentSessionId(nextSessionId);
       setMessages(activeSession?.messages ?? []);
+      setAgentContextState(activeSession?.agentContextState ?? {});
       setStorageLoaded(true);
     }, 0);
 
@@ -197,6 +341,10 @@ export default function ChatPanel({
     if (!storageLoaded) return;
     localStorage.setItem(sessionsStorageKey, JSON.stringify(sessions));
   }, [sessions, storageLoaded]);
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -223,7 +371,7 @@ export default function ChatPanel({
     };
   }, []);
 
-  function saveMessagesToSession(nextMessages: ChatMessage[]) {
+  function saveMessagesToSession(nextMessages: ChatMessage[], nextAgentContextState = agentContextState) {
     if (!currentSessionId || nextMessages.length === 0) return;
 
     setSessions((current) => {
@@ -232,6 +380,7 @@ export default function ChatPanel({
         id: currentSessionId,
         title: titleFromMessages(nextMessages),
         messages: nextMessages,
+        agentContextState: nextAgentContextState,
         createdAt: existingSession?.createdAt ?? Date.now(),
         updatedAt: Date.now(),
       };
@@ -243,6 +392,7 @@ export default function ChatPanel({
   function startNewChat() {
     setCurrentSessionId(generateId("session"));
     setMessages([]);
+    setAgentContextState({});
     setInput("");
     setImages((current) => {
       current.forEach((image) => URL.revokeObjectURL(image.previewUrl));
@@ -254,6 +404,7 @@ export default function ChatPanel({
   function loadSession(session: ChatSession) {
     setCurrentSessionId(session.id);
     setMessages(session.messages);
+    setAgentContextState(session.agentContextState ?? {});
     setHistoryOpen(false);
   }
 
@@ -263,6 +414,7 @@ export default function ChatPanel({
     if (sessionId === currentSessionId) {
       setCurrentSessionId(generateId("session"));
       setMessages([]);
+      setAgentContextState({});
     }
   }
 
@@ -343,24 +495,132 @@ export default function ChatPanel({
     });
   }
 
-  function submitMessage(event?: FormEvent<HTMLFormElement>) {
+  function updatePatch(patchId: string, update: (patch: ProposedDocumentPatch) => ProposedDocumentPatch) {
+    const nextMessages = messagesRef.current.map((message) => {
+      if (!message.patches?.some((patch) => patch.id === patchId)) return message;
+
+      return {
+        ...message,
+        patches: message.patches.map((patch) => (patch.id === patchId ? update(patch) : patch)),
+      };
+    });
+
+    messagesRef.current = nextMessages;
+    setMessages(nextMessages);
+    saveMessagesToSession(nextMessages);
+  }
+
+  function previewPatch(patchId: string, revealEditor = true) {
+    const patch = messagesRef.current
+      .flatMap((message) => message.patches ?? [])
+      .find((candidate) => candidate.id === patchId);
+
+    if (!patch) return;
+
+    const documentTools = getCurrentDocumentTools();
+    if (!documentTools) {
+      updatePatch(patchId, (current) => ({
+        ...current,
+        status: "error",
+        error: "Open the target document before previewing this patch.",
+      }));
+      return;
+    }
+
+    if (revealEditor) {
+      onClose();
+    }
+
+    const result = documentTools.previewPatch(patch, {
+      onApply: applyPatch,
+      onReject: rejectPatch,
+    });
+
+    if (result.failures.length > 0) {
+      updatePatch(patchId, (current) => ({
+        ...current,
+        status: "error",
+        error: result.failures.join("\n"),
+      }));
+      return;
+    }
+
+    updatePatch(patchId, (current) => ({
+      ...current,
+      status: "previewing",
+      error: undefined,
+    }));
+
+  }
+
+  function applyPatch(patchId: string) {
+    const patch = messagesRef.current
+      .flatMap((message) => message.patches ?? [])
+      .find((candidate) => candidate.id === patchId);
+
+    if (!patch) return;
+
+    const documentTools = getCurrentDocumentTools();
+    if (!documentTools) {
+      updatePatch(patchId, (current) => ({
+        ...current,
+        status: "error",
+        error: "Open the target document before applying this patch.",
+      }));
+      return;
+    }
+
+    const result = documentTools.applyPatch(patch);
+
+    if (result.failures.length === 0) {
+      documentTools.clearPatchPreview(patchId);
+    }
+
+    updatePatch(patchId, (current) => ({
+      ...current,
+      status: result.failures.length > 0 ? "error" : "applied",
+      error: result.failures.join("\n") || undefined,
+    }));
+  }
+
+  function rejectPatch(patchId: string) {
+    getCurrentDocumentTools()?.clearPatchPreview(patchId);
+    updatePatch(patchId, (patch) => ({
+      ...patch,
+      status: "rejected",
+      error: undefined,
+    }));
+  }
+
+  async function submitMessage(event?: FormEvent<HTMLFormElement>) {
     event?.preventDefault();
+    if (isAgentRunning) return;
 
     const content = input.trim();
     const readyImages = images.filter((image) => image.status === "ready" && image.dataUrl);
     if (!content && readyImages.length === 0) return;
 
+    const userMessage: ChatMessage = {
+      id: generateId("message"),
+      role: "user",
+      content,
+      createdAt: Date.now(),
+      images: readyImages.map((image) => image.dataUrl as string),
+    };
+    const assistantMessage: ChatMessage = {
+      id: generateId("message"),
+      role: "assistant",
+      content: "",
+      createdAt: Date.now(),
+    };
+    const messagesForAgent = [...messages, userMessage];
     const nextMessages = [
       ...messages,
-      {
-        id: generateId("message"),
-        role: "user" as const,
-        content,
-        createdAt: Date.now(),
-        images: readyImages.map((image) => image.dataUrl as string),
-      },
+      userMessage,
+      assistantMessage,
     ];
 
+    messagesRef.current = nextMessages;
     setMessages(nextMessages);
     saveMessagesToSession(nextMessages);
 
@@ -369,16 +629,63 @@ export default function ChatPanel({
       current.forEach((image) => URL.revokeObjectURL(image.previewUrl));
       return [];
     });
+
+    setIsAgentRunning(true);
+
+    try {
+      const proposedPatches: ProposedDocumentPatch[] = [];
+      const response = await runStudyAgent({
+        contextState: agentContextState,
+        getCurrentDocumentTools,
+        onPatchProposed: (patch) => {
+          proposedPatches.push(patch);
+        },
+        messages: messagesForAgent.map((message) => ({
+          role: message.role,
+          content: message.content,
+          images: message.images,
+        })),
+      });
+      const finalMessages = nextMessages.map((message) =>
+        message.id === assistantMessage.id
+          ? {
+              ...message,
+              content: response.content,
+              patches: proposedPatches.length > 0 ? proposedPatches : undefined,
+            }
+          : message,
+      );
+
+      messagesRef.current = finalMessages;
+      setAgentContextState(response.contextState);
+      setMessages(finalMessages);
+      saveMessagesToSession(finalMessages, response.contextState);
+
+    } catch (agentError) {
+      const errorMessage =
+        agentError instanceof Error ? agentError.message : "The study agent failed to respond.";
+      const finalMessages = nextMessages.map((message) =>
+        message.id === assistantMessage.id
+          ? { ...message, content: `I couldn't complete that request.\n\n${errorMessage}` }
+          : message,
+      );
+
+      messagesRef.current = finalMessages;
+      setMessages(finalMessages);
+      saveMessagesToSession(finalMessages);
+    } finally {
+      setIsAgentRunning(false);
+    }
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
-      submitMessage();
+      void submitMessage();
     }
   }
 
-  const canSend = Boolean(input.trim()) || images.some((image) => image.status === "ready");
+  const canSend = !isAgentRunning && (Boolean(input.trim()) || images.some((image) => image.status === "ready"));
   const isUploading = images.some((image) => image.status === "loading");
   const panelBounds = isFullscreen
     ? `${isSidebarOpen ? "left-64" : "left-0"} right-0 top-10 bottom-0 h-auto w-auto rounded-none`
@@ -479,7 +786,20 @@ export default function ChatPanel({
                         ))}
                       </div>
                     )}
-                    {(message.content || message.role === "assistant") && <MessageContent message={message} />}
+                    {message.role === "assistant" && !message.content ? (
+                      <p className="text-white/45">Thinking...</p>
+                    ) : (
+                      (message.content || message.role === "assistant") && <MessageContent message={message} />
+                    )}
+                    {message.patches?.map((patch) => (
+                      <PatchPreview
+                        key={patch.id}
+                        onApply={applyPatch}
+                        onPreview={previewPatch}
+                        onReject={rejectPatch}
+                        patch={patch}
+                      />
+                    ))}
                   </div>
                 </div>
               ))}

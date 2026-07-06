@@ -26,6 +26,8 @@
     }
   },
   "dependencies": {
+    "@langchain/core": "^1.2.1",
+    "@langchain/openai": "^1.5.3",
     "@phosphor-icons/react": "^2.1.10",
     "@tiptap/extension-code-block-lowlight": "^3.27.1",
     "@tiptap/extension-image": "^3.27.1",
@@ -33,13 +35,16 @@
     "@tiptap/react": "^3.27.1",
     "@tiptap/starter-kit": "^3.27.1",
     "katex": "^0.16.47",
+    "langchain": "^1.5.2",
     "lowlight": "^3.3.0",
+    "marked": "^18.0.5",
     "mermaid": "^11.16.0",
     "next": "16.2.10",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.1"
+    "remark-gfm": "^4.0.1",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
