@@ -7,6 +7,7 @@ import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { KeyboardEvent, useEffect, useRef, useState } from "react";
 import { documentTitle } from "../documentPaths";
+import { LearnerCodeBlock } from "./CodeBlock";
 import EditMathDialog, { type EditableMath } from "./EditMathDialog";
 import { LatexDelimiters } from "./LatexDelimiters";
 
@@ -166,7 +167,10 @@ export default function TiptapEditor({
 
   const editor = useEditor({
     extensions: [
-      StarterKit,
+      StarterKit.configure({
+        codeBlock: false,
+      }),
+      LearnerCodeBlock,
       LearnerImage.configure({
         allowBase64: false,
       }),
