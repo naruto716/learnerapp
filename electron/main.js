@@ -5,6 +5,7 @@ const { pathToFileURL } = require("url");
 const {
   createDocumentFile,
   createDocumentFolder,
+  deleteDocumentEntry,
   getDocumentRoot,
   listDocumentTree,
   moveDocumentEntry,
@@ -159,6 +160,14 @@ ipcMain.handle("document:createFile", async (_event, filePath) => {
 
 ipcMain.handle("document:move", async (_event, sourcePath, targetFolderPath) => {
   await moveDocumentEntry(sourcePath, targetFolderPath);
+  return {
+    directory: getDocumentRoot(),
+    tree: await listDocumentTree(),
+  };
+});
+
+ipcMain.handle("document:delete", async (_event, entryPath) => {
+  await deleteDocumentEntry(entryPath);
   return {
     directory: getDocumentRoot(),
     tree: await listDocumentTree(),

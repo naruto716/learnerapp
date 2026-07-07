@@ -6,8 +6,10 @@ import {
   FileIcon,
   FilePlusIcon,
   FolderPlusIcon,
+  TrashIcon,
 } from "@phosphor-icons/react";
-import { DragEvent, useEffect, useState } from "react";
+import { DragEvent, MouseEvent, useEffect, useState } from "react";
+import Dialog from "../Dialog";
 import IconButton from "../IconButton";
 import { filePathWithExtension } from "../documentPaths";
 import CreateDocumentDialog, { type CreateDocumentKind } from "./CreateDocumentDialog";
@@ -36,11 +38,18 @@ type DragTarget =
   | { type: "container"; folderPath: string }
   | null;
 
+type ContextMenuState = {
+  node: DocumentNode;
+  x: number;
+  y: number;
+} | null;
+
 export default function SideBar({
   activeDocumentPath,
   documentsVersion,
   isSidebarOpen,
   onDocumentCreated,
+  onDocumentDeleted,
   onDocumentMoved,
   onOpenDocument,
 }: {
@@ -48,6 +57,7 @@ export default function SideBar({
   documentsVersion: number;
   isSidebarOpen: boolean;
   onDocumentCreated: (documentPath: string) => void;
+  onDocumentDeleted: (deletedPath: string, deletedType: DocumentNode["type"]) => void;
   onDocumentMoved: (oldPath: string, newPath: string) => void;
   onOpenDocument: (documentPath: string) => void;
 }) {
@@ -58,6 +68,8 @@ export default function SideBar({
   const [draftPath, setDraftPath] = useState("");
   const [dragTarget, setDragTarget] = useState<DragTarget>(null);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
+  const [contextMenu, setContextMenu] = useState<ContextMenuState>(null);
+  const [deleteTarget, setDeleteTarget] = useState<DocumentNode | null>(null);
 
   function openCreateDialog(kind: CreateDocumentKind, parentPath = "") {
     setCreateKind(kind);
@@ -70,6 +82,16 @@ export default function SideBar({
     setCreateKind(null);
     setCreateParentPath("");
     setDraftPath("");
+  }
+
+  function openContextMenu(event: MouseEvent, node: DocumentNode) {
+    event.preventDefault();
+    event.stopPropagation();
+    setContextMenu({ node, x: event.clientX, y: event.clientY });
+  }
+
+  function closeDeleteDialog() {
+    setDeleteTarget(null);
   }
 
   function toggleFolder(path: string) {
@@ -148,6 +170,31 @@ export default function SideBar({
       onDocumentMoved(reorderRequest.sourcePath, nextPath);
     } catch (reorderError) {
       setError(reorderError instanceof Error ? reorderError.message : "Failed to reorder item.");
+    }
+  }
+
+  async function deleteEntry() {
+    if (!deleteTarget) return;
+
+    try {
+      const result = await window.learner?.deleteDocumentEntry(deleteTarget.path);
+      if (!result) return;
+
+      setNodes(result.tree);
+      setError("");
+      setExpandedFolders((current) => {
+        const next = new Set(current);
+        for (const path of current) {
+          if (path === deleteTarget.path || path.startsWith(`${deleteTarget.path}/`)) {
+            next.delete(path);
+          }
+        }
+        return next;
+      });
+      onDocumentDeleted(deleteTarget.path, deleteTarget.type);
+      closeDeleteDialog();
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "Failed to delete item.");
     }
   }
 
@@ -244,6 +291,7 @@ export default function SideBar({
             nodes={nodes}
             onCreate={openCreateDialog}
             onContainerDragOver={handleContainerDragOver}
+            onContextMenu={openContextMenu}
             onDropIntoFolder={handleContainerDrop}
             onRowDragOver={setDragTarget}
             onReorder={reorderEntry}
@@ -262,6 +310,39 @@ export default function SideBar({
         onPathChange={setDraftPath}
         onSubmit={submitCreate}
       />
+
+      <DeleteDocumentDialog
+        node={deleteTarget}
+        onClose={closeDeleteDialog}
+        onDelete={deleteEntry}
+      />
+
+      {contextMenu && (
+        <>
+          <button
+            type="button"
+            aria-label="Close file menu"
+            className="fixed inset-0 z-40 cursor-default"
+            onClick={() => setContextMenu(null)}
+          />
+          <div
+            className="app-no-drag fixed z-50 min-w-32 rounded-lg bg-[#252525] p-1 text-sm shadow-xl ring-1 ring-white/10"
+            style={{ left: contextMenu.x, top: contextMenu.y }}
+          >
+            <button
+              type="button"
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-red-200 transition-colors hover:bg-red-400/10"
+              onClick={() => {
+                setDeleteTarget(contextMenu.node);
+                setContextMenu(null);
+              }}
+            >
+              <TrashIcon size={15} />
+              Delete
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -273,6 +354,7 @@ function FileTree({
   nodes,
   onCreate,
   onContainerDragOver,
+  onContextMenu,
   onDropIntoFolder,
   onRowDragOver,
   onReorder,
@@ -286,6 +368,7 @@ function FileTree({
   nodes: DocumentNode[];
   onCreate: (kind: CreateDocumentKind, parentPath?: string) => void;
   onContainerDragOver: (event: DragEvent<HTMLElement>, folderPath: string) => void;
+  onContextMenu: (event: MouseEvent, node: DocumentNode) => void;
   onDropIntoFolder: (event: DragEvent<HTMLElement>, folderPath: string) => void;
   onRowDragOver: (target: DragTarget) => void;
   onReorder: (reorderRequest: DocumentReorderRequest) => void;
@@ -312,6 +395,7 @@ function FileTree({
           node={node}
           onCreate={onCreate}
           onContainerDragOver={onContainerDragOver}
+          onContextMenu={onContextMenu}
           onDropIntoFolder={onDropIntoFolder}
           onRowDragOver={onRowDragOver}
           onReorder={onReorder}
@@ -330,6 +414,7 @@ function FileTreeItem({
   node,
   onCreate,
   onContainerDragOver,
+  onContextMenu,
   onDropIntoFolder,
   onRowDragOver,
   onReorder,
@@ -342,6 +427,7 @@ function FileTreeItem({
   node: DocumentNode;
   onCreate: (kind: CreateDocumentKind, parentPath?: string) => void;
   onContainerDragOver: (event: DragEvent<HTMLElement>, folderPath: string) => void;
+  onContextMenu: (event: MouseEvent, node: DocumentNode) => void;
   onDropIntoFolder: (event: DragEvent<HTMLElement>, folderPath: string) => void;
   onRowDragOver: (target: DragTarget) => void;
   onReorder: (reorderRequest: DocumentReorderRequest) => void;
@@ -401,6 +487,7 @@ function FileTreeItem({
         onDragStart={handleDragStart}
         onDragOver={handleRowDragOver}
         onDrop={handleDrop}
+        onContextMenu={(event) => onContextMenu(event, node)}
         className={`group flex h-8 items-center gap-1 rounded-md px-2 text-sm transition-colors hover:bg-white/10 ${
           selectedPath === node.path ? "bg-white/10 text-white" : ""
         } ${rowDropPosition ? "bg-white/[0.06]" : ""
@@ -471,6 +558,7 @@ function FileTreeItem({
             nodes={node.children}
             onCreate={onCreate}
             onContainerDragOver={onContainerDragOver}
+            onContextMenu={onContextMenu}
             onDropIntoFolder={onDropIntoFolder}
             onRowDragOver={onRowDragOver}
             onReorder={onReorder}
@@ -481,5 +569,54 @@ function FileTreeItem({
         </div>
       )}
     </li>
+  );
+}
+
+function DeleteDocumentDialog({
+  node,
+  onClose,
+  onDelete,
+}: {
+  node: DocumentNode | null;
+  onClose: () => void;
+  onDelete: () => void;
+}) {
+  if (!node) return null;
+
+  const name = displayName(node);
+  const isFolder = node.type === "folder";
+
+  return (
+    <Dialog
+      open={true}
+      title={`Delete ${isFolder ? "folder" : "note"}`}
+      onClose={onClose}
+      display={
+        <div className="space-y-2 text-sm">
+          <p>
+            Delete <span className="font-medium text-white">{name}</span>?
+          </p>
+          {isFolder && <p className="text-xs text-white/50">This also deletes every note and folder inside it.</p>}
+        </div>
+      }
+      footer={
+        <>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md px-3 py-1.5 text-sm hover:bg-white/10"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onDelete}
+            className="rounded-md bg-red-300 px-3 py-1.5 text-sm text-black hover:bg-red-200"
+          >
+            Delete
+          </button>
+        </>
+      }
+    />
   );
 }

@@ -244,6 +244,28 @@ async function moveDocumentEntry(sourcePath, targetFolderPath = "") {
   await appendToFolderOrder(targetFolderFullPath, path.basename(destinationFullPath));
 }
 
+async function deleteDocumentEntry(entryPath) {
+  await ensureDocumentRoot();
+
+  if (isReservedImagePath(entryPath)) {
+    throw new Error("The images folder cannot be deleted from the document tree.");
+  }
+
+  const fullPath = resolveInsideDocumentRoot(entryPath);
+  const stat = await fs.stat(fullPath);
+
+  if (stat.isFile() && path.extname(fullPath).toLowerCase() !== ".json") {
+    throw new Error("Only Tiptap document files can be deleted.");
+  }
+
+  if (!stat.isFile() && !stat.isDirectory()) {
+    throw new Error("Only files and folders can be deleted.");
+  }
+
+  await fs.rm(fullPath, { recursive: stat.isDirectory(), force: false });
+  await removeFromFolderOrder(path.dirname(fullPath), path.basename(fullPath));
+}
+
 async function renameDocumentFile(filePath, newTitle) {
   await ensureDocumentRoot();
 
@@ -388,6 +410,7 @@ module.exports = {
   saveDocumentFile,
   createDocumentFolder,
   createDocumentFile,
+  deleteDocumentEntry,
   moveDocumentEntry,
   renameDocumentFile,
   reorderDocumentEntry,

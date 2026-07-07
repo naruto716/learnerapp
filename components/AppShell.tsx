@@ -50,6 +50,10 @@ function replacePath(paths: string[], oldPath: string, newPath: string) {
   });
 }
 
+function isDeletedDocumentPath(documentPath: string, deletedPath: string, deletedType: DocumentNode["type"]) {
+  return deletedType === "folder" ? documentPath.startsWith(`${deletedPath}/`) : documentPath === deletedPath;
+}
+
 function reorderList(items: string[], source: string, target: string, position: "before" | "after") {
   if (source === target) return items;
 
@@ -155,6 +159,38 @@ export default function AppShell() {
     markDocumentsChanged();
   }
 
+  function handleDocumentDeleted(deletedPath: string, deletedType: DocumentNode["type"]) {
+    setOpenTabs((current) => {
+      const activeIndex = activeDocumentPath ? current.indexOf(activeDocumentPath) : -1;
+      const nextTabs = current.filter((path) => !isDeletedDocumentPath(path, deletedPath, deletedType));
+
+      if (activeDocumentPath && isDeletedDocumentPath(activeDocumentPath, deletedPath, deletedType)) {
+        const nextActivePath = nextTabs[activeIndex] ?? nextTabs[activeIndex - 1] ?? nextTabs[0] ?? null;
+        router.push(nextActivePath ? documentPathToRoute(nextActivePath) : "/");
+      }
+
+      return nextTabs;
+    });
+
+    setEditorStates((current) => {
+      const next = { ...current };
+      for (const path of Object.keys(current)) {
+        if (isDeletedDocumentPath(path, deletedPath, deletedType)) {
+          delete next[path];
+        }
+      }
+      return next;
+    });
+
+    for (const path of Object.keys(editorAgentToolsRef.current)) {
+      if (isDeletedDocumentPath(path, deletedPath, deletedType)) {
+        delete editorAgentToolsRef.current[path];
+      }
+    }
+
+    markDocumentsChanged();
+  }
+
   function handleDocumentRenamed(oldPath: string, newPath: string) {
     setOpenTabs((current) => current.map((path) => (path === oldPath ? newPath : path)));
     setEditorStates((current) => {
@@ -213,6 +249,7 @@ export default function AppShell() {
           markDocumentsChanged();
           openDocument(documentPath);
         }}
+        onDocumentDeleted={handleDocumentDeleted}
         onDocumentMoved={handleDocumentMoved}
         onOpenDocument={openDocument}
       />

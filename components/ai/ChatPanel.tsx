@@ -746,14 +746,14 @@ export default function ChatPanel({
             <div className={`${contentWidth} space-y-4`}>
               {messages.map((message) => (
                 <div
-                  className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
+                  className={`flex ${message.role === "user" ? "justify-end" : "justify-center"}`}
                   key={message.id}
                 >
                   <div
-                    className={`max-w-[78%] rounded-2xl p-3 text-sm leading-relaxed backdrop-blur-[76px] ${
+                    className={`rounded-2xl p-3 text-sm leading-relaxed backdrop-blur-[76px] ${
                       message.role === "user"
-                        ? "rounded-br-md bg-[#6495ed]/20 text-white shadow-[inset_0_0_0_1px_rgba(100,149,237,0.3)]"
-                        : "rounded-bl-md bg-white/[0.08] text-white/88 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.14)]"
+                        ? "max-w-[78%] rounded-br-md bg-[#6495ed]/20 text-white shadow-[inset_0_0_0_1px_rgba(100,149,237,0.3)]"
+                        : "rounded-bl-md text-white/88"
                     }`}
                   >
                     {message.images && message.images.length > 0 && (
@@ -794,7 +794,7 @@ export default function ChatPanel({
         </div>
       </div>
 
-      <div className="relative z-10 px-4 pb-4">
+      <div className="relative z-10 px-4 pb-4 bottom-1 backdrop-blur-[76px]">
         <form
           className={`${contentWidth} flex flex-col rounded-[20px] bg-white/[0.08] p-2 shadow-[0_4px_24px_rgba(0,0,0,0.28),inset_0_0_0_1px_rgba(255,255,255,0.12)] backdrop-blur-xl transition ${
             isDragOver ? "shadow-[0_0_0_1px_rgba(255,255,255,0.45),0_4px_24px_rgba(0,0,0,0.28)]" : ""

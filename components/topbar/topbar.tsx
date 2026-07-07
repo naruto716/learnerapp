@@ -52,7 +52,7 @@ export default function TopBar({
         />
       </div>
 
-      <div className="app-no-drag flex min-w-0 flex-1 items-stretch self-stretch overflow-x-auto">
+      <div className="app-no-drag scrollbar-hidden flex min-w-0 flex-1 items-stretch self-stretch overflow-x-auto">
         {openTabs.map((documentPath, index, array) => (
           <div
             key={documentPath}
