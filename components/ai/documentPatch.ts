@@ -8,7 +8,7 @@ export type ProposedDocumentPatch = {
   changeType?: "patch" | "replace";
   patchText?: string;
   replacementMarkdown?: string;
-  status: "pending" | "previewing" | "applied" | "rejected" | "error";
+  status: "pending" | "previewing" | "applied" | "undone" | "rejected" | "error";
   error?: string;
   createdAt: number;
 };

@@ -102,7 +102,7 @@ function validPatch(patch: unknown): patch is ProposedDocumentPatch {
     typeof candidate.baseHash === "string" &&
     typeof candidate.summary === "string" &&
     hasValidContent &&
-    ["pending", "previewing", "applied", "rejected", "error"].includes(candidate.status ?? "") &&
+    ["pending", "previewing", "applied", "undone", "rejected", "error"].includes(candidate.status ?? "") &&
     typeof candidate.createdAt === "number"
   );
 }
@@ -117,17 +117,18 @@ function titleFromMessages(messages: ChatMessage[]) {
 
 function PatchPreview({
   onApply,
-  onPreview,
   onReject,
+  onUndo,
   patch,
 }: {
   onApply: (patchId: string) => void;
-  onPreview: (patchId: string) => void;
   onReject: (patchId: string) => void;
+  onUndo: (patchId: string) => void;
   patch: ProposedDocumentPatch;
 }) {
-  const [showDetails, setShowDetails] = useState(false);
+  const [showDetails, setShowDetails] = useState(true);
   const canReviewPatch = patch.status === "pending" || patch.status === "previewing" || patch.status === "error";
+  const canApplyPatch = patch.status === "pending" || patch.status === "previewing";
   const changeType = patch.changeType ?? "patch";
   const detailsText = changeType === "replace" ? patch.replacementMarkdown : patch.patchText;
 
@@ -140,9 +141,11 @@ function PatchPreview({
           </p>
           <p className="mt-1 text-sm text-white/88">{patch.summary}</p>
           <p className="mt-1 text-xs text-white/42">
-            {patch.status === "previewing"
-              ? "Preview is active in the editor."
-              : "Review the visual preview in the editor before applying."}
+            {patch.status === "applied"
+              ? "Applied to the note. You can undo this change from here."
+              : patch.status === "undone"
+                ? "This change was undone."
+                : "Review the proposed change here before applying."}
           </p>
         </div>
         <span
@@ -153,9 +156,11 @@ function PatchPreview({
                 ? "bg-sky-300/12 text-sky-200/90"
                 : patch.status === "applied"
                   ? "bg-emerald-300/12 text-emerald-200/90"
-                  : patch.status === "error"
-                    ? "bg-red-300/12 text-red-200/90"
-                    : "bg-white/10 text-white/55"
+                  : patch.status === "undone"
+                    ? "bg-violet-300/12 text-violet-200/90"
+                    : patch.status === "error"
+                      ? "bg-red-300/12 text-red-200/90"
+                      : "bg-white/10 text-white/55"
           }`}
         >
           {patch.status === "previewing" ? "previewing" : patch.status}
@@ -170,7 +175,7 @@ function PatchPreview({
 
       {patch.error && <p className="mt-3 rounded-lg bg-red-300/10 px-2 py-1.5 text-xs text-red-200">{patch.error}</p>}
 
-      {canReviewPatch && (
+      {(canReviewPatch || patch.status === "applied") && (
         <div className="mt-3 flex justify-end gap-2">
           <button
             type="button"
@@ -179,21 +184,24 @@ function PatchPreview({
           >
             {showDetails ? "Hide patch" : "Details"}
           </button>
-          <button
-            type="button"
-            className="rounded-full px-3 py-1.5 text-xs text-white/55 transition hover:bg-white/[0.08] hover:text-white/85"
-            onClick={() => onPreview(patch.id)}
-          >
-            {patch.status === "previewing" ? "Show in editor" : "Preview"}
-          </button>
-          <button
-            type="button"
-            className="rounded-full px-3 py-1.5 text-xs text-white/55 transition hover:bg-white/[0.08] hover:text-white/85"
-            onClick={() => onReject(patch.id)}
-          >
-            Reject
-          </button>
-          {(patch.status === "pending" || patch.status === "previewing") && (
+          {patch.status === "applied" ? (
+            <button
+              type="button"
+              className="rounded-full px-3 py-1.5 text-xs text-white/55 transition hover:bg-white/[0.08] hover:text-white/85"
+              onClick={() => onUndo(patch.id)}
+            >
+              Undo
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="rounded-full px-3 py-1.5 text-xs text-white/55 transition hover:bg-white/[0.08] hover:text-white/85"
+              onClick={() => onReject(patch.id)}
+            >
+              Reject
+            </button>
+          )}
+          {canApplyPatch && (
             <button
               type="button"
               className="rounded-full bg-white/90 px-3 py-1.5 text-xs font-medium text-black transition hover:bg-white"
@@ -510,49 +518,6 @@ export default function ChatPanel({
     saveMessagesToSession(nextMessages);
   }
 
-  function previewPatch(patchId: string, revealEditor = true) {
-    const patch = messagesRef.current
-      .flatMap((message) => message.patches ?? [])
-      .find((candidate) => candidate.id === patchId);
-
-    if (!patch) return;
-
-    const documentTools = getCurrentDocumentTools();
-    if (!documentTools) {
-      updatePatch(patchId, (current) => ({
-        ...current,
-        status: "error",
-        error: "Open the target document before previewing this patch.",
-      }));
-      return;
-    }
-
-    if (revealEditor) {
-      onClose();
-    }
-
-    const result = documentTools.previewPatch(patch, {
-      onApply: applyPatch,
-      onReject: rejectPatch,
-    });
-
-    if (result.failures.length > 0) {
-      updatePatch(patchId, (current) => ({
-        ...current,
-        status: "error",
-        error: result.failures.join("\n"),
-      }));
-      return;
-    }
-
-    updatePatch(patchId, (current) => ({
-      ...current,
-      status: "previewing",
-      error: undefined,
-    }));
-
-  }
-
   function applyPatch(patchId: string) {
     const patch = messagesRef.current
       .flatMap((message) => message.patches ?? [])
@@ -579,6 +544,26 @@ export default function ChatPanel({
     updatePatch(patchId, (current) => ({
       ...current,
       status: result.failures.length > 0 ? "error" : "applied",
+      error: result.failures.join("\n") || undefined,
+    }));
+  }
+
+  function undoPatch(patchId: string) {
+    const documentTools = getCurrentDocumentTools();
+    if (!documentTools) {
+      updatePatch(patchId, (current) => ({
+        ...current,
+        status: "error",
+        error: "Open the target document before undoing this change.",
+      }));
+      return;
+    }
+
+    const result = documentTools.undoPatch(patchId);
+
+    updatePatch(patchId, (current) => ({
+      ...current,
+      status: result.failures.length > 0 ? "error" : "undone",
       error: result.failures.join("\n") || undefined,
     }));
   }
@@ -795,8 +780,8 @@ export default function ChatPanel({
                       <PatchPreview
                         key={patch.id}
                         onApply={applyPatch}
-                        onPreview={previewPatch}
                         onReject={rejectPatch}
+                        onUndo={undoPatch}
                         patch={patch}
                       />
                     ))}

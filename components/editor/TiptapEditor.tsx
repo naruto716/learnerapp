@@ -3,16 +3,15 @@
 import { Extension, mergeAttributes, Node, type Editor, type JSONContent } from "@tiptap/core";
 import Image from "@tiptap/extension-image";
 import { Mathematics } from "@tiptap/extension-mathematics";
+import { Markdown } from "@tiptap/markdown";
 import { DOMSerializer } from "@tiptap/pm/model";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
-import { marked } from "marked";
 import { KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
 import {
   applyDocumentPatchText,
-  formatHtmlForDocumentPatch,
   hashDocumentPatchBase,
   previewDocumentPatchText,
   type DocumentPatchApplyResult,
@@ -41,8 +40,9 @@ export type CurrentDocumentAgentTools = {
     title: string;
     selectedText: string;
     text: string;
+    markdown: string;
     html: string;
-    patchableHtml: string;
+    patchableMarkdown: string;
     patchBaseHash: string;
   };
   previewPatch: (
@@ -54,6 +54,7 @@ export type CurrentDocumentAgentTools = {
   ) => DocumentPatchPreviewResult;
   clearPatchPreview: (patchId?: string) => void;
   applyPatch: (patch: ProposedDocumentPatch) => DocumentPatchApplyResult;
+  undoPatch: (patchId: string) => DocumentPatchApplyResult;
 };
 
 type PendingPatchPreview = {
@@ -66,12 +67,6 @@ type PendingPatchPreview = {
 type PatchPreviewActions = {
   onApply: (patchId: string) => void;
   onReject: (patchId: string) => void;
-};
-
-type PatchLinePosition = {
-  from: number;
-  line: string;
-  to: number;
 };
 
 type AiPatchDecorationState = {
@@ -255,14 +250,80 @@ function proposedChangeType(patch: ProposedDocumentPatch) {
   return patch.changeType ?? "patch";
 }
 
-function markdownToTiptapHtml(markdown: string) {
-  const html = marked.parse(markdown, {
-    async: false,
-    breaks: false,
-    gfm: true,
-  });
+function transformMarkdownOutsideCodeFences(markdown: string, transform: (segment: string) => string) {
+  const lines = markdown.replace(/\r\n/g, "\n").match(/[^\n]*\n|[^\n]+$/g) ?? [];
+  let result = "";
+  let buffer = "";
+  let inFence = false;
+  let fenceCharacter = "";
+  let fenceLength = 0;
 
-  return sanitizePreviewHtml(String(html).trim() || "<p></p>");
+  function flushBuffer() {
+    if (!buffer) return;
+    result += transform(buffer);
+    buffer = "";
+  }
+
+  for (const line of lines) {
+    const fenceMatch = line.trimStart().match(/^(`{3,}|~{3,})/);
+
+    if (fenceMatch) {
+      const marker = fenceMatch[1];
+
+      if (!inFence) {
+        flushBuffer();
+        inFence = true;
+        fenceCharacter = marker[0];
+        fenceLength = marker.length;
+        result += line;
+        continue;
+      }
+
+      if (marker[0] === fenceCharacter && marker.length >= fenceLength) {
+        inFence = false;
+        result += line;
+        continue;
+      }
+    }
+
+    if (inFence) {
+      result += line;
+    } else {
+      buffer += line;
+    }
+  }
+
+  flushBuffer();
+  return result;
+}
+
+function normalizeMarkdownForTiptap(markdown: string) {
+  return transformMarkdownOutsideCodeFences(markdown, (segment) =>
+    segment
+      .replace(/\\\[([\s\S]+?)\\\]/g, (_match, latex: string) => `\n\n$$\n${latex.trim()}\n$$\n\n`)
+      .replace(/\\\(([\s\S]+?)\\\)/g, (_match, latex: string) => `$${latex.trim()}$`),
+  );
+}
+
+function markdownToTiptapJson(editor: Editor, markdown: string) {
+  if (!editor.markdown) {
+    throw new Error("Markdown support is not available in the editor.");
+  }
+
+  return editor.markdown.parse(normalizeMarkdownForTiptap(markdown));
+}
+
+function getPatchableMarkdown(editor: Editor) {
+  return (editor.getMarkdown?.() ?? "").replace(/\r\n/g, "\n").trim();
+}
+
+function tiptapJsonToHtml(editor: Editor, content: JSONContent) {
+  const node = editor.schema.nodeFromJSON(content);
+  const serializer = DOMSerializer.fromSchema(editor.schema);
+  const container = window.document.createElement("div");
+
+  container.appendChild(serializer.serializeFragment(node.content));
+  return sanitizePreviewHtml(container.innerHTML || "<p></p>");
 }
 
 function createPatchInsertionWidget(html: string, index: number) {
@@ -626,163 +687,6 @@ const AiPatchPreviewExtension = Extension.create({
   },
 });
 
-function getPatchLinePositions(editor: Editor) {
-  const serializer = DOMSerializer.fromSchema(editor.schema);
-  const positions: PatchLinePosition[] = [];
-  const doc = editor.state.doc;
-
-  doc.descendants((node, position, parent) => {
-    if (parent !== doc) return false;
-
-    const container = window.document.createElement("div");
-    container.appendChild(serializer.serializeNode(node));
-
-    const nodeLines = formatHtmlForDocumentPatch(container.innerHTML).split("\n");
-    const from = position;
-    const to = Math.min(position + node.nodeSize, doc.content.size);
-
-    nodeLines.forEach((line) => {
-      positions.push({
-        from,
-        line,
-        to,
-      });
-    });
-
-    return false;
-  });
-
-  return positions;
-}
-
-function findLinePositionSequences(linePositions: PatchLinePosition[], needleLines: string[]) {
-  const matches: number[] = [];
-
-  if (needleLines.length === 0 || needleLines.length > linePositions.length) {
-    return matches;
-  }
-
-  for (let index = 0; index <= linePositions.length - needleLines.length; index += 1) {
-    const matched = needleLines.every((line, offset) => linePositions[index + offset]?.line === line);
-
-    if (matched) {
-      matches.push(index);
-    }
-  }
-
-  return matches;
-}
-
-function findSingleLinePosition(linePositions: PatchLinePosition[], line: string) {
-  const matches = linePositions
-    .map((position, index) => (position.line === line ? index : -1))
-    .filter((index) => index >= 0);
-
-  return matches.length === 1 ? linePositions[matches[0]] : null;
-}
-
-function mergeReplacementBlock(blocks: PatchReplacementBlock[], block: PatchReplacementBlock) {
-  const existingBlock = blocks.find((candidate) => candidate.from === block.from && candidate.to === block.to);
-
-  if (!existingBlock) {
-    blocks.push(block);
-    return;
-  }
-
-  existingBlock.removedHtml = [existingBlock.removedHtml, block.removedHtml].filter(Boolean).join("\n");
-  existingBlock.addedHtml = [existingBlock.addedHtml, block.addedHtml].filter(Boolean).join("\n");
-}
-
-function buildPatchReplacementBlocks({
-  editor,
-  patch,
-  preview,
-}: {
-  editor: Editor;
-  patch: ProposedDocumentPatch;
-  preview: DocumentPatchPreviewResult;
-}) {
-  const failures = [...preview.failures];
-
-  if (failures.length > 0) {
-    return {
-      blocks: [],
-      failures,
-    };
-  }
-
-  const linePositions = getPatchLinePositions(editor);
-  const blocks: PatchReplacementBlock[] = [];
-
-  if (linePositions.length === 0) {
-    return {
-      blocks,
-      failures: ["Patch was parsed, but the editor has no visible document rows to preview."],
-    };
-  }
-
-  for (const hunk of preview.hunks) {
-    const hunkStartMatches = findLinePositionSequences(linePositions, hunk.oldLines);
-    const hunkStart = hunkStartMatches.length === 1 ? hunkStartMatches[0] : null;
-    const removedPositions: PatchLinePosition[] = [];
-
-    for (const oldLineOffset of hunk.removedLineIndexes) {
-      const position = hunkStart === null ? null : linePositions[hunkStart + oldLineOffset];
-
-      if (position) {
-        removedPositions.push(position);
-        continue;
-      }
-
-      const fallbackPosition = findSingleLinePosition(linePositions, hunk.oldLines[oldLineOffset]);
-      if (fallbackPosition) {
-        removedPositions.push(fallbackPosition);
-      }
-    }
-
-    const anchorLineIndex =
-      hunkStart === null
-        ? -1
-        : hunkStart + (hunk.oldLines.length > 0 ? Math.max(hunk.oldLines.length - 1, 0) : 0);
-    const anchorPosition =
-      removedPositions.at(-1) ??
-      (anchorLineIndex >= 0 ? linePositions[anchorLineIndex] : null) ??
-      linePositions.at(-1);
-
-    if (!anchorPosition) {
-      failures.push(`Change ${hunk.index}: preview location could not be found in the editor.`);
-      continue;
-    }
-
-    const from =
-      removedPositions.length > 0
-        ? Math.min(...removedPositions.map((position) => position.from))
-        : anchorPosition.to;
-    const to =
-      removedPositions.length > 0
-        ? Math.max(...removedPositions.map((position) => position.to))
-        : anchorPosition.to;
-
-    mergeReplacementBlock(blocks, {
-      addedHtml: hunk.addedLines.join("\n"),
-      from: Math.min(Math.max(from, 0), editor.state.doc.content.size),
-      index: hunk.index,
-      patchId: patch.id,
-      removedHtml: hunk.removedLines.join("\n"),
-      to: Math.min(Math.max(to, 0), editor.state.doc.content.size),
-    });
-  }
-
-  if (failures.length === 0 && blocks.length === 0) {
-    failures.push("Patch did not produce any visible editor rows to preview.");
-  }
-
-  return {
-    blocks,
-    failures,
-  };
-}
-
 export default function TiptapEditor({
   active,
   documentPath,
@@ -806,6 +710,7 @@ export default function TiptapEditor({
   const initialStateRef = useRef(initialState);
   const loadedRef = useRef(false);
   const activePatchPreviewRef = useRef<ActivePatchPreview | null>(null);
+  const agentUndoSnapshotsRef = useRef<Record<string, JSONContent>>({});
   const pendingPatchPreviewRef = useRef<PendingPatchPreview | null>(null);
 
   const editor = useEditor({
@@ -818,6 +723,12 @@ export default function TiptapEditor({
         allowBase64: false,
       }),
       LatexDelimiters,
+      Markdown.configure({
+        markedOptions: {
+          breaks: false,
+          gfm: true,
+        },
+      }),
       AiDiffPreviewBlock,
       AiPatchPreviewExtension,
       Mathematics.configure({
@@ -1069,7 +980,7 @@ export default function TiptapEditor({
       };
     }
 
-    const currentSource = formatHtmlForDocumentPatch(editor.getHTML());
+    const currentSource = getPatchableMarkdown(editor);
     const currentHash = hashDocumentPatchBase(currentSource);
 
     if (patch.baseHash !== currentHash) {
@@ -1198,16 +1109,17 @@ export default function TiptapEditor({
     const readDocument = () => {
       const { from, to } = editor.state.selection;
       const html = editor.getHTML();
-      const patchableHtml = formatHtmlForDocumentPatch(html);
+      const patchableMarkdown = getPatchableMarkdown(editor);
 
       return {
         path: documentPath,
         title: documentTitle(documentPath),
         selectedText: from === to ? "" : editor.state.doc.textBetween(from, to, "\n\n"),
         text: editor.state.doc.textBetween(0, editor.state.doc.content.size, "\n\n"),
+        markdown: patchableMarkdown,
         html,
-        patchableHtml,
-        patchBaseHash: hashDocumentPatchBase(patchableHtml),
+        patchableMarkdown,
+        patchBaseHash: hashDocumentPatchBase(patchableMarkdown),
       };
     };
 
@@ -1237,8 +1149,9 @@ export default function TiptapEditor({
       previewPatch: (patch, actions) => {
         restoreActivePatchPreview();
 
-        const currentSource = formatHtmlForDocumentPatch(editor.getHTML());
+        const currentSource = getPatchableMarkdown(editor);
         const currentHash = hashDocumentPatchBase(currentSource);
+        const currentHtml = editor.getHTML();
 
         if (patch.baseHash !== currentHash) {
           const failures = [
@@ -1277,7 +1190,27 @@ export default function TiptapEditor({
             };
           }
 
-          const replacementHtml = markdownToTiptapHtml(replacementMarkdown);
+          let replacementHtml;
+
+          try {
+            replacementHtml = tiptapJsonToHtml(editor, markdownToTiptapJson(editor, replacementMarkdown));
+          } catch (replaceError) {
+            const failures = [
+              replaceError instanceof Error ? replaceError.message : "Replacement Markdown could not be converted.",
+            ];
+
+            pendingPatchPreviewRef.current = {
+              actions,
+              failures,
+              hunks: [],
+              patch,
+            };
+
+            return {
+              failures,
+              hunks: [],
+            };
+          }
 
           pendingPatchPreviewRef.current = {
             actions,
@@ -1294,7 +1227,7 @@ export default function TiptapEditor({
                 from: 0,
                 index: 1,
                 patchId: patch.id,
-                removedHtml: currentSource,
+                removedHtml: currentHtml,
                 to: editor.state.doc.content.size,
               },
             ],
@@ -1309,24 +1242,48 @@ export default function TiptapEditor({
         }
 
         const preview = resolvePatchPreview(patch);
-        const replacementPreview = buildPatchReplacementBlocks({
-          editor,
-          patch,
-          preview,
-        });
+        let patchedHtml = "";
+        let patchFailures = [...preview.failures];
+
+        if (patchFailures.length === 0) {
+          try {
+            const patchResult = applyDocumentPatchText({
+              currentSource,
+              expectedDocumentPath: documentPath,
+              patchText: patch.patchText ?? "",
+            });
+
+            patchFailures = patchResult.failures;
+
+            if (patchFailures.length === 0) {
+              patchedHtml = tiptapJsonToHtml(editor, markdownToTiptapJson(editor, patchResult.patchedSource));
+            }
+          } catch (patchError) {
+            patchFailures = [patchError instanceof Error ? patchError.message : "Patch could not be previewed."];
+          }
+        }
 
         pendingPatchPreviewRef.current = {
           actions,
-          failures: replacementPreview.failures,
+          failures: patchFailures,
           hunks: preview.hunks,
           patch,
         };
 
         setEditorPatchPreview(null);
 
-        if (replacementPreview.failures.length === 0) {
+        if (patchFailures.length === 0) {
           setReplacementPatchPreview({
-            blocks: replacementPreview.blocks,
+            blocks: [
+              {
+                addedHtml: patchedHtml,
+                from: 0,
+                index: 1,
+                patchId: patch.id,
+                removedHtml: currentHtml,
+                to: editor.state.doc.content.size,
+              },
+            ],
             patch,
             source: currentSource,
           });
@@ -1335,7 +1292,7 @@ export default function TiptapEditor({
         }
 
         return {
-          failures: replacementPreview.failures,
+          failures: patchFailures,
           hunks: preview.hunks,
         };
       },
@@ -1353,7 +1310,7 @@ export default function TiptapEditor({
 
         const activePreview = activePatchPreviewRef.current;
         const currentSource =
-          activePreview?.patchId === patch.id ? activePreview.source : formatHtmlForDocumentPatch(editor.getHTML());
+          activePreview?.patchId === patch.id ? activePreview.source : getPatchableMarkdown(editor);
         const currentHash = hashDocumentPatchBase(currentSource);
 
         if (patch.baseHash !== currentHash) {
@@ -1375,10 +1332,10 @@ export default function TiptapEditor({
             };
           }
 
-          let replacementHtml;
+          let replacementContent;
 
           try {
-            replacementHtml = markdownToTiptapHtml(replacementMarkdown);
+            replacementContent = markdownToTiptapJson(editor, replacementMarkdown);
           } catch (replaceError) {
             return {
               appliedOperations: 0,
@@ -1395,7 +1352,9 @@ export default function TiptapEditor({
           }
 
           clearEditorPatchPreview(patch.id);
-          editor.commands.setContent(replacementHtml);
+          agentUndoSnapshotsRef.current[patch.id] =
+            activePreview?.patchId === patch.id ? activePreview.json : (editor.getJSON() as JSONContent);
+          editor.commands.setContent(replacementContent);
 
           return {
             appliedOperations: 1,
@@ -1426,6 +1385,17 @@ export default function TiptapEditor({
         }
 
         if (result.failures.length === 0) {
+          let patchedContent;
+
+          try {
+            patchedContent = markdownToTiptapJson(editor, result.patchedSource);
+          } catch (patchError) {
+            return {
+              appliedOperations: 0,
+              failures: [patchError instanceof Error ? patchError.message : "Patched Markdown could not be converted."],
+            };
+          }
+
           if (activePreview?.patchId === patch.id) {
             activePatchPreviewRef.current = null;
             editor.setEditable(activePreview.wasEditable);
@@ -1433,10 +1403,32 @@ export default function TiptapEditor({
           }
 
           clearEditorPatchPreview(patch.id);
-          editor.commands.setContent(result.patchedSource);
+          agentUndoSnapshotsRef.current[patch.id] =
+            activePreview?.patchId === patch.id ? activePreview.json : (editor.getJSON() as JSONContent);
+          editor.commands.setContent(patchedContent);
         }
 
         return result;
+      },
+      undoPatch: (patchId) => {
+        const snapshot = agentUndoSnapshotsRef.current[patchId];
+
+        if (!snapshot) {
+          return {
+            appliedOperations: 0,
+            failures: ["No undo snapshot is available for this change."],
+          };
+        }
+
+        restoreActivePatchPreview();
+        clearEditorPatchPreview(patchId);
+        editor.commands.setContent(snapshot);
+        delete agentUndoSnapshotsRef.current[patchId];
+
+        return {
+          appliedOperations: 1,
+          failures: [],
+        };
       },
     });
 
