@@ -38,4 +38,13 @@ contextBridge.exposeInMainWorld("learner", {
   rebuildDocumentSearchIndex: () => {
     return ipcRenderer.invoke("document:rebuildSearchIndex");
   },
+  getDocumentEmbeddingStatus: () => {
+    return ipcRenderer.invoke("document:embeddingStatus");
+  },
+  rebuildDocumentEmbeddings: () => {
+    return ipcRenderer.invoke("document:rebuildEmbeddings");
+  },
+  semanticSearchDocuments: (query, limit) => {
+    return ipcRenderer.invoke("document:semanticSearch", query, limit);
+  },
 });

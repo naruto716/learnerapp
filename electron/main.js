@@ -16,14 +16,21 @@ const {
   saveDocumentImage,
   saveDocumentFile,
 } = require("./documentUtil");
+const { loadLocalEnv } = require("./localEnv");
 const {
   closeSearchDatabase,
   deleteIndexedDocument,
   deleteIndexedDocumentTree,
+  getDocumentEmbeddingStatus,
+  queueMissingDocumentEmbeddings,
+  rebuildDocumentEmbeddings,
   rebuildDocumentSearchIndex,
   searchIndexedDocuments,
+  semanticSearchIndexedDocuments,
   upsertIndexedDocument,
 } = require("./documentSearchIndex");
+
+loadLocalEnv();
 
 const appProtocol = "learner";
 const devServerUrl = process.env.NEXT_DEV_SERVER_URL;
@@ -153,7 +160,9 @@ app.whenReady().then(() => {
   });
 
   createWindow();
-  refreshSearchIndex("rebuild");
+  refreshSearchIndex("rebuild").then(() => {
+    queueMissingDocumentEmbeddings();
+  });
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -262,4 +271,16 @@ ipcMain.handle("document:search", async (_event, query, limit) => {
 
 ipcMain.handle("document:rebuildSearchIndex", async () => {
   await rebuildDocumentSearchIndex(getDocumentRoot());
+});
+
+ipcMain.handle("document:embeddingStatus", async () => {
+  return getDocumentEmbeddingStatus();
+});
+
+ipcMain.handle("document:rebuildEmbeddings", async () => {
+  return rebuildDocumentEmbeddings();
+});
+
+ipcMain.handle("document:semanticSearch", async (_event, query, limit) => {
+  return semanticSearchIndexedDocuments(query, limit);
 });

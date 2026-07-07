@@ -28,6 +28,24 @@ declare global {
     title: string;
   };
 
+  type DocumentEmbeddingStatus = {
+    chunks: number;
+    configured: boolean;
+    embeddedChunks: number;
+    lastError: string | null;
+    model: string;
+    queuedDocuments: number;
+    running: boolean;
+  };
+
+  type DocumentSemanticSearchResult = {
+    chunkIndex: number;
+    path: string;
+    score: number;
+    text: string;
+    title: string;
+  };
+
   interface Window {
     learner?: {
       platform: NodeJS.Platform;
@@ -65,6 +83,9 @@ declare global {
       saveDocumentImage: (fileName: string, data: Uint8Array) => Promise<string>;
       searchDocuments: (query: string, limit?: number) => Promise<DocumentSearchResult[]>;
       rebuildDocumentSearchIndex: () => Promise<void>;
+      getDocumentEmbeddingStatus: () => Promise<DocumentEmbeddingStatus>;
+      rebuildDocumentEmbeddings: () => Promise<DocumentEmbeddingStatus>;
+      semanticSearchDocuments: (query: string, limit?: number) => Promise<DocumentSemanticSearchResult[]>;
     };
   }
 }

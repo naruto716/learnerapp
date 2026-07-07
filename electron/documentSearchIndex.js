@@ -6,7 +6,15 @@ const path = require("path");
 const { DatabaseSync } = require("node:sqlite");
 
 const databaseFileName = "learner.sqlite";
+const embeddingModel = "text-embedding-3-small";
+const embeddingBatchSize = 64;
+const maxChunkCharacters = 2800;
+const chunkOverlapCharacters = 250;
 let database = null;
+let embeddingWorkerRunning = false;
+let lastEmbeddingError = null;
+let missingEmbeddingKeyWarned = false;
+const embeddingQueue = new Set();
 
 function getSearchDatabasePath() {
   return path.join(app.getPath("userData"), databaseFileName);
@@ -37,6 +45,33 @@ function getSearchDatabase() {
       text,
       tokenize='unicode61'
     );
+
+    CREATE TABLE IF NOT EXISTS document_chunks (
+      id INTEGER PRIMARY KEY,
+      path TEXT NOT NULL,
+      chunk_index INTEGER NOT NULL,
+      text TEXT NOT NULL,
+      char_count INTEGER NOT NULL,
+      content_hash TEXT NOT NULL,
+      chunk_hash TEXT NOT NULL,
+      updated_at INTEGER NOT NULL,
+      UNIQUE(path, chunk_index)
+    );
+
+    CREATE INDEX IF NOT EXISTS document_chunks_path_index
+      ON document_chunks(path);
+
+    CREATE INDEX IF NOT EXISTS document_chunks_hash_index
+      ON document_chunks(chunk_hash);
+
+    CREATE TABLE IF NOT EXISTS chunk_embeddings (
+      chunk_hash TEXT NOT NULL,
+      model TEXT NOT NULL,
+      dimensions INTEGER NOT NULL,
+      embedding BLOB NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY(chunk_hash, model)
+    );
   `);
 
   return database;
@@ -48,6 +83,10 @@ function titleFromPath(documentPath) {
 
 function hashContent(content) {
   return crypto.createHash("sha256").update(content).digest("hex");
+}
+
+function hashChunk(text) {
+  return hashContent(String(text || "").trim());
 }
 
 function appendText(parts, value) {
@@ -120,6 +159,101 @@ function extractDocumentText(document) {
     .trim();
 }
 
+function splitLongChunk(text) {
+  const chunks = [];
+  let start = 0;
+
+  while (start < text.length) {
+    const maxEnd = Math.min(start + maxChunkCharacters, text.length);
+    let end = maxEnd;
+
+    if (maxEnd < text.length) {
+      const preferredBreakStart = start + Math.floor(maxChunkCharacters * 0.55);
+      const slice = text.slice(preferredBreakStart, maxEnd);
+      const sentenceBreak = Math.max(slice.lastIndexOf(". "), slice.lastIndexOf("? "), slice.lastIndexOf("! "));
+      const whitespaceBreak = slice.lastIndexOf(" ");
+
+      if (sentenceBreak >= 0) {
+        end = preferredBreakStart + sentenceBreak + 1;
+      } else if (whitespaceBreak >= 0) {
+        end = preferredBreakStart + whitespaceBreak;
+      }
+    }
+
+    chunks.push(text.slice(start, end).trim());
+
+    if (end >= text.length) {
+      break;
+    }
+
+    start = Math.max(end - chunkOverlapCharacters, start + 1);
+  }
+
+  return chunks.filter(Boolean);
+}
+
+function chunkDocumentText(text) {
+  const normalizedText = String(text || "").trim();
+  if (!normalizedText) return [];
+
+  const paragraphs = normalizedText
+    .split(/\n{2,}/)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean);
+  const chunks = [];
+  let currentChunk = "";
+
+  function flushChunk() {
+    const trimmedChunk = currentChunk.trim();
+    if (trimmedChunk) {
+      chunks.push(trimmedChunk);
+    }
+    currentChunk = "";
+  }
+
+  for (const paragraph of paragraphs) {
+    if (paragraph.length > maxChunkCharacters) {
+      flushChunk();
+      chunks.push(...splitLongChunk(paragraph));
+      continue;
+    }
+
+    const candidate = currentChunk ? `${currentChunk}\n\n${paragraph}` : paragraph;
+    if (candidate.length > maxChunkCharacters) {
+      flushChunk();
+      currentChunk = paragraph;
+    } else {
+      currentChunk = candidate;
+    }
+  }
+
+  flushChunk();
+  return chunks;
+}
+
+function upsertDocumentChunks(db, documentPath, text, contentHash, updatedAt) {
+  const chunks = chunkDocumentText(text);
+  const deleteChunks = db.prepare("DELETE FROM document_chunks WHERE path = ?");
+  const insertChunk = db.prepare(`
+    INSERT INTO document_chunks(path, chunk_index, text, char_count, content_hash, chunk_hash, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  deleteChunks.run(documentPath);
+
+  chunks.forEach((chunkText, index) => {
+    insertChunk.run(
+      documentPath,
+      index,
+      chunkText,
+      chunkText.length,
+      contentHash,
+      hashChunk(chunkText),
+      updatedAt,
+    );
+  });
+}
+
 function upsertIndexedDocument(documentPath, document) {
   const db = getSearchDatabase();
   const normalizedPath = String(documentPath || "").replace(/\\/g, "/");
@@ -146,11 +280,14 @@ function upsertIndexedDocument(documentPath, document) {
     insertDocument.run(normalizedPath, title, text, updatedAt, contentHash);
     deleteFts.run(normalizedPath);
     insertFts.run(normalizedPath, title, text);
+    upsertDocumentChunks(db, normalizedPath, text, contentHash, updatedAt);
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");
     throw error;
   }
+
+  queueDocumentEmbedding(normalizedPath);
 }
 
 function deleteIndexedDocument(documentPath) {
@@ -159,6 +296,7 @@ function deleteIndexedDocument(documentPath) {
 
   db.prepare("DELETE FROM documents WHERE path = ?").run(normalizedPath);
   db.prepare("DELETE FROM document_fts WHERE path = ?").run(normalizedPath);
+  db.prepare("DELETE FROM document_chunks WHERE path = ?").run(normalizedPath);
 }
 
 function deleteIndexedDocumentTree(folderPath) {
@@ -168,6 +306,7 @@ function deleteIndexedDocumentTree(folderPath) {
 
   db.prepare("DELETE FROM documents WHERE path LIKE ?").run(prefix);
   db.prepare("DELETE FROM document_fts WHERE path LIKE ?").run(prefix);
+  db.prepare("DELETE FROM document_chunks WHERE path LIKE ?").run(prefix);
 }
 
 async function rebuildDocumentSearchIndex(documentRoot) {
@@ -177,6 +316,7 @@ async function rebuildDocumentSearchIndex(documentRoot) {
   try {
     db.exec("DELETE FROM documents");
     db.exec("DELETE FROM document_fts");
+    db.exec("DELETE FROM document_chunks");
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");
@@ -215,6 +355,7 @@ async function rebuildDocumentSearchIndex(documentRoot) {
   }
 
   await walk(documentRoot);
+  queueMissingDocumentEmbeddings();
 }
 
 function buildFtsQuery(query) {
@@ -254,6 +395,270 @@ function searchIndexedDocuments(query, limit = 20) {
   }
 }
 
+function getEmbeddingApiKey() {
+  return String(process.env.OPENAI_API_KEY || process.env.LEARNER_OPENAI_API_KEY || "").trim();
+}
+
+function getEmbeddingBaseUrl() {
+  return String(process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/+$/g, "");
+}
+
+function getEmbeddingConfig() {
+  return {
+    configured: Boolean(getEmbeddingApiKey()),
+    model: embeddingModel,
+  };
+}
+
+function queueDocumentEmbedding(documentPath) {
+  const normalizedPath = String(documentPath || "").replace(/\\/g, "/");
+  if (!normalizedPath) return;
+
+  embeddingQueue.add(normalizedPath);
+  setTimeout(() => {
+    void processEmbeddingQueue();
+  }, 0);
+}
+
+function queueMissingDocumentEmbeddings() {
+  const rows = getSearchDatabase()
+    .prepare(
+      `
+        SELECT DISTINCT c.path
+        FROM document_chunks c
+        LEFT JOIN chunk_embeddings e
+          ON e.chunk_hash = c.chunk_hash
+          AND e.model = ?
+        WHERE e.chunk_hash IS NULL
+      `,
+    )
+    .all(embeddingModel);
+
+  rows.forEach((row) => queueDocumentEmbedding(row.path));
+}
+
+function queueAllDocumentEmbeddings() {
+  const rows = getSearchDatabase().prepare("SELECT DISTINCT path FROM document_chunks").all();
+  rows.forEach((row) => queueDocumentEmbedding(row.path));
+}
+
+function getPendingEmbeddingChunks(documentPath) {
+  return getSearchDatabase()
+    .prepare(
+      `
+        SELECT c.chunk_hash, c.text
+        FROM document_chunks c
+        LEFT JOIN chunk_embeddings e
+          ON e.chunk_hash = c.chunk_hash
+          AND e.model = ?
+        WHERE c.path = ?
+          AND e.chunk_hash IS NULL
+        GROUP BY c.chunk_hash
+        ORDER BY MIN(c.chunk_index)
+        LIMIT ?
+      `,
+    )
+    .all(embeddingModel, documentPath, embeddingBatchSize);
+}
+
+function vectorToBuffer(vector) {
+  return Buffer.from(new Float32Array(vector).buffer);
+}
+
+function bufferToVector(buffer) {
+  return Array.from(new Float32Array(buffer.buffer, buffer.byteOffset, buffer.byteLength / Float32Array.BYTES_PER_ELEMENT));
+}
+
+function dotProduct(a, b) {
+  const length = Math.min(a.length, b.length);
+  let total = 0;
+
+  for (let index = 0; index < length; index += 1) {
+    total += a[index] * b[index];
+  }
+
+  return total;
+}
+
+function vectorMagnitude(vector) {
+  return Math.sqrt(dotProduct(vector, vector));
+}
+
+function cosineSimilarity(a, b) {
+  const denominator = vectorMagnitude(a) * vectorMagnitude(b);
+  if (!denominator) return 0;
+  return dotProduct(a, b) / denominator;
+}
+
+async function requestEmbeddings(input) {
+  const apiKey = getEmbeddingApiKey();
+  if (!apiKey) {
+    throw new Error("OPENAI_API_KEY is not set.");
+  }
+
+  const response = await fetch(`${getEmbeddingBaseUrl()}/embeddings`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      input,
+      model: embeddingModel,
+    }),
+    signal: AbortSignal.timeout(45_000),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Embedding request failed (${response.status}): ${errorText.slice(0, 300)}`);
+  }
+
+  const body = await response.json();
+  if (!Array.isArray(body.data)) {
+    throw new Error("Embedding response did not include a data array.");
+  }
+
+  return body.data
+    .slice()
+    .sort((a, b) => a.index - b.index)
+    .map((item) => item.embedding);
+}
+
+function saveChunkEmbeddings(chunks, embeddings) {
+  const db = getSearchDatabase();
+  const insertEmbedding = db.prepare(`
+    INSERT INTO chunk_embeddings(chunk_hash, model, dimensions, embedding, updated_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(chunk_hash, model) DO UPDATE SET
+      dimensions = excluded.dimensions,
+      embedding = excluded.embedding,
+      updated_at = excluded.updated_at
+  `);
+  const updatedAt = Date.now();
+
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    chunks.forEach((chunk, index) => {
+      const embedding = embeddings[index];
+      if (!Array.isArray(embedding) || embedding.length === 0) return;
+      insertEmbedding.run(chunk.chunk_hash, embeddingModel, embedding.length, vectorToBuffer(embedding), updatedAt);
+    });
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+async function embedMissingChunksForDocument(documentPath) {
+  while (true) {
+    const chunks = getPendingEmbeddingChunks(documentPath);
+    if (chunks.length === 0) return;
+
+    const embeddings = await requestEmbeddings(chunks.map((chunk) => chunk.text));
+    saveChunkEmbeddings(chunks, embeddings);
+  }
+}
+
+async function processEmbeddingQueue() {
+  if (embeddingWorkerRunning) return;
+
+  const apiKey = getEmbeddingApiKey();
+  if (!apiKey) {
+    lastEmbeddingError = "OPENAI_API_KEY is not set.";
+    if (!missingEmbeddingKeyWarned && embeddingQueue.size > 0) {
+      console.warn("Document embeddings skipped: OPENAI_API_KEY is not set.");
+      missingEmbeddingKeyWarned = true;
+    }
+    embeddingQueue.clear();
+    return;
+  }
+
+  embeddingWorkerRunning = true;
+  lastEmbeddingError = null;
+
+  try {
+    while (embeddingQueue.size > 0) {
+      const [documentPath] = embeddingQueue;
+      embeddingQueue.delete(documentPath);
+      await embedMissingChunksForDocument(documentPath);
+    }
+  } catch (error) {
+    lastEmbeddingError = error instanceof Error ? error.message : "Document embedding failed.";
+    console.warn("Document embedding failed:", error);
+  } finally {
+    embeddingWorkerRunning = false;
+  }
+}
+
+function getDocumentEmbeddingStatus() {
+  const db = getSearchDatabase();
+  const chunks = db.prepare("SELECT COUNT(*) AS count FROM document_chunks").get().count;
+  const embeddedChunks = db
+    .prepare(
+      `
+        SELECT COUNT(*) AS count
+        FROM document_chunks c
+        INNER JOIN chunk_embeddings e
+          ON e.chunk_hash = c.chunk_hash
+          AND e.model = ?
+      `,
+    )
+    .get(embeddingModel).count;
+
+  return {
+    ...getEmbeddingConfig(),
+    chunks,
+    embeddedChunks,
+    lastError: lastEmbeddingError,
+    queuedDocuments: embeddingQueue.size,
+    running: embeddingWorkerRunning,
+  };
+}
+
+function rebuildDocumentEmbeddings() {
+  getSearchDatabase().prepare("DELETE FROM chunk_embeddings WHERE model = ?").run(embeddingModel);
+  queueAllDocumentEmbeddings();
+  return getDocumentEmbeddingStatus();
+}
+
+async function semanticSearchIndexedDocuments(query, limit = 10) {
+  const normalizedQuery = String(query || "").trim();
+  if (!normalizedQuery) return [];
+
+  const safeLimit = Math.min(Math.max(Number(limit) || 10, 1), 30);
+  const [queryEmbedding] = await requestEmbeddings([normalizedQuery]);
+  const rows = getSearchDatabase()
+    .prepare(
+      `
+        SELECT
+          c.path,
+          d.title,
+          c.chunk_index AS chunkIndex,
+          c.text,
+          e.embedding
+        FROM document_chunks c
+        INNER JOIN documents d ON d.path = c.path
+        INNER JOIN chunk_embeddings e
+          ON e.chunk_hash = c.chunk_hash
+          AND e.model = ?
+      `,
+    )
+    .all(embeddingModel);
+
+  return rows
+    .map((row) => ({
+      path: row.path,
+      title: row.title,
+      chunkIndex: row.chunkIndex,
+      text: row.text,
+      score: cosineSimilarity(queryEmbedding, bufferToVector(row.embedding)),
+    }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, safeLimit);
+}
+
 function closeSearchDatabase() {
   if (!database) return;
 
@@ -266,7 +671,11 @@ module.exports = {
   deleteIndexedDocument,
   deleteIndexedDocumentTree,
   extractDocumentText,
+  getDocumentEmbeddingStatus,
+  queueMissingDocumentEmbeddings,
+  rebuildDocumentEmbeddings,
   rebuildDocumentSearchIndex,
   searchIndexedDocuments,
+  semanticSearchIndexedDocuments,
   upsertIndexedDocument,
 };
