@@ -1048,7 +1048,7 @@ export default function TiptapEditor({
     if (!active) return;
 
     function handleGlobalKeyDown(event: globalThis.KeyboardEvent) {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") {
+      if ((event.metaKey || event.ctrlKey) && !event.shiftKey && event.key.toLowerCase() === "f") {
         event.preventDefault();
         openSearch();
       }
