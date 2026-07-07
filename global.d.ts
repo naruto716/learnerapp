@@ -21,6 +21,13 @@ declare global {
     position: "before" | "after";
   };
 
+  type DocumentSearchResult = {
+    path: string;
+    rank: number;
+    snippet: string;
+    title: string;
+  };
+
   interface Window {
     learner?: {
       platform: NodeJS.Platform;
@@ -56,6 +63,8 @@ declare global {
         tree: DocumentNode[];
       }>;
       saveDocumentImage: (fileName: string, data: Uint8Array) => Promise<string>;
+      searchDocuments: (query: string, limit?: number) => Promise<DocumentSearchResult[]>;
+      rebuildDocumentSearchIndex: () => Promise<void>;
     };
   }
 }

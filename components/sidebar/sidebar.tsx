@@ -6,6 +6,7 @@ import {
   FileIcon,
   FilePlusIcon,
   FolderPlusIcon,
+  MagnifyingGlassIcon,
   TrashIcon,
 } from "@phosphor-icons/react";
 import { DragEvent, MouseEvent, useEffect, useState } from "react";
@@ -51,6 +52,7 @@ export default function SideBar({
   onDocumentCreated,
   onDocumentDeleted,
   onDocumentMoved,
+  onOpenSearch,
   onOpenDocument,
 }: {
   activeDocumentPath: string | null;
@@ -59,6 +61,7 @@ export default function SideBar({
   onDocumentCreated: (documentPath: string) => void;
   onDocumentDeleted: (deletedPath: string, deletedType: DocumentNode["type"]) => void;
   onDocumentMoved: (oldPath: string, newPath: string) => void;
+  onOpenSearch: () => void;
   onOpenDocument: (documentPath: string) => void;
 }) {
   const [nodes, setNodes] = useState<DocumentNode[]>([]);
@@ -261,6 +264,11 @@ export default function SideBar({
       <div className="mac-traffic-padding flex h-10 items-center justify-between gap-2 pr-3">
         <p className="text-sm font-medium">Files</p>
         <div className="app-no-drag flex gap-1">
+          <IconButton
+            ariaLabel="Search notes"
+            icon={<MagnifyingGlassIcon size={18} />}
+            onClick={onOpenSearch}
+          />
           <IconButton
             ariaLabel="New folder"
             icon={<FolderPlusIcon size={18} />}

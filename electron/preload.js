@@ -32,4 +32,10 @@ contextBridge.exposeInMainWorld("learner", {
   saveDocumentImage: (fileName, data) => {
     return ipcRenderer.invoke("document:saveImage", fileName, data);
   },
+  searchDocuments: (query, limit) => {
+    return ipcRenderer.invoke("document:search", query, limit);
+  },
+  rebuildDocumentSearchIndex: () => {
+    return ipcRenderer.invoke("document:rebuildSearchIndex");
+  },
 });

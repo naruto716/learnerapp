@@ -3,6 +3,7 @@
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import SideBar from "@/components/sidebar/sidebar";
+import DocumentSearchDialog from "@/components/sidebar/DocumentSearchDialog";
 import TopBar from "@/components/topbar/topbar";
 import TiptapEditor, {
   type CurrentDocumentAgentTools,
@@ -74,6 +75,7 @@ export default function AppShell() {
   const activeDocumentPath = useMemo(() => routeToDocumentPath(pathname), [pathname]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [openTabs, setOpenTabs] = useState<string[]>([]);
+  const [isDocumentSearchOpen, setIsDocumentSearchOpen] = useState(false);
   const [isBubbleOpen, setIsBubbleOpen] = useState(false);
   const [editorStates, setEditorStates] = useState<Record<string, PersistedEditorState>>({});
   const [documentsVersion, setDocumentsVersion] = useState(0);
@@ -129,6 +131,18 @@ export default function AppShell() {
 
     return () => window.clearTimeout(timer);
   }, [activeDocumentPath]);
+
+  useEffect(() => {
+    function handleKeyDown(event: globalThis.KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        setIsDocumentSearchOpen(true);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   function openDocument(documentPath: string) {
     setOpenTabs((current) => (current.includes(documentPath) ? current : [...current, documentPath]));
@@ -251,6 +265,7 @@ export default function AppShell() {
         }}
         onDocumentDeleted={handleDocumentDeleted}
         onDocumentMoved={handleDocumentMoved}
+        onOpenSearch={() => setIsDocumentSearchOpen(true)}
         onOpenDocument={openDocument}
       />
       <div className="flex min-w-0 flex-1 flex-col">
@@ -288,6 +303,11 @@ export default function AppShell() {
         isOpen={isBubbleOpen}
         isSidebarOpen={isSidebarOpen}
         onClose={() => setIsBubbleOpen(false)}
+      />
+      <DocumentSearchDialog
+        open={isDocumentSearchOpen}
+        onClose={() => setIsDocumentSearchOpen(false)}
+        onOpenDocument={openDocument}
       />
       <ChatBubble isOpen={isBubbleOpen} toggleBubbleOpen={() => setIsBubbleOpen((isOpen) => !isOpen)} />
     </div>

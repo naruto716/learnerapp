@@ -16,6 +16,14 @@ const {
   saveDocumentImage,
   saveDocumentFile,
 } = require("./documentUtil");
+const {
+  closeSearchDatabase,
+  deleteIndexedDocument,
+  deleteIndexedDocumentTree,
+  rebuildDocumentSearchIndex,
+  searchIndexedDocuments,
+  upsertIndexedDocument,
+} = require("./documentSearchIndex");
 
 const appProtocol = "learner";
 const devServerUrl = process.env.NEXT_DEV_SERVER_URL;
@@ -96,6 +104,38 @@ function createWindow() {
   }
 }
 
+function filePathWithExtension(filePath) {
+  return String(filePath || "").toLowerCase().endsWith(".json") ? filePath : `${filePath}.json`;
+}
+
+function logSearchIndexError(action, error) {
+  console.warn(`Search index ${action} failed:`, error);
+}
+
+function updateSearchIndex(action, callback) {
+  try {
+    callback();
+  } catch (error) {
+    logSearchIndexError(action, error);
+  }
+}
+
+async function updateSearchIndexAsync(action, callback) {
+  try {
+    await callback();
+  } catch (error) {
+    logSearchIndexError(action, error);
+  }
+}
+
+async function refreshSearchIndex(action) {
+  try {
+    await rebuildDocumentSearchIndex(getDocumentRoot());
+  } catch (error) {
+    logSearchIndexError(action, error);
+  }
+}
+
 app.whenReady().then(() => {
   protocol.handle(appProtocol, (request) => {
     const url = new URL(request.url);
@@ -113,6 +153,7 @@ app.whenReady().then(() => {
   });
 
   createWindow();
+  refreshSearchIndex("rebuild");
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -125,6 +166,10 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     app.quit();
   }
+});
+
+app.on("before-quit", () => {
+  closeSearchDatabase();
 });
 
 ipcMain.handle("document:list", async () => {
@@ -140,6 +185,7 @@ ipcMain.handle("document:read", async (_event, filePath) => {
 
 ipcMain.handle("document:save", async (_event, filePath, document) => {
   await saveDocumentFile(filePath, document);
+  updateSearchIndex("update", () => upsertIndexedDocument(filePath, document));
 });
 
 ipcMain.handle("document:createFolder", async (_event, folderPath) => {
@@ -152,6 +198,10 @@ ipcMain.handle("document:createFolder", async (_event, folderPath) => {
 
 ipcMain.handle("document:createFile", async (_event, filePath) => {
   await createDocumentFile(filePath);
+  const indexedPath = filePathWithExtension(filePath);
+  await updateSearchIndexAsync("create", async () => {
+    upsertIndexedDocument(indexedPath, await readDocumentFile(indexedPath));
+  });
   return {
     directory: getDocumentRoot(),
     tree: await listDocumentTree(),
@@ -160,6 +210,7 @@ ipcMain.handle("document:createFile", async (_event, filePath) => {
 
 ipcMain.handle("document:move", async (_event, sourcePath, targetFolderPath) => {
   await moveDocumentEntry(sourcePath, targetFolderPath);
+  await refreshSearchIndex("rebuild after move");
   return {
     directory: getDocumentRoot(),
     tree: await listDocumentTree(),
@@ -167,7 +218,13 @@ ipcMain.handle("document:move", async (_event, sourcePath, targetFolderPath) => 
 });
 
 ipcMain.handle("document:delete", async (_event, entryPath) => {
+  const isDocumentFile = String(entryPath || "").toLowerCase().endsWith(".json");
   await deleteDocumentEntry(entryPath);
+  if (isDocumentFile) {
+    updateSearchIndex("delete", () => deleteIndexedDocument(entryPath));
+  } else {
+    updateSearchIndex("delete tree", () => deleteIndexedDocumentTree(entryPath));
+  }
   return {
     directory: getDocumentRoot(),
     tree: await listDocumentTree(),
@@ -176,6 +233,10 @@ ipcMain.handle("document:delete", async (_event, entryPath) => {
 
 ipcMain.handle("document:rename", async (_event, filePath, newTitle) => {
   const newPath = await renameDocumentFile(filePath, newTitle);
+  await updateSearchIndexAsync("rename", async () => {
+    deleteIndexedDocument(filePath);
+    upsertIndexedDocument(newPath, await readDocumentFile(newPath));
+  });
   return {
     directory: getDocumentRoot(),
     newPath,
@@ -193,4 +254,12 @@ ipcMain.handle("document:reorder", async (_event, reorderRequest) => {
 
 ipcMain.handle("document:saveImage", async (_event, fileName, data) => {
   return saveDocumentImage(fileName, data);
+});
+
+ipcMain.handle("document:search", async (_event, query, limit) => {
+  return searchIndexedDocuments(query, limit);
+});
+
+ipcMain.handle("document:rebuildSearchIndex", async () => {
+  await rebuildDocumentSearchIndex(getDocumentRoot());
 });
