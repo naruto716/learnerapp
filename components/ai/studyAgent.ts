@@ -14,9 +14,9 @@ const modelStorageKey = "learner.ai.model.v1";
 const defaultProxyApiKey = "sk-cliproxy-michael-2026";
 const defaultProxyBaseUrl = "http://127.0.0.1:8317/v1";
 const defaultModel = "gpt-5.5";
-const maxHistoryInputTokens = 80_000;
-const summarizeWhenHistoryExceedsTokens = 48_000;
-const recentHistoryTargetTokens = 20_000;
+const maxHistoryInputTokens = 200_000;
+const summarizeWhenHistoryExceedsTokens = 140_000;
+const recentHistoryTargetTokens = 60_000;
 const estimatedTokensPerImage = 1_000;
 const tokenEncoding = getEncoding("o200k_base");
 
