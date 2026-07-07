@@ -16,7 +16,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ProposedDocumentPatch } from "./documentPatch";
 import type { ChangeEvent, DragEvent, FormEvent, KeyboardEvent, ClipboardEvent } from "react";
-import { runStudyAgent, type AgentContextState } from "./studyAgent";
+import { runStudyAgent, type AgentContextState, type AgentSource } from "./studyAgent";
 import type { CurrentDocumentAgentTools } from "@/components/editor/TiptapEditor";
 
 const sessionsStorageKey = "learner.ai.sessions.v1";
@@ -34,6 +34,7 @@ type ChatMessage = {
   createdAt: number;
   images?: string[];
   patches?: ProposedDocumentPatch[];
+  sources?: AgentSource[];
 };
 
 type ChatSession = {
@@ -56,6 +57,20 @@ function generateId(prefix: string) {
   return `${prefix}_${Date.now()}_${crypto.randomUUID()}`;
 }
 
+function validSource(source: unknown): source is AgentSource {
+  if (!source || typeof source !== "object") return false;
+
+  const candidate = source as Partial<AgentSource>;
+  return (
+    typeof candidate.chunkIndex === "number" &&
+    typeof candidate.excerpt === "string" &&
+    typeof candidate.id === "number" &&
+    typeof candidate.path === "string" &&
+    typeof candidate.score === "number" &&
+    typeof candidate.title === "string"
+  );
+}
+
 function validMessage(message: unknown): message is ChatMessage {
   if (!message || typeof message !== "object") return false;
 
@@ -66,7 +81,9 @@ function validMessage(message: unknown): message is ChatMessage {
     typeof candidate.content === "string" &&
     typeof candidate.createdAt === "number" &&
     (typeof candidate.patches === "undefined" ||
-      (Array.isArray(candidate.patches) && candidate.patches.every(validPatch)))
+      (Array.isArray(candidate.patches) && candidate.patches.every(validPatch))) &&
+    (typeof candidate.sources === "undefined" ||
+      (Array.isArray(candidate.sources) && candidate.sources.every(validSource)))
   );
 }
 
@@ -281,14 +298,93 @@ function fileToDataUrl(file: File) {
   });
 }
 
-function MessageContent({ message }: { message: ChatMessage }) {
+function contentWithSourceLinks(content: string) {
+  return content.replace(/<source\s*(\d+)>/gi, (_match, sourceId: string) => {
+    return `[source ${sourceId}](#learner-source-${sourceId})`;
+  });
+}
+
+function sourceFromHref(href: string | undefined, sources: AgentSource[]) {
+  const match = href?.match(/^#learner-source-(\d+)$/);
+  if (!match) return null;
+
+  const sourceId = Number(match[1]);
+  return sources.find((source) => source.id === sourceId) ?? null;
+}
+
+function SourceStrip({
+  onOpenSource,
+  sources,
+}: {
+  onOpenSource: (source: AgentSource) => void;
+  sources: AgentSource[];
+}) {
+  if (sources.length === 0) return null;
+
+  return (
+    <div className="mt-3 flex flex-wrap gap-1.5">
+      {sources.map((source) => (
+        <button
+          type="button"
+          className="max-w-full rounded-full bg-white/[0.07] px-2.5 py-1 text-[11px] text-white/58 transition hover:bg-white/[0.12] hover:text-white/88"
+          key={`${source.path}-${source.chunkIndex}`}
+          onClick={() => onOpenSource(source)}
+          title={`${source.path}\n\n${source.excerpt}`}
+        >
+          <span className="text-white/38">source {source.id}</span>
+          <span className="mx-1 text-white/24">·</span>
+          <span>{source.title}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function MessageContent({
+  message,
+  onOpenSource,
+}: {
+  message: ChatMessage;
+  onOpenSource: (source: AgentSource) => void;
+}) {
   if (message.role === "user") {
     return <p className="whitespace-pre-wrap">{message.content}</p>;
   }
 
+  const sources = message.sources ?? [];
+
   return (
     <div className="learner-ai-markdown">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+      <ReactMarkdown
+        components={{
+          a: ({ children, href }) => {
+            const source = sourceFromHref(href, sources);
+
+            if (source) {
+              return (
+                <button
+                  type="button"
+                  className="mx-0.5 inline-flex translate-y-[-1px] items-center rounded-full bg-sky-300/12 px-1.5 py-0.5 text-[0.75em] font-medium text-sky-100/90 transition hover:bg-sky-300/20"
+                  onClick={() => onOpenSource(source)}
+                  title={`${source.path}\n\n${source.excerpt}`}
+                >
+                  {children}
+                </button>
+              );
+            }
+
+            return (
+              <a href={href} rel="noreferrer" target="_blank">
+                {children}
+              </a>
+            );
+          },
+        }}
+        remarkPlugins={[remarkGfm]}
+      >
+        {contentWithSourceLinks(message.content)}
+      </ReactMarkdown>
+      <SourceStrip onOpenSource={onOpenSource} sources={sources} />
     </div>
   );
 }
@@ -298,11 +394,13 @@ export default function ChatPanel({
   isSidebarOpen,
   isOpen,
   onClose,
+  onOpenDocument,
 }: {
   getCurrentDocumentTools: () => CurrentDocumentAgentTools | null;
   isSidebarOpen: boolean;
   isOpen: boolean;
   onClose: () => void;
+  onOpenDocument: (documentPath: string) => void;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
@@ -577,6 +675,10 @@ export default function ChatPanel({
     }));
   }
 
+  function openSource(source: AgentSource) {
+    onOpenDocument(source.path);
+  }
+
   async function submitMessage(event?: FormEvent<HTMLFormElement>) {
     event?.preventDefault();
     if (isAgentRunning) return;
@@ -637,6 +739,7 @@ export default function ChatPanel({
               ...message,
               content: response.content,
               patches: proposedPatches.length > 0 ? proposedPatches : undefined,
+              sources: response.sources.length > 0 ? response.sources : undefined,
             }
           : message,
       );
@@ -774,7 +877,9 @@ export default function ChatPanel({
                     {message.role === "assistant" && !message.content ? (
                       <p className="text-white/45">Thinking...</p>
                     ) : (
-                      (message.content || message.role === "assistant") && <MessageContent message={message} />
+                      (message.content || message.role === "assistant") && (
+                        <MessageContent message={message} onOpenSource={openSource} />
+                      )
                     )}
                     {message.patches?.map((patch) => (
                       <PatchPreview

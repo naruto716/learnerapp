@@ -6,6 +6,7 @@ const path = require("path");
 const { DatabaseSync } = require("node:sqlite");
 
 const databaseFileName = "learner.sqlite";
+const orderFileName = ".documents-order.json";
 const embeddingModel = "text-embedding-3-small";
 const embeddingBatchSize = 64;
 const maxChunkCharacters = 2800;
@@ -340,7 +341,7 @@ async function rebuildDocumentSearchIndex(documentRoot) {
         continue;
       }
 
-      if (!entry.isFile() || !entry.name.toLowerCase().endsWith(".json")) {
+      if (entry.name === orderFileName || !entry.isFile() || !entry.name.toLowerCase().endsWith(".json")) {
         continue;
       }
 

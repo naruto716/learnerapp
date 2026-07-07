@@ -303,6 +303,7 @@ export default function AppShell() {
         isOpen={isBubbleOpen}
         isSidebarOpen={isSidebarOpen}
         onClose={() => setIsBubbleOpen(false)}
+        onOpenDocument={openDocument}
       />
       <DocumentSearchDialog
         open={isDocumentSearchOpen}

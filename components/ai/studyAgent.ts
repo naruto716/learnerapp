@@ -31,6 +31,15 @@ export type AgentContextState = {
   summarizedThroughMessageIndex?: number;
 };
 
+export type AgentSource = {
+  chunkIndex: number;
+  excerpt: string;
+  id: number;
+  path: string;
+  score: number;
+  title: string;
+};
+
 type RunStudyAgentRequest = {
   messages: AgentChatMessage[];
   contextState?: AgentContextState;
@@ -272,18 +281,80 @@ function buildModelMessages(messages: AgentChatMessage[], contextState: AgentCon
   return [...modelMessages, ...selectedRecentMessages.map(toModelMessage)];
 }
 
-function createCurrentDocumentTools({
+function compactSourceText(text: string, maxLength = 1200) {
+  const normalizedText = text.replace(/\s+/g, " ").trim();
+  if (normalizedText.length <= maxLength) return normalizedText;
+
+  return `${normalizedText.slice(0, maxLength).trim()}...`;
+}
+
+function createStudyTools({
   getCurrentDocumentTools,
   onPatchProposed,
+  registerSources,
 }: {
   getCurrentDocumentTools: () => CurrentDocumentAgentTools | null;
   onPatchProposed: (patch: ProposedDocumentPatch) => void;
+  registerSources: (results: DocumentSemanticSearchResult[]) => AgentSource[];
 }) {
   function getTools() {
     return getCurrentDocumentTools();
   }
 
   return [
+    tool(
+      async ({ limit = 6, query }) => {
+        if (!window.learner?.semanticSearchDocuments) {
+          return "Semantic note search is not available in this environment.";
+        }
+
+        try {
+          const results = await window.learner.semanticSearchDocuments(query, Math.min(Math.max(limit, 1), 8));
+          const sources = registerSources(results);
+
+          if (sources.length === 0) {
+            const status = await window.learner.getDocumentEmbeddingStatus?.();
+            return [
+              "No matching note sources were found.",
+              status
+                ? `Embedding status: ${status.embeddedChunks}/${status.chunks} chunks embedded. ${
+                    status.lastError ? `Last error: ${status.lastError}` : ""
+                  }`
+                : "",
+            ]
+              .filter(Boolean)
+              .join("\n");
+          }
+
+          return JSON.stringify(
+            {
+              instructions:
+                "Use these note sources when answering. Cite claims from these sources with inline markers like <source 1>.",
+              sources: sources.map((source) => ({
+                id: `source ${source.id}`,
+                title: source.title,
+                path: source.path,
+                excerpt: source.excerpt,
+                score: Number(source.score.toFixed(4)),
+              })),
+            },
+            null,
+            2,
+          );
+        } catch (error) {
+          return error instanceof Error ? `Semantic note search failed: ${error.message}` : "Semantic note search failed.";
+        }
+      },
+      {
+        name: "search_notes",
+        description:
+          "Search the user's saved notes semantically. Use this when answering questions about study material, past notes, related concepts, or anything that should be grounded in the user's note library. Cite retrieved sources with <source N> markers.",
+        schema: z.object({
+          query: z.string().min(1).describe("Search query for the user's notes."),
+          limit: z.number().min(1).max(8).optional().describe("Maximum number of source chunks to retrieve."),
+        }),
+      },
+    ),
     tool(
       async () => {
         const documentTools = getTools();
@@ -369,15 +440,43 @@ export async function runStudyAgent({
   onPatchProposed,
 }: RunStudyAgentRequest) {
   const nextContextState = await compactContextIfNeeded(messages, currentContextState);
+  const retrievedSources: AgentSource[] = [];
+
+  function registerSources(results: DocumentSemanticSearchResult[]) {
+    return results.map((result) => {
+      const existingSource = retrievedSources.find(
+        (source) => source.path === result.path && source.chunkIndex === result.chunkIndex,
+      );
+
+      if (existingSource) return existingSource;
+
+      const source = {
+        chunkIndex: result.chunkIndex,
+        excerpt: compactSourceText(result.text),
+        id: retrievedSources.length + 1,
+        path: result.path,
+        score: result.score,
+        title: result.title,
+      };
+
+      retrievedSources.push(source);
+      return source;
+    });
+  }
+
   const agent = createAgent({
     model: createLearnerModel(),
-    tools: createCurrentDocumentTools({
+    tools: createStudyTools({
       getCurrentDocumentTools,
       onPatchProposed,
+      registerSources,
     }),
     systemPrompt: [
       "You are the built-in AI study assistant for Learner, a local note-taking app.",
       "Help the user write, improve, summarize, and study their notes.",
+      "When the user asks about saved notes, study material, related concepts, or asks a question that should be grounded in their note library, use search_notes before answering.",
+      "When you use search_notes, cite sourced claims inline with the exact marker format <source N>, where N is the source number returned by the tool.",
+      "If note search returns no useful source, say that the answer is not grounded in saved notes before giving a general answer.",
       "When editing the open note, propose a patch or replacement instead of directly changing content.",
       "Before modifying existing note content, read the current document unless the user only asks to insert new content.",
       "For writing a note from scratch, replacing the whole note, broad rewrites, long outlines, study guides, math-heavy content, Mermaid diagrams, or code-heavy generated content, use propose_current_document_replacement and write the replacement body in Markdown.",
@@ -414,5 +513,6 @@ export async function runStudyAgent({
   return {
     content: finalMessage ? messageContentToText(finalMessage.content).trim() : "Done.",
     contextState: nextContextState,
+    sources: retrievedSources,
   };
 }
