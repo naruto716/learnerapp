@@ -4,11 +4,17 @@ import { Extension, mergeAttributes, Node, type Editor, type JSONContent } from 
 import Image from "@tiptap/extension-image";
 import { Mathematics } from "@tiptap/extension-mathematics";
 import { Markdown } from "@tiptap/markdown";
-import { DOMSerializer } from "@tiptap/pm/model";
-import { Plugin, PluginKey } from "@tiptap/pm/state";
+import { DOMSerializer, type Node as ProseMirrorNode } from "@tiptap/pm/model";
+import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
+import {
+  CaretDownIcon,
+  CaretUpIcon,
+  MagnifyingGlassIcon,
+  XIcon,
+} from "@phosphor-icons/react";
 import { KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
 import {
   applyDocumentPatchText,
@@ -99,9 +105,21 @@ type PatchReplacementBlock = {
   to: number;
 };
 
+type SearchMatch = {
+  from: number;
+  to: number;
+};
+
+type SearchDecorationState = {
+  activeIndex: number;
+  matches: SearchMatch[];
+  query: string;
+} | null;
+
 const autosaveDelayMs = 800;
 const aiPatchPreviewPluginKey = new PluginKey<AiPatchDecorationState>("aiPatchPreview");
 const aiPatchPreviewActionEvent = "learner-ai-patch-preview-action";
+const documentSearchPluginKey = new PluginKey<SearchDecorationState>("documentSearch");
 
 const emptyDocument: JSONContent = {
   type: "doc",
@@ -687,6 +705,115 @@ const AiPatchPreviewExtension = Extension.create({
   },
 });
 
+function findTextMatches(doc: ProseMirrorNode, query: string) {
+  const needle = query;
+  if (!needle) return [];
+
+  const text: string[] = [];
+  const positions: number[] = [];
+  let lastTextEnd: number | null = null;
+
+  doc.descendants((node, pos) => {
+    if (!node.isText || !node.text) return;
+
+    if (lastTextEnd !== null && pos > lastTextEnd) {
+      text.push("\n");
+      positions.push(-1);
+    }
+
+    for (let index = 0; index < node.text.length; index += 1) {
+      text.push(node.text[index]);
+      positions.push(pos + index);
+    }
+
+    lastTextEnd = pos + node.text.length;
+  });
+
+  const source = text.join("");
+  const matches: SearchMatch[] = [];
+  let index = source.indexOf(needle);
+
+  while (index !== -1) {
+    const endIndex = index + needle.length - 1;
+    const from = positions[index];
+    const to = positions[endIndex] + 1;
+
+    if (from >= 0 && to > from) {
+      matches.push({ from, to });
+    }
+
+    index = source.indexOf(needle, index + needle.length);
+  }
+
+  return matches;
+}
+
+function normalizeSearchIndex(index: number, matchCount: number) {
+  if (matchCount === 0) return 0;
+  return ((index % matchCount) + matchCount) % matchCount;
+}
+
+const DocumentSearchExtension = Extension.create({
+  name: "documentSearch",
+
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        key: documentSearchPluginKey,
+        props: {
+          decorations(state) {
+            const search = documentSearchPluginKey.getState(state);
+            if (!search?.query || search.matches.length === 0) return null;
+
+            return DecorationSet.create(
+              state.doc,
+              search.matches.map((match, index) =>
+                Decoration.inline(
+                  match.from,
+                  match.to,
+                  {
+                    class:
+                      index === search.activeIndex
+                        ? "document-search-match document-search-match-active"
+                        : "document-search-match",
+                  },
+                  {
+                    key: `search-${search.query}-${match.from}-${match.to}-${index}`,
+                  },
+                ),
+              ),
+            );
+          },
+        },
+        state: {
+          init() {
+            return null;
+          },
+          apply(transaction, value) {
+            const next = transaction.getMeta(documentSearchPluginKey) as SearchDecorationState | undefined;
+
+            if (next !== undefined) {
+              return next;
+            }
+
+            if (!transaction.docChanged || !value?.query) {
+              return value;
+            }
+
+            const matches = findTextMatches(transaction.doc, value.query);
+
+            return {
+              ...value,
+              activeIndex: normalizeSearchIndex(value.activeIndex, matches.length),
+              matches,
+            };
+          },
+        },
+      }),
+    ];
+  },
+});
+
 export default function TiptapEditor({
   active,
   documentPath,
@@ -704,14 +831,21 @@ export default function TiptapEditor({
 }) {
   const [error, setError] = useState("");
   const [editingMath, setEditingMath] = useState<EditableMath | null>(null);
+  const [searchActiveIndex, setSearchActiveIndex] = useState(0);
+  const [searchMatches, setSearchMatches] = useState<SearchMatch[]>([]);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const [title, setTitle] = useState(documentTitle(documentPath));
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const editorScrollRef = useRef<HTMLDivElement | null>(null);
+  const editorRef = useRef<Editor | null>(null);
   const initialStateRef = useRef(initialState);
   const loadedRef = useRef(false);
   const activePatchPreviewRef = useRef<ActivePatchPreview | null>(null);
   const agentUndoSnapshotsRef = useRef<Record<string, JSONContent>>({});
   const pendingPatchPreviewRef = useRef<PendingPatchPreview | null>(null);
+  const searchActiveIndexRef = useRef(0);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   const editor = useEditor({
     extensions: [
@@ -731,6 +865,7 @@ export default function TiptapEditor({
       }),
       AiDiffPreviewBlock,
       AiPatchPreviewExtension,
+      DocumentSearchExtension,
       Mathematics.configure({
         inlineOptions: {
           onClick: (node, pos) => {
@@ -798,6 +933,25 @@ export default function TiptapEditor({
         scrollTop: editorScrollRef.current?.scrollTop ?? 0,
       });
 
+      const searchState = documentSearchPluginKey.getState(editor.state);
+      if (searchState?.query) {
+        const matches = findTextMatches(editor.state.doc, searchState.query);
+        const activeIndex = normalizeSearchIndex(searchActiveIndexRef.current, matches.length);
+
+        searchActiveIndexRef.current = activeIndex;
+        setSearchMatches(matches);
+        setSearchActiveIndex(activeIndex);
+        editor.view.dispatch(
+          editor.state.tr
+            .setMeta(documentSearchPluginKey, {
+              ...searchState,
+              activeIndex,
+              matches,
+            })
+            .setMeta("addToHistory", false),
+        );
+      }
+
       if (autosaveTimerRef.current) {
         clearTimeout(autosaveTimerRef.current);
       }
@@ -812,6 +966,102 @@ export default function TiptapEditor({
       }, autosaveDelayMs);
     },
   });
+
+  useEffect(() => {
+    editorRef.current = editor;
+  }, [editor]);
+
+  const updateSearch = useCallback((query: string, requestedIndex = 0, shouldScroll = false) => {
+    const currentEditor = editorRef.current;
+    if (!currentEditor) return;
+
+    const matches = findTextMatches(currentEditor.state.doc, query);
+    const activeIndex = normalizeSearchIndex(requestedIndex, matches.length);
+    const activeMatch = matches[activeIndex];
+    let transaction = currentEditor.state.tr
+      .setMeta(documentSearchPluginKey, query ? { activeIndex, matches, query } : null)
+      .setMeta("addToHistory", false);
+
+    if (shouldScroll && activeMatch) {
+      transaction = transaction
+        .setSelection(TextSelection.create(transaction.doc, activeMatch.from, activeMatch.to))
+        .scrollIntoView();
+    }
+
+    searchActiveIndexRef.current = activeIndex;
+    setSearchMatches(matches);
+    setSearchActiveIndex(activeIndex);
+    currentEditor.view.dispatch(transaction);
+
+    if (shouldScroll && activeMatch) {
+      window.requestAnimationFrame(() => {
+        editorScrollRef.current?.querySelector(".document-search-match-active")?.scrollIntoView({
+          block: "center",
+          inline: "nearest",
+        });
+      });
+    }
+  }, []);
+
+  const openSearch = useCallback(() => {
+    setSearchOpen(true);
+
+    window.requestAnimationFrame(() => {
+      searchInputRef.current?.focus();
+      searchInputRef.current?.select();
+    });
+  }, []);
+
+  const closeSearch = useCallback(() => {
+    setSearchOpen(false);
+    setSearchQuery("");
+    updateSearch("", 0, false);
+  }, [updateSearch]);
+
+  function moveSearchResult(delta: number) {
+    if (!searchQuery || searchMatches.length === 0) return;
+    updateSearch(searchQuery, searchActiveIndex + delta, true);
+  }
+
+  function updateSearchQuery(query: string) {
+    setSearchQuery(query);
+    updateSearch(query, 0, Boolean(query));
+  }
+
+  function handleSearchKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      moveSearchResult(event.shiftKey ? -1 : 1);
+    }
+
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeSearch();
+    }
+  }
+
+  useEffect(() => {
+    searchActiveIndexRef.current = searchActiveIndex;
+  }, [searchActiveIndex]);
+
+  useEffect(() => {
+    if (!active) return;
+
+    function handleGlobalKeyDown(event: globalThis.KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        openSearch();
+      }
+
+      if (event.key === "Escape" && searchOpen) {
+        event.preventDefault();
+        closeSearch();
+      }
+    }
+
+    window.addEventListener("keydown", handleGlobalKeyDown);
+    return () => window.removeEventListener("keydown", handleGlobalKeyDown);
+  }, [active, closeSearch, openSearch, searchOpen]);
 
   useEffect(() => {
     let ignore = false;
@@ -1442,7 +1692,51 @@ export default function TiptapEditor({
   }, [documentPath, editor, onAgentToolsChange, resolvePatchPreview]);
 
   return (
-    <section className={`${active ? "block" : "hidden"} h-full min-h-0`}>
+    <section className={`${active ? "block" : "hidden"} relative h-full min-h-0`}>
+      {searchOpen && (
+        <div className="app-no-drag absolute right-4 top-3 z-30 flex h-9 items-center gap-1 rounded-full bg-[#1d1d1d]/90 px-2 text-white shadow-[0_12px_36px_rgba(0,0,0,0.38)] ring-1 ring-white/10 backdrop-blur-xl">
+          <MagnifyingGlassIcon size={16} className="shrink-0 text-white/45" />
+          <input
+            ref={searchInputRef}
+            aria-label="Search current document"
+            className="h-7 w-44 bg-transparent px-1 text-sm outline-none placeholder:text-white/35"
+            onChange={(event) => updateSearchQuery(event.target.value)}
+            onKeyDown={handleSearchKeyDown}
+            placeholder="Find exact text"
+            value={searchQuery}
+          />
+          <span className="min-w-10 text-center text-xs tabular-nums text-white/45">
+            {searchQuery ? `${searchMatches.length ? searchActiveIndex + 1 : 0}/${searchMatches.length}` : "0/0"}
+          </span>
+          <button
+            type="button"
+            aria-label="Previous match"
+            className="flex h-7 w-7 items-center justify-center rounded-full text-white/55 transition-colors hover:bg-white/10 hover:text-white disabled:text-white/20 disabled:hover:bg-transparent"
+            disabled={searchMatches.length === 0}
+            onClick={() => moveSearchResult(-1)}
+          >
+            <CaretUpIcon size={15} />
+          </button>
+          <button
+            type="button"
+            aria-label="Next match"
+            className="flex h-7 w-7 items-center justify-center rounded-full text-white/55 transition-colors hover:bg-white/10 hover:text-white disabled:text-white/20 disabled:hover:bg-transparent"
+            disabled={searchMatches.length === 0}
+            onClick={() => moveSearchResult(1)}
+          >
+            <CaretDownIcon size={15} />
+          </button>
+          <button
+            type="button"
+            aria-label="Close search"
+            className="flex h-7 w-7 items-center justify-center rounded-full text-white/45 transition-colors hover:bg-white/10 hover:text-white"
+            onClick={closeSearch}
+          >
+            <XIcon size={14} />
+          </button>
+        </div>
+      )}
+
       <div
         ref={editorScrollRef}
         onScroll={() => {
