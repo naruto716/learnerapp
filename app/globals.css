@@ -386,7 +386,7 @@ html[data-platform="darwin"] .mac-traffic-spacer {
 }
 
 .code-block-preview {
-  padding: 1rem;
+  padding: 0.75rem 1rem;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   background: #161b22;
 }
@@ -405,8 +405,23 @@ html[data-platform="darwin"] .mac-traffic-spacer {
 .code-block-preview-error {
   margin: 0;
   white-space: pre-wrap;
-  color: #fca5a5;
+  color: rgba(252, 165, 165, 0.9);
   font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.code-block-preview-error::before {
+  content: "Mermaid";
+  display: inline-block;
+  margin-right: 0.5rem;
+  border-radius: 999px;
+  background: rgba(252, 165, 165, 0.12);
+  padding: 0.125rem 0.45rem;
+  color: rgba(252, 165, 165, 0.82);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
 }
 
 .ProseMirror img {

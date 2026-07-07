@@ -21,6 +21,99 @@ const languages = [
   { label: "Mermaid", value: "mermaid" },
 ];
 
+function cleanMermaidError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || "Invalid Mermaid diagram.");
+  return message
+    .replace(/\s*mermaid version .*/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isMermaidErrorSvg(svg: string) {
+  return /Syntax error in text|(?:class|id)=["'][^"']*error-icon/i.test(svg);
+}
+
+function logMermaidFailure(stage: string, sourceCode: string, normalizedCode: string, error: unknown) {
+  console.error("[Learner Mermaid]", stage, {
+    error,
+    sourceCode,
+    normalizedCode,
+  });
+}
+
+async function getMermaidParseError(
+  mermaid: { parse: (code: string, options?: { suppressErrors?: boolean }) => Promise<unknown> },
+  code: string,
+) {
+  try {
+    await mermaid.parse(code, { suppressErrors: false });
+    return "";
+  } catch (error) {
+    return cleanMermaidError(error) || "Mermaid parse failed.";
+  }
+}
+
+function quoteFlowchartLabels(line: string) {
+  return line.replace(/(\b[A-Za-z][\w-]*)\[([^\]\n"]+)\]/g, (_, id: string, label: string) => {
+    const escapedLabel = label.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    return `${id}["${escapedLabel}"]`;
+  });
+}
+
+function normalizeFlowchartEdgeLabels(line: string) {
+  return line.replace(/\|(["'])(.*?)\1\|/g, (_match, _quote: string, label: string) => `|${label}|`);
+}
+
+function lineStartsSequenceStatement(line: string) {
+  return /^(sequenceDiagram|participant\b|actor\b|autonumber\b|activate\b|deactivate\b|destroy\b|box\b|end\b|loop\b|alt\b|else\b|opt\b|par\b|and\b|rect\b|critical\b|break\b|Note\b|%%|[A-Za-z_][\w-]*\s*(?:-+>|-+>>|--x|--\)|-\)|->>|->|-->>|-->|x-|\)-))/.test(
+    line.trim(),
+  );
+}
+
+function normalizeSequenceDiagram(code: string) {
+  const lines = code.split("\n");
+  const normalizedLines: string[] = [];
+
+  for (const line of lines) {
+    const trimmedLine = line.trim();
+    const previousLine = normalizedLines.at(-1);
+
+    if (
+      trimmedLine &&
+      previousLine &&
+      previousLine.includes(":") &&
+      !lineStartsSequenceStatement(trimmedLine)
+    ) {
+      normalizedLines[normalizedLines.length - 1] = `${previousLine} ${trimmedLine}`;
+      continue;
+    }
+
+    normalizedLines.push(line);
+  }
+
+  return normalizedLines.join("\n");
+}
+
+function normalizeMermaidCode(code: string) {
+  const normalizedCode = code.replace(/\r\n/g, "\n").trim();
+  const firstLine = normalizedCode.split("\n").find((line) => line.trim())?.trim() ?? "";
+
+  if (/^(flowchart|graph)\b/.test(firstLine)) {
+    return normalizedCode
+      .split("\n")
+      .map((line, index) =>
+        index === 0 ? line : normalizeFlowchartEdgeLabels(quoteFlowchartLabels(line)),
+      )
+      .join("\n");
+  }
+
+  if (firstLine === "sequenceDiagram") {
+    return normalizeSequenceDiagram(normalizedCode);
+  }
+
+  return normalizedCode;
+}
+
 function MermaidPreview({ code }: { code: string }) {
   const [error, setError] = useState("");
   const [svg, setSvg] = useState("");
@@ -38,24 +131,36 @@ function MermaidPreview({ code }: { code: string }) {
       }
 
       try {
+        const normalizedCode = normalizeMermaidCode(code);
         const mermaid = (await import("mermaid")).default;
 
         mermaid.initialize({
+          logLevel: "fatal",
           securityLevel: "strict",
           startOnLoad: false,
+          suppressErrorRendering: true,
           theme: "dark",
         });
 
-        const result = await mermaid.render(renderId, code);
+        const result = await mermaid.render(renderId, normalizedCode);
 
         if (!ignore) {
+          if (isMermaidErrorSvg(result.svg)) {
+            const parseError = await getMermaidParseError(mermaid, normalizedCode);
+            logMermaidFailure("render returned Mermaid error SVG", code, normalizedCode, parseError);
+            setSvg("");
+            setError(parseError || "Mermaid render returned an error SVG after parsing.");
+            return;
+          }
+
           setSvg(result.svg);
           setError("");
         }
       } catch (renderError) {
         if (!ignore) {
+          logMermaidFailure("render threw", code, normalizeMermaidCode(code), renderError);
           setSvg("");
-          setError(renderError instanceof Error ? renderError.message : "Failed to render Mermaid diagram.");
+          setError(cleanMermaidError(renderError) || "Mermaid syntax error.");
         }
       }
     }

@@ -382,6 +382,7 @@ export async function runStudyAgent({
       "Before modifying existing note content, read the current document unless the user only asks to insert new content.",
       "For writing a note from scratch, replacing the whole note, broad rewrites, long outlines, or study guides, use propose_current_document_replacement and write the replacement body in Markdown.",
       "Replacement Markdown should be the complete final document body, not a diff. Do not wrap it in a markdown code fence.",
+      "When writing Mermaid diagrams in Markdown, use fenced code blocks like ```mermaid and keep syntax simple and valid. For flowchart node labels, quote labels with brackets like A[\"Type https://example.com\"]. For flowchart edge labels, use -->|Yes| without quotes inside the pipes. For sequenceDiagram, keep each arrow message on one line; do not put message continuations on the next line.",
       "For small targeted edits, use propose_current_document_patch.",
       "Patch the current document's patchableHtml, not the plain text field.",
       "Use valid Tiptap-compatible HTML. Prefer semantic blocks: headings, paragraphs, lists, blockquotes, and code blocks.",
