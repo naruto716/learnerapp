@@ -8,20 +8,25 @@ import {
   PaperPlaneRightIcon,
   PlusIcon,
   SparkleIcon,
+  StopIcon,
   TrashIcon,
   XIcon,
 } from "@phosphor-icons/react";
 import { useEffect, useRef, useState } from "react";
+import rehypeHighlight from "rehype-highlight";
+import rehypeKatex from "rehype-katex";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
 import type { ProposedDocumentPatch } from "./documentPatch";
 import type { ChangeEvent, DragEvent, FormEvent, KeyboardEvent, ClipboardEvent } from "react";
-import { runStudyAgent, type AgentContextState, type AgentSource } from "./studyAgent";
+import { runStudyAgentLoop, type AgentContextState, type AgentSource, type AgentToolCall } from "./studyAgent";
 import type { CurrentDocumentAgentTools } from "@/components/editor/TiptapEditor";
 
-const sessionsStorageKey = "learner.ai.sessions.v1";
-const currentSessionStorageKey = "learner.ai.currentSession.v1";
+const sessionsStorageKey = "learner.ai.sessions.v2";
+const currentSessionStorageKey = "learner.ai.currentSession.v2";
 const legacyChatStorageKey = "learner.ai.chat.v1";
+const oldSessionStorageKeys = ["learner.ai.sessions.v1", "learner.ai.currentSession.v1", legacyChatStorageKey];
 
 const maxImages = 5;
 const maxImageSize = 4 * 1024 * 1024;
@@ -29,12 +34,16 @@ const acceptedImageTypes = ["image/jpeg", "image/png", "image/gif", "image/webp"
 
 type ChatMessage = {
   id: string;
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "tool";
   content: string;
   createdAt: number;
   images?: string[];
+  isStreaming?: boolean;
   patches?: ProposedDocumentPatch[];
-  sources?: AgentSource[];
+  toolCallId?: string;
+  toolCalls?: AgentToolCall[];
+  toolName?: string;
+  toolResult?: unknown;
 };
 
 type ChatSession = {
@@ -77,13 +86,12 @@ function validMessage(message: unknown): message is ChatMessage {
   const candidate = message as Partial<ChatMessage>;
   return (
     typeof candidate.id === "string" &&
-    (candidate.role === "user" || candidate.role === "assistant") &&
+    (candidate.role === "user" || candidate.role === "assistant" || candidate.role === "tool") &&
     typeof candidate.content === "string" &&
     typeof candidate.createdAt === "number" &&
     (typeof candidate.patches === "undefined" ||
       (Array.isArray(candidate.patches) && candidate.patches.every(validPatch))) &&
-    (typeof candidate.sources === "undefined" ||
-      (Array.isArray(candidate.sources) && candidate.sources.every(validSource)))
+    (typeof candidate.toolCalls === "undefined" || Array.isArray(candidate.toolCalls))
   );
 }
 
@@ -304,12 +312,68 @@ function contentWithSourceLinks(content: string) {
   });
 }
 
+function normalizeMathDelimiters(content: string) {
+  return content
+    .split(/(```[\s\S]*?```|`[^`\n]*`)/g)
+    .map((segment) => {
+      if (segment.startsWith("```") || segment.startsWith("`")) return segment;
+
+      return segment
+        .replace(/\\\[((?:.|\n)*?)\\\]/g, (_match, math: string) => `$$\n${math.trim()}\n$$`)
+        .replace(/\\\(((?:.|\n)*?)\\\)/g, (_match, math: string) => `$${math.trim()}$`);
+    })
+    .join("");
+}
+
 function sourceFromHref(href: string | undefined, sources: AgentSource[]) {
   const match = href?.match(/^#learner-source-(\d+)$/);
   if (!match) return null;
 
   const sourceId = Number(match[1]);
   return sources.find((source) => source.id === sourceId) ?? null;
+}
+
+function parseToolResult(result: unknown) {
+  if (typeof result !== "string") return result;
+
+  try {
+    return JSON.parse(result);
+  } catch {
+    return result;
+  }
+}
+
+function toolResultSources(result: unknown) {
+  const parsed = parseToolResult(result);
+  if (!parsed || typeof parsed !== "object") return [];
+
+  const sources = (parsed as { sources?: unknown }).sources;
+  if (!Array.isArray(sources)) return [];
+
+  return sources.filter(validSource);
+}
+
+function toolResultPatch(result: unknown) {
+  const parsed = parseToolResult(result);
+  if (!parsed || typeof parsed !== "object") return null;
+
+  const patch = (parsed as { patch?: unknown }).patch;
+  return validPatch(patch) ? patch : null;
+}
+
+function sourcesForMessage(messages: ChatMessage[], messageIndex: number) {
+  const sourcesById = new Map<number, AgentSource>();
+
+  for (let index = messageIndex - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role === "user") break;
+
+    for (const source of toolResultSources(message.toolResult)) {
+      sourcesById.set(source.id, source);
+    }
+  }
+
+  return [...sourcesById.values()].sort((left, right) => left.id - right.id);
 }
 
 function SourceStrip({
@@ -343,15 +407,15 @@ function SourceStrip({
 function MessageContent({
   message,
   onOpenSource,
+  sources,
 }: {
   message: ChatMessage;
   onOpenSource: (source: AgentSource) => void;
+  sources: AgentSource[];
 }) {
   if (message.role === "user") {
     return <p className="whitespace-pre-wrap">{message.content}</p>;
   }
-
-  const sources = message.sources ?? [];
 
   return (
     <div className="learner-ai-markdown">
@@ -380,13 +444,53 @@ function MessageContent({
             );
           },
         }}
-        remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeKatex, rehypeHighlight]}
+        remarkPlugins={[remarkGfm, remarkMath]}
       >
-        {contentWithSourceLinks(message.content)}
+        {contentWithSourceLinks(normalizeMathDelimiters(message.content))}
       </ReactMarkdown>
       <SourceStrip onOpenSource={onOpenSource} sources={sources} />
     </div>
   );
+}
+
+function ToolCallMessage({ toolCalls }: { toolCalls: AgentToolCall[] }) {
+  return (
+    <div className="space-y-1 text-xs text-white/45">
+      {toolCalls.map((toolCall) => (
+        <p key={toolCall.id}>
+          Using <span className="font-medium text-white/65">{toolCall.name}</span>
+        </p>
+      ))}
+    </div>
+  );
+}
+
+function ToolResultMessage({ message }: { message: ChatMessage }) {
+  const parsedResult = parseToolResult(message.toolResult);
+  const sources = toolResultSources(message.toolResult);
+
+  if (sources.length > 0) {
+    return (
+      <p className="text-xs text-white/42">
+        Found {sources.length} note source{sources.length === 1 ? "" : "s"} with{" "}
+        <span className="text-white/62">{message.toolName}</span>.
+      </p>
+    );
+  }
+
+  if (message.patches?.length) {
+    return null;
+  }
+
+  const text =
+    typeof parsedResult === "string"
+      ? parsedResult
+      : parsedResult && typeof parsedResult === "object" && typeof (parsedResult as { message?: unknown }).message === "string"
+        ? (parsedResult as { message: string }).message
+        : `${message.toolName ?? "tool"} finished.`;
+
+  return <p className="text-xs text-white/42">{text}</p>;
 }
 
 export default function ChatPanel({
@@ -416,12 +520,15 @@ export default function ChatPanel({
   const [storageLoaded, setStorageLoaded] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const messagesRef = useRef<ChatMessage[]>([]);
+  const abortControllerRef = useRef<AbortController | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const imagesRef = useRef<PendingImage[]>([]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
+      oldSessionStorageKeys.forEach((storageKey) => localStorage.removeItem(storageKey));
+
       const loadedSessions = readSessions();
       const savedSessionId = localStorage.getItem(currentSessionStorageKey);
       const activeSession =
@@ -496,6 +603,7 @@ export default function ChatPanel({
   }
 
   function startNewChat() {
+    abortControllerRef.current?.abort();
     setCurrentSessionId(generateId("session"));
     setMessages([]);
     setAgentContextState({});
@@ -508,6 +616,7 @@ export default function ChatPanel({
   }
 
   function loadSession(session: ChatSession) {
+    abortControllerRef.current?.abort();
     setCurrentSessionId(session.id);
     setMessages(session.messages);
     setAgentContextState(session.agentContextState ?? {});
@@ -616,6 +725,15 @@ export default function ChatPanel({
     saveMessagesToSession(nextMessages);
   }
 
+  function commitMessages(nextMessages: ChatMessage[], options?: { persist?: boolean; contextState?: AgentContextState }) {
+    messagesRef.current = nextMessages;
+    setMessages(nextMessages);
+
+    if (options?.persist ?? true) {
+      saveMessagesToSession(nextMessages, options?.contextState ?? agentContextState);
+    }
+  }
+
   function applyPatch(patchId: string) {
     const patch = messagesRef.current
       .flatMap((message) => message.patches ?? [])
@@ -679,6 +797,10 @@ export default function ChatPanel({
     onOpenDocument(source.path);
   }
 
+  function stopAgent() {
+    abortControllerRef.current?.abort();
+  }
+
   async function submitMessage(event?: FormEvent<HTMLFormElement>) {
     event?.preventDefault();
     if (isAgentRunning) return;
@@ -694,22 +816,10 @@ export default function ChatPanel({
       createdAt: Date.now(),
       images: readyImages.map((image) => image.dataUrl as string),
     };
-    const assistantMessage: ChatMessage = {
-      id: generateId("message"),
-      role: "assistant",
-      content: "",
-      createdAt: Date.now(),
-    };
     const messagesForAgent = [...messages, userMessage];
-    const nextMessages = [
-      ...messages,
-      userMessage,
-      assistantMessage,
-    ];
+    const nextMessages = [...messages, userMessage];
 
-    messagesRef.current = nextMessages;
-    setMessages(nextMessages);
-    saveMessagesToSession(nextMessages);
+    commitMessages(nextMessages);
 
     setInput("");
     setImages((current) => {
@@ -718,50 +828,129 @@ export default function ChatPanel({
     });
 
     setIsAgentRunning(true);
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
 
     try {
-      const proposedPatches: ProposedDocumentPatch[] = [];
-      const response = await runStudyAgent({
+      let streamingMessageId = "";
+      let streamingContent = "";
+
+      for await (const chunk of runStudyAgentLoop({
         contextState: agentContextState,
         getCurrentDocumentTools,
-        onPatchProposed: (patch) => {
-          proposedPatches.push(patch);
-        },
-        messages: messagesForAgent.map((message) => ({
-          role: message.role,
-          content: message.content,
-          images: message.images,
-        })),
-      });
-      const finalMessages = nextMessages.map((message) =>
-        message.id === assistantMessage.id
-          ? {
-              ...message,
-              content: response.content,
-              patches: proposedPatches.length > 0 ? proposedPatches : undefined,
-              sources: response.sources.length > 0 ? response.sources : undefined,
-            }
-          : message,
-      );
+        messages: messagesForAgent
+          .filter(
+            (message): message is ChatMessage & { role: "user" | "assistant" } =>
+              message.role === "user" || (message.role === "assistant" && Boolean(message.content.trim())),
+          )
+          .map((message) => ({
+            role: message.role,
+            content: message.content,
+            images: message.images,
+          })),
+        signal: abortController.signal,
+      })) {
+        if (chunk.type === "tool_call") {
+          const toolCallMessage: ChatMessage = {
+            id: generateId("message"),
+            role: "assistant",
+            content: "",
+            createdAt: Date.now(),
+            toolCalls: [chunk.toolCall],
+          };
 
-      messagesRef.current = finalMessages;
-      setAgentContextState(response.contextState);
-      setMessages(finalMessages);
-      saveMessagesToSession(finalMessages, response.contextState);
+          commitMessages([...messagesRef.current, toolCallMessage]);
+          continue;
+        }
 
+        if (chunk.type === "tool_result") {
+          const patch = toolResultPatch(chunk.result);
+          const toolMessage: ChatMessage = {
+            id: generateId("message"),
+            role: "tool",
+            content: "",
+            createdAt: Date.now(),
+            patches: patch ? [patch] : undefined,
+            toolCallId: chunk.toolCallId,
+            toolName: chunk.toolName,
+            toolResult: chunk.result,
+          };
+
+          commitMessages([...messagesRef.current, toolMessage]);
+          continue;
+        }
+
+        if (chunk.type === "text_delta") {
+          streamingContent += chunk.content;
+
+          if (!streamingMessageId) {
+            streamingMessageId = generateId("message");
+            commitMessages(
+              [
+                ...messagesRef.current,
+                {
+                  id: streamingMessageId,
+                  role: "assistant",
+                  content: streamingContent,
+                  createdAt: Date.now(),
+                  isStreaming: true,
+                },
+              ],
+              { persist: false },
+            );
+          } else {
+            commitMessages(
+              messagesRef.current.map((message) =>
+                message.id === streamingMessageId ? { ...message, content: streamingContent } : message,
+              ),
+              { persist: false },
+            );
+          }
+
+          continue;
+        }
+
+        if (chunk.type === "text_done" && streamingMessageId) {
+          commitMessages(
+            messagesRef.current.map((message) =>
+              message.id === streamingMessageId ? { ...message, isStreaming: false } : message,
+            ),
+          );
+          streamingMessageId = "";
+          streamingContent = "";
+          continue;
+        }
+
+        if (chunk.type === "done") {
+          setAgentContextState(chunk.contextState);
+          commitMessages(messagesRef.current, { contextState: chunk.contextState });
+        }
+      }
     } catch (agentError) {
+      if (abortController.signal.aborted) {
+        commitMessages(
+          messagesRef.current.map((message) =>
+            message.isStreaming ? { ...message, isStreaming: false } : message,
+          ),
+        );
+        return;
+      }
+
       const errorMessage =
         agentError instanceof Error ? agentError.message : "The study agent failed to respond.";
-      const finalMessages = nextMessages.map((message) =>
-        message.id === assistantMessage.id
-          ? { ...message, content: `I couldn't complete that request.\n\n${errorMessage}` }
-          : message,
-      );
-
-      messagesRef.current = finalMessages;
-      setMessages(finalMessages);
-      saveMessagesToSession(finalMessages);
+      commitMessages([
+        ...messagesRef.current,
+        {
+          id: generateId("message"),
+          role: "assistant",
+          content: `I couldn't complete that request.\n\n${errorMessage}`,
+          createdAt: Date.now(),
+        },
+      ]);
     } finally {
+      if (abortControllerRef.current === abortController) {
+        abortControllerRef.current = null;
+      }
       setIsAgentRunning(false);
     }
   }
@@ -773,7 +962,8 @@ export default function ChatPanel({
     }
   }
 
-  const canSend = !isAgentRunning && (Boolean(input.trim()) || images.some((image) => image.status === "ready"));
+  const hasDraftMessage = Boolean(input.trim()) || images.some((image) => image.status === "ready");
+  const canSend = !isAgentRunning && hasDraftMessage;
   const isUploading = images.some((image) => image.status === "loading");
   const panelBounds = isFullscreen
     ? `${isSidebarOpen ? "left-64" : "left-0"} right-0 top-10 bottom-0 h-auto w-auto rounded-none`
@@ -847,16 +1037,18 @@ export default function ChatPanel({
             </div>
           ) : (
             <div className={`${contentWidth} space-y-4`}>
-              {messages.map((message) => (
+              {messages.map((message, messageIndex) => (
                 <div
-                  className={`flex ${message.role === "user" ? "justify-end" : "justify-center"}`}
+                  className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
                   key={message.id}
                 >
                   <div
-                    className={`rounded-2xl p-3 text-sm leading-relaxed backdrop-blur-[76px] ${
+                    className={`text-sm leading-relaxed ${
                       message.role === "user"
-                        ? "max-w-[78%] rounded-br-md bg-[#6495ed]/20 text-white shadow-[inset_0_0_0_1px_rgba(100,149,237,0.3)]"
-                        : "rounded-bl-md text-white/88"
+                        ? "max-w-[78%] px-1 py-1 text-right text-white/88"
+                        : message.role === "tool"
+                          ? "max-w-[78%] px-1 py-0.5 text-white/55"
+                          : "min-w-0 flex-1 px-1 py-1 text-white/88"
                     }`}
                   >
                     {message.images && message.images.length > 0 && (
@@ -874,11 +1066,19 @@ export default function ChatPanel({
                         ))}
                       </div>
                     )}
-                    {message.role === "assistant" && !message.content ? (
+                    {message.toolCalls?.length ? (
+                      <ToolCallMessage toolCalls={message.toolCalls} />
+                    ) : message.role === "tool" ? (
+                      <ToolResultMessage message={message} />
+                    ) : message.role === "assistant" && !message.content ? (
                       <p className="text-white/45">Thinking...</p>
                     ) : (
                       (message.content || message.role === "assistant") && (
-                        <MessageContent message={message} onOpenSource={openSource} />
+                        <MessageContent
+                          message={message}
+                          onOpenSource={openSource}
+                          sources={sourcesForMessage(messages, messageIndex)}
+                        />
                       )
                     )}
                     {message.patches?.map((patch) => (
@@ -977,12 +1177,13 @@ export default function ChatPanel({
             />
 
             <button
-              type="submit"
-              aria-label="Send message"
+              type={isAgentRunning ? "button" : "submit"}
+              aria-label={isAgentRunning ? "Stop response" : "Send message"}
               className="mb-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-white/55 transition-colors hover:bg-white/[0.08] hover:text-white/85 disabled:cursor-default disabled:text-white/25 disabled:hover:bg-transparent"
-              disabled={!canSend || isUploading}
+              disabled={isAgentRunning ? false : !canSend || isUploading}
+              onClick={isAgentRunning ? stopAgent : undefined}
             >
-              <PaperPlaneRightIcon size={20} weight="fill" />
+              {isAgentRunning ? <StopIcon size={18} weight="fill" /> : <PaperPlaneRightIcon size={20} weight="fill" />}
             </button>
           </div>
         </form>

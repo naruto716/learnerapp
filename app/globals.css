@@ -471,7 +471,7 @@ html[data-platform="darwin"] .mac-traffic-spacer {
   display: block;
   max-width: min(100%, 720px);
   height: auto;
-  margin: 0 0 0.75rem;
+  margin: 0 auto 0.75rem;
   border-radius: 6px;
 }
 
@@ -522,8 +522,31 @@ html[data-platform="darwin"] .mac-traffic-spacer {
 .learner-ai-markdown ul,
 .learner-ai-markdown ol,
 .learner-ai-markdown blockquote,
-.learner-ai-markdown pre {
+.learner-ai-markdown pre,
+.learner-ai-markdown table,
+.learner-ai-markdown .katex-display {
   margin: 0 0 0.65rem;
+}
+
+.learner-ai-markdown h1,
+.learner-ai-markdown h2,
+.learner-ai-markdown h3 {
+  margin: 0.9rem 0 0.45rem;
+  color: rgba(255, 255, 255, 0.94);
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.learner-ai-markdown h1 {
+  font-size: 1.25rem;
+}
+
+.learner-ai-markdown h2 {
+  font-size: 1.08rem;
+}
+
+.learner-ai-markdown h3 {
+  font-size: 0.98rem;
 }
 
 .learner-ai-markdown ul,
@@ -561,7 +584,7 @@ html[data-platform="darwin"] .mac-traffic-spacer {
 .learner-ai-markdown pre {
   overflow-x: auto;
   border-radius: 10px;
-  background: rgba(0, 0, 0, 0.38);
+  background: rgba(0, 0, 0, 0.28);
   padding: 0.75rem 0.85rem;
 }
 
@@ -569,10 +592,44 @@ html[data-platform="darwin"] .mac-traffic-spacer {
   display: block;
   background: transparent;
   padding: 0;
+  color: inherit;
+  font-size: 0.82rem;
+  line-height: 1.6;
 }
 
 .learner-ai-markdown blockquote {
   border-left: 2px solid rgba(200, 236, 186, 0.55);
   padding-left: 0.75rem;
   color: rgba(255, 255, 255, 0.68);
+}
+
+.learner-ai-markdown .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.15rem 0;
+}
+
+.learner-ai-markdown .katex {
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 1.02em;
+}
+
+.learner-ai-markdown table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.learner-ai-markdown th,
+.learner-ai-markdown td {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 0.35rem 0.5rem;
+  text-align: left;
+}
+
+.learner-ai-markdown th {
+  color: rgba(255, 255, 255, 0.9);
+  font-weight: 650;
 }

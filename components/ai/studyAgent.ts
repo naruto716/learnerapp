@@ -44,8 +44,37 @@ type RunStudyAgentRequest = {
   messages: AgentChatMessage[];
   contextState?: AgentContextState;
   getCurrentDocumentTools: () => CurrentDocumentAgentTools | null;
-  onPatchProposed: (patch: ProposedDocumentPatch) => void;
+  signal?: AbortSignal;
 };
+
+export type AgentToolCall = {
+  id: string;
+  name: string;
+  args: unknown;
+};
+
+export type AgentLoopChunk =
+  | {
+      type: "tool_call";
+      toolCall: AgentToolCall;
+    }
+  | {
+      type: "tool_result";
+      toolCallId: string;
+      toolName: string;
+      result: unknown;
+    }
+  | {
+      type: "text_delta";
+      content: string;
+    }
+  | {
+      type: "text_done";
+    }
+  | {
+      type: "done";
+      contextState: AgentContextState;
+    };
 
 type ModelMessage = {
   role: "system" | "user" | "assistant";
@@ -74,6 +103,9 @@ function createLearnerModel() {
   return new ChatOpenAI({
     model: readLocalSetting(modelStorageKey, defaultModel),
     apiKey: readLocalSetting(proxyApiKeyStorageKey, defaultProxyApiKey),
+    reasoning: {
+      effort: "xhigh",
+    },
     temperature: 0.25,
     streamUsage: false,
     configuration: {
@@ -290,11 +322,9 @@ function compactSourceText(text: string, maxLength = 1200) {
 
 function createStudyTools({
   getCurrentDocumentTools,
-  onPatchProposed,
   registerSources,
 }: {
   getCurrentDocumentTools: () => CurrentDocumentAgentTools | null;
-  onPatchProposed: (patch: ProposedDocumentPatch) => void;
   registerSources: (results: DocumentSemanticSearchResult[]) => AgentSource[];
 }) {
   function getTools() {
@@ -328,15 +358,11 @@ function createStudyTools({
 
           return JSON.stringify(
             {
+              type: "search_notes",
+              query,
               instructions:
                 "Use these note sources when answering. Cite claims from these sources with inline markers like <source 1>.",
-              sources: sources.map((source) => ({
-                id: `source ${source.id}`,
-                title: source.title,
-                path: source.path,
-                excerpt: source.excerpt,
-                score: Number(source.score.toFixed(4)),
-              })),
+              sources,
             },
             null,
             2,
@@ -375,7 +401,7 @@ function createStudyTools({
         if (!documentTools) return "No document is currently open.";
         const currentDocument = documentTools.read();
 
-        onPatchProposed({
+        const patch: ProposedDocumentPatch = {
           id: `patch_${Date.now()}_${crypto.randomUUID()}`,
           documentPath: documentTools.path,
           baseHash: currentDocument.patchBaseHash,
@@ -384,9 +410,17 @@ function createStudyTools({
           patchText,
           status: "pending",
           createdAt: Date.now(),
-        });
+        };
 
-        return "Patch proposed. The user must review and apply it before the note changes.";
+        return JSON.stringify(
+          {
+            type: "proposed_document_patch",
+            message: "Patch proposed. The user must review and apply it before the note changes.",
+            patch,
+          },
+          null,
+          2,
+        );
       },
       {
         name: "propose_current_document_patch",
@@ -404,7 +438,7 @@ function createStudyTools({
         if (!documentTools) return "No document is currently open.";
         const currentDocument = documentTools.read();
 
-        onPatchProposed({
+        const patch: ProposedDocumentPatch = {
           id: `replace_${Date.now()}_${crypto.randomUUID()}`,
           documentPath: documentTools.path,
           baseHash: currentDocument.patchBaseHash,
@@ -413,9 +447,17 @@ function createStudyTools({
           replacementMarkdown: markdown,
           status: "pending",
           createdAt: Date.now(),
-        });
+        };
 
-        return "Full-document replacement proposed. The user must review and apply it before the note changes.";
+        return JSON.stringify(
+          {
+            type: "proposed_document_replacement",
+            message: "Full-document replacement proposed. The user must review and apply it before the note changes.",
+            patch,
+          },
+          null,
+          2,
+        );
       },
       {
         name: "propose_current_document_replacement",
@@ -433,42 +475,39 @@ function createStudyTools({
   ];
 }
 
-export async function runStudyAgent({
-  messages,
-  contextState: currentContextState = {},
+function registerRetrievedSources(retrievedSources: AgentSource[], results: DocumentSemanticSearchResult[]) {
+  return results.map((result) => {
+    const existingSource = retrievedSources.find(
+      (source) => source.path === result.path && source.chunkIndex === result.chunkIndex,
+    );
+
+    if (existingSource) return existingSource;
+
+    const source = {
+      chunkIndex: result.chunkIndex,
+      excerpt: compactSourceText(result.text),
+      id: retrievedSources.length + 1,
+      path: result.path,
+      score: result.score,
+      title: result.title,
+    };
+
+    retrievedSources.push(source);
+    return source;
+  });
+}
+
+function createStudyAgent({
   getCurrentDocumentTools,
-  onPatchProposed,
-}: RunStudyAgentRequest) {
-  const nextContextState = await compactContextIfNeeded(messages, currentContextState);
-  const retrievedSources: AgentSource[] = [];
-
-  function registerSources(results: DocumentSemanticSearchResult[]) {
-    return results.map((result) => {
-      const existingSource = retrievedSources.find(
-        (source) => source.path === result.path && source.chunkIndex === result.chunkIndex,
-      );
-
-      if (existingSource) return existingSource;
-
-      const source = {
-        chunkIndex: result.chunkIndex,
-        excerpt: compactSourceText(result.text),
-        id: retrievedSources.length + 1,
-        path: result.path,
-        score: result.score,
-        title: result.title,
-      };
-
-      retrievedSources.push(source);
-      return source;
-    });
-  }
-
-  const agent = createAgent({
+  registerSources,
+}: {
+  getCurrentDocumentTools: () => CurrentDocumentAgentTools | null;
+  registerSources: (results: DocumentSemanticSearchResult[]) => AgentSource[];
+}) {
+  return createAgent({
     model: createLearnerModel(),
     tools: createStudyTools({
       getCurrentDocumentTools,
-      onPatchProposed,
       registerSources,
     }),
     systemPrompt: [
@@ -501,18 +540,137 @@ export async function runStudyAgent({
       "After proposing a patch, tell the user what the patch does and that it is waiting for approval.",
     ].join("\n"),
   });
+}
 
-  const result = await agent.invoke({
-    messages: buildModelMessages(messages, nextContextState),
+export async function* runStudyAgentLoop({
+  messages,
+  contextState: currentContextState = {},
+  getCurrentDocumentTools,
+  signal,
+}: RunStudyAgentRequest): AsyncGenerator<AgentLoopChunk> {
+  const nextContextState = await compactContextIfNeeded(messages, currentContextState);
+  const retrievedSources: AgentSource[] = [];
+
+  function registerSources(results: DocumentSemanticSearchResult[]) {
+    return registerRetrievedSources(retrievedSources, results);
+  }
+
+  const agent = createStudyAgent({
+    getCurrentDocumentTools,
+    registerSources,
   });
 
-  const finalMessage = [...result.messages]
-    .reverse()
-    .find((message) => message._getType?.() === "ai" && messageContentToText(message.content).trim());
+  const run = await agent.streamEvents({
+    messages: buildModelMessages(messages, nextContextState),
+  }, {
+    signal,
+    version: "v3",
+  });
+
+  const pendingChunks: AgentLoopChunk[] = [];
+  let notifyChunkAvailable: (() => void) | null = null;
+  let finished = false;
+  let failure: unknown;
+
+  function pushChunk(chunk: AgentLoopChunk) {
+    pendingChunks.push(chunk);
+    notifyChunkAvailable?.();
+    notifyChunkAvailable = null;
+  }
+
+  async function consumeMessageStreams() {
+    for await (const message of run.messages) {
+      let emittedText = false;
+
+      for await (const delta of message.text) {
+        if (!delta) continue;
+        emittedText = true;
+        pushChunk({
+          type: "text_delta",
+          content: delta,
+        });
+      }
+
+      if (emittedText) {
+        pushChunk({
+          type: "text_done",
+        });
+      }
+    }
+  }
+
+  async function consumeToolStreams() {
+    for await (const call of run.toolCalls) {
+      pushChunk({
+        type: "tool_call",
+        toolCall: {
+          id: call.callId,
+          name: call.name,
+          args: call.input,
+        },
+      });
+
+      const result = await call.output;
+
+      pushChunk({
+        type: "tool_result",
+        toolCallId: call.callId,
+        toolName: call.name,
+        result,
+      });
+    }
+  }
+
+  Promise.all([consumeMessageStreams(), consumeToolStreams(), run.output])
+    .then(() => {
+      pushChunk({
+        type: "done",
+        contextState: nextContextState,
+      });
+    })
+    .catch((error) => {
+      failure = error;
+    })
+    .finally(() => {
+      finished = true;
+      notifyChunkAvailable?.();
+      notifyChunkAvailable = null;
+    });
+
+  while (!finished || pendingChunks.length > 0) {
+    if (pendingChunks.length === 0) {
+      await new Promise<void>((resolve) => {
+        notifyChunkAvailable = resolve;
+      });
+      continue;
+    }
+
+    const nextChunk = pendingChunks.shift();
+    if (nextChunk) {
+      yield nextChunk;
+    }
+  }
+
+  if (failure) {
+    throw failure;
+  }
+}
+
+export async function runStudyAgent(request: RunStudyAgentRequest) {
+  let content = "";
+  let contextState = request.contextState ?? {};
+
+  for await (const chunk of runStudyAgentLoop(request)) {
+    if (chunk.type === "text_delta") {
+      content += chunk.content;
+    } else if (chunk.type === "done") {
+      contextState = chunk.contextState;
+    }
+  }
 
   return {
-    content: finalMessage ? messageContentToText(finalMessage.content).trim() : "Done.",
-    contextState: nextContextState,
-    sources: retrievedSources,
+    content: content.trim() || "Done.",
+    contextState,
+    sources: [],
   };
 }
