@@ -52,7 +52,7 @@ export default function TopBar({
         />
       </div>
 
-      <div className="app-no-drag scrollbar-hidden flex min-w-0 flex-1 items-stretch self-stretch overflow-x-auto">
+      <div className="scrollbar-hidden flex min-w-0 flex-1 items-stretch self-stretch overflow-x-auto">
         {openTabs.map((documentPath, index, array) => (
           <div
             key={documentPath}
@@ -81,7 +81,7 @@ export default function TopBar({
               setDragTarget(null);
               onReorderTabs(sourcePath, documentPath, position);
             }}
-            className={`group relative flex min-w-36 max-w-56 items-center gap-2 border-l ${index === array.length - 1 ? "border-r" : ""} border-white/10 pl-4 pr-2 text-sm transition-colors ${
+            className={`app-no-drag group relative flex min-w-36 max-w-56 items-center gap-2 border-l ${index === array.length - 1 ? "border-r" : ""} border-white/10 pl-4 pr-2 text-sm transition-colors ${
               activeDocumentPath === documentPath
                 ? "bg-white/10 text-white"
                 : "text-white/60 hover:bg-white/5 hover:text-white"

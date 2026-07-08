@@ -261,9 +261,10 @@ export default function SideBar({
         isSidebarOpen ? "w-64" : "w-0 opacity-0"
       }`}
     >
-      <div className="mac-traffic-padding flex h-10 items-center justify-between gap-2 pr-3">
-        <p className="text-sm font-medium ml-1">HexNote</p>
-        <div className="app-no-drag flex gap-1">
+      <div className="mac-traffic-padding app-drag relative flex h-10 items-center justify-between gap-2 pr-3">
+        <div aria-hidden="true" className="app-drag absolute inset-0 h-10" />
+        <p className="pointer-events-none relative z-10 text-sm font-medium ml-1">HexNote</p>
+        <div className="app-no-drag relative z-10 flex gap-1">
           <IconButton
             ariaLabel="Search notes"
             icon={<MagnifyingGlassIcon size={18} />}
