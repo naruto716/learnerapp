@@ -1,72 +1,101 @@
 const { z } = require("zod");
 const {
+  findConceptResolutionCandidates,
   getDocumentGraph,
   getExtractionRun,
   hashContent,
-  saveExtractedDocumentGraph,
+  saveConceptEmbedding,
+  saveResolvedDocumentGraph,
 } = require("./graphDb");
+const {
+  getGraphEmbeddingConfig,
+  getGraphModelConfig,
+  requestConceptEmbeddings,
+  requestStructuredJson,
+} = require("./graphModel");
+const { graphDebug, graphError, graphLog, graphWarn, hashPreview, startTimer } = require("./graphLog");
 
-const defaultGraphModel = "gpt-5.5";
-const defaultGraphBaseUrl = "http://127.0.0.1:8317/v1";
-const defaultProxyApiKey = "sk-cliproxy-michael-2026";
+const maxCandidateConcepts = 18;
+const maxResolutionCandidates = 8;
+const resolverConcurrency = 4;
 
-const graphExtractionSchema = z
+const mentionTypes = ["definition", "example", "comparison", "problem", "application", "passing_reference"];
+
+const candidateConceptSchema = z
   .object({
-    concepts: z.array(
-      z
-        .object({
-          aliases: z.array(z.string()),
-          confidence: z.number().min(0).max(1),
-          excerptMarkdown: z.string().trim().min(1),
-          mentionType: z.enum(["definition", "example", "comparison", "problem", "application", "passing_reference"]),
-          name: z.string().trim().min(1),
-          sectionTitle: z.string(),
-          summary: z.string().trim().min(1),
-          type: z.string().trim().min(1),
-        })
-        .strict(),
-    ),
+    aliases: z.array(z.string()),
+    confidence: z.number().min(0).max(1),
+    excerptMarkdown: z.string().trim().min(1),
+    importance: z.number().min(0).max(1),
+    mentionType: z.enum(mentionTypes),
+    name: z.string().trim().min(1),
+    noteContribution: z.string().trim().min(1),
+    sectionTitle: z.string(),
+    summary: z.string().trim().min(1),
+    type: z.string().trim().min(1),
+  })
+  .strict();
+
+const candidateExtractionSchema = z
+  .object({
+    concepts: z.array(candidateConceptSchema).max(maxCandidateConcepts),
+  })
+  .strict();
+
+const conceptResolutionSchema = z
+  .object({
+    absorbConceptIds: z.array(z.number().int()),
+    aliases: z.array(z.string()),
+    canonicalName: z.string().trim().min(1),
+    confidence: z.number().min(0).max(1),
+    contribution: z.string().trim().min(1),
+    decision: z.enum(["use_existing", "promote_candidate", "create_broader", "create_new", "keep_separate"]),
+    explanation: z.string().trim().min(1),
+    reason: z.string().trim().min(1),
+    reuseConceptId: z.number().int().nullable(),
+    summary: z.string().trim().min(1),
+    type: z.string().trim().min(1),
+  })
+  .strict();
+
+const relationExtractionSchema = z
+  .object({
     relations: z.array(
       z
         .object({
           confidence: z.number().min(0).max(1),
           excerptMarkdown: z.string().trim().min(1),
           explanation: z.string().trim().min(1),
-          from: z.string().trim().min(1),
+          fromKey: z.string().trim().min(1),
           relation: z.string().trim().min(1),
-          to: z.string().trim().min(1),
+          toKey: z.string().trim().min(1),
         })
         .strict(),
     ),
   })
   .strict();
-const graphExtractionJsonSchema = z.toJSONSchema(graphExtractionSchema);
-delete graphExtractionJsonSchema.$schema;
 
-function isLocalProxyBaseUrl(baseUrl) {
-  return /^https?:\/\/(127\.0\.0\.1|localhost):8317(\/|$)/i.test(baseUrl);
+function jsonSchemaFor(schema) {
+  const jsonSchema = z.toJSONSchema(schema);
+  delete jsonSchema.$schema;
+  return jsonSchema;
 }
 
-function getGraphModelConfig() {
-  const baseUrl = String(
-    process.env.LEARNER_GRAPH_BASE_URL ||
-      process.env.LEARNER_AI_BASE_URL ||
-      process.env.OPENAI_BASE_URL ||
-      defaultGraphBaseUrl,
-  ).replace(/\/+$/g, "");
-  const apiKey = isLocalProxyBaseUrl(baseUrl)
-    ? process.env.LEARNER_GRAPH_API_KEY || process.env.LEARNER_AI_API_KEY || defaultProxyApiKey
-    : process.env.LEARNER_GRAPH_API_KEY ||
-      process.env.LEARNER_AI_API_KEY ||
-      process.env.OPENAI_API_KEY ||
-      process.env.LEARNER_OPENAI_API_KEY ||
-      defaultProxyApiKey;
+const candidateExtractionJsonSchema = jsonSchemaFor(candidateExtractionSchema);
+const conceptResolutionJsonSchema = jsonSchemaFor(conceptResolutionSchema);
+const relationExtractionJsonSchema = jsonSchemaFor(relationExtractionSchema);
 
-  return {
-    apiKey: String(apiKey).trim(),
-    baseUrl,
-    model: String(process.env.LEARNER_GRAPH_MODEL || process.env.LEARNER_AI_MODEL || defaultGraphModel).trim(),
-  };
+function parseWithSchema(schema, value, label) {
+  const result = schema.safeParse(value);
+  if (!result.success) {
+    const issues = result.error.issues
+      .slice(0, 8)
+      .map((issue) => `${issue.path.join(".") || "root"}: ${issue.message}`)
+      .join("; ");
+    throw new Error(`${label} did not match the expected schema. ${issues}`);
+  }
+
+  return result.data;
 }
 
 function parseGraphExtractionResponse(content) {
@@ -75,119 +104,571 @@ function parseGraphExtractionResponse(content) {
     throw new Error("Graph extraction returned an empty response.");
   }
 
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new Error("Graph extraction response was not valid JSON.");
-  }
-
-  const result = graphExtractionSchema.safeParse(parsed);
-  if (!result.success) {
-    const issues = result.error.issues
-      .slice(0, 6)
-      .map((issue) => `${issue.path.join(".") || "root"}: ${issue.message}`)
-      .join("; ");
-    throw new Error(`Graph extraction JSON did not match the expected schema. ${issues}`);
-  }
-
-  return result.data;
+  return parseWithSchema(candidateExtractionSchema, JSON.parse(raw), "Graph extraction response");
 }
 
-async function requestGraphExtraction({ documentPath, markdown }) {
-  const config = getGraphModelConfig();
+function compactMarkdown(markdown, maxLength = 30_000) {
+  const normalized = String(markdown || "").trim();
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, maxLength)}\n\n[truncated for graph extraction]`;
+}
 
-  if (!config.apiKey) {
-    throw new Error("Graph extraction API key is not configured.");
+function hasInternalResolutionLanguage(text) {
+  const raw = String(text || "");
+  const internalPatterns = [
+    /\b(candidate|existing concept|concept\s+\d+|reuse|reused|absorbed|absorb|provided candidate|provided candidates|retrieved candidate|retrieved candidates|resolution|resolve|decision|merge rationale|same abstraction|canonical)\b/i,
+    /\b(use|using|keep|keeps)\s+(the\s+)?existing\b/i,
+    /\b(this|the)\s+(node|graph)\b/i,
+    /\b(node|graph)\s+(can|could|should|will|keeps?|collects?|groups?|organizes?)\b/i,
+    /\b(reusable umbrella|umbrella for|under (that|one|the same) umbrella|collects? examples|decision axis|organize[s]? notes|keeps one reusable|same umbrella|graph structure|graph organization|broad enough to include|protocol-specific instances?)\b/i,
+  ];
+
+  return internalPatterns.some((pattern) => pattern.test(raw));
+}
+
+function learnerFacingText(text, ...fallbacks) {
+  const candidates = [text, ...fallbacks];
+
+  for (const candidate of candidates) {
+    const cleanText = String(candidate || "").trim();
+    if (cleanText && !hasInternalResolutionLanguage(cleanText)) return cleanText;
   }
 
-  const response = await fetch(`${config.baseUrl}/chat/completions`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${config.apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: config.model,
-      response_format: {
-        type: "json_schema",
-        json_schema: {
-          name: "knowledge_graph_extraction",
-          strict: true,
-          schema: graphExtractionJsonSchema,
-        },
-      },
-      temperature: 0.1,
-      messages: [
-        {
-          role: "system",
-          content: [
-            "You extract a study knowledge graph from a user's note.",
-            "Return only valid JSON. Do not wrap the JSON in markdown.",
-            "Extract important concepts and meaningful relations that are supported by this note.",
-            "Do not add external facts that are not supported by the note.",
-            "Prefer relationship labels that are short verb phrases such as uses, runs_over, depends_on, enables, mitigates, causes, stores, caches, routes_to, secures, contrasts_with, replaces, optimizes, part_of, example_of, prerequisite_for, often_confused_with.",
-            "Use relation='related_to' only when no more specific relation fits.",
-            "Every concept must include an excerptMarkdown copied from or tightly grounded in the note.",
-            "Every relation must include an excerptMarkdown copied from or tightly grounded in the note.",
-            "Keep excerpts concise but useful for later review.",
-            "Use confidence from 0 to 1.",
-            "JSON shape: {\"concepts\":[{\"name\":\"\",\"aliases\":[],\"type\":\"\",\"summary\":\"\",\"mentionType\":\"definition|example|comparison|problem|application|passing_reference\",\"sectionTitle\":\"\",\"excerptMarkdown\":\"\",\"confidence\":0.9}],\"relations\":[{\"from\":\"\",\"relation\":\"\",\"to\":\"\",\"explanation\":\"\",\"excerptMarkdown\":\"\",\"confidence\":0.9}]}",
-          ].join("\n"),
-        },
-        {
-          role: "user",
-          content: [
-            `Document path: ${documentPath}`,
-            "Extract concepts and relations from this Markdown note:",
-            "",
-            markdown || "(empty note)",
-          ].join("\n"),
-        },
-      ],
-    }),
-    signal: AbortSignal.timeout(120_000),
+  return String(fallbacks.find((fallback) => String(fallback || "").trim()) || "").trim();
+}
+
+function stableConceptKey(name, index) {
+  const normalized = String(name || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 48);
+  return normalized ? `${normalized}_${index + 1}` : `concept_${index + 1}`;
+}
+
+function conceptProfileText(concept) {
+  return [
+    `Name: ${concept.name}`,
+    concept.aliases?.length ? `Aliases: ${concept.aliases.join(", ")}` : "",
+    concept.type ? `Type: ${concept.type}` : "",
+    concept.summary ? `Summary: ${concept.summary}` : "",
+    concept.explanation ? `Explanation: ${concept.explanation}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function normalizeExtractedConcepts(concepts) {
+  return concepts.map((concept, index) => ({
+    ...concept,
+    key: stableConceptKey(concept.name, index),
+  }));
+}
+
+async function mapWithConcurrency(items, concurrency, callback) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await callback(items[index], index);
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(Math.max(concurrency, 1), items.length) }, () => worker()),
+  );
+  return results;
+}
+
+async function requestCandidateConcepts({ documentPath, markdown }) {
+  const elapsed = startTimer();
+  graphLog("candidate_extraction.start", {
+    documentPath,
+    markdownChars: markdown.length,
+    maxCandidateConcepts,
   });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Graph extraction failed (${response.status}): ${errorText.slice(0, 500)}`);
+  const response = await requestStructuredJson({
+    schemaName: "knowledge_graph_candidate_concepts",
+    jsonSchema: candidateExtractionJsonSchema,
+    temperature: 0.15,
+    messages: [
+      {
+        role: "system",
+        content: [
+          "You extract high-level study concepts from one Markdown note.",
+          "Return only valid JSON.",
+          "Prefer reusable concepts that would be useful across multiple notes.",
+          "Avoid one-off details, raw facts, individual packet names, and tiny phrases as top-level concepts unless the note is mainly about that concept.",
+          "If a specific detail appears, fold it into the summary of a broader concept when possible.",
+          "A good concept name is something a learner would search for or compare across notes, such as TCP reliability, UDP reliability tradeoff, transport checksums, handshake protocols, congestion control, or HTTP over transport protocols.",
+          "A bad concept name is a raw implementation detail with no broader study value.",
+          `Return at most ${maxCandidateConcepts} concepts.`,
+          "Each concept must include note-grounded excerptMarkdown and a concise learner-facing summary.",
+          "summary must define the concept or explain its role in the note. Do not describe your extraction process.",
+          "noteContribution must be 2-4 learner-facing sentences explaining exactly what this note adds to the concept.",
+          "noteContribution should help someone understand the concept from this note without opening the full original note.",
+          "For comparison-heavy topics, noteContribution should name the tradeoff, contrast, or example the note contributes.",
+          "Write summary and noteContribution as study material, not as graph construction commentary.",
+          "Never mention graph nodes, reusable umbrellas, collecting examples, grouping notes, decision axes, merge choices, candidates, or extraction decisions in summary or noteContribution.",
+          "Bad noteContribution: Keeps one reusable umbrella for protocol comparisons.",
+          "Good noteContribution: This note contrasts TCP's reliability and ordering guarantees with UDP's lower-latency best-effort delivery.",
+          "Do not add facts unsupported by this note.",
+        ].join("\n"),
+      },
+      {
+        role: "user",
+        content: [
+          `Document path: ${documentPath}`,
+          "Extract high-level candidate concepts from this Markdown note:",
+          "",
+          compactMarkdown(markdown),
+        ].join("\n"),
+      },
+    ],
+  });
+
+  const concepts = normalizeExtractedConcepts(
+    parseWithSchema(candidateExtractionSchema, response, "Candidate concept extraction").concepts,
+  );
+
+  graphLog("candidate_extraction.done", {
+    conceptCount: concepts.length,
+    conceptNames: concepts.map((concept) => concept.name),
+    documentPath,
+    durationMs: elapsed(),
+  });
+
+  return concepts;
+}
+
+function formatResolutionCandidates(candidates) {
+  if (candidates.length === 0) return "No existing concept candidates were retrieved.";
+
+  return candidates
+    .map((candidate) =>
+      [
+        `ID: ${candidate.id}`,
+        `Name: ${candidate.name}`,
+        candidate.aliases?.length ? `Aliases: ${candidate.aliases.join(", ")}` : "",
+        candidate.type ? `Type: ${candidate.type}` : "",
+        candidate.summary ? `Summary: ${candidate.summary}` : "",
+        candidate.explanation ? `Explanation: ${candidate.explanation}` : "",
+        `Match: ${candidate.matchReason}, score ${Number(candidate.score ?? 0).toFixed(3)}`,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    )
+    .join("\n\n---\n\n");
+}
+
+function defaultResolutionForNewConcept(candidate) {
+  return {
+    absorbConceptIds: [],
+    aliases: candidate.aliases,
+    candidateKey: candidate.key,
+    confidence: candidate.confidence,
+    contribution: learnerFacingText(candidate.noteContribution, candidate.summary),
+    decision: "create_new",
+    explanation: learnerFacingText(candidate.summary, candidate.noteContribution),
+    excerptMarkdown: candidate.excerptMarkdown,
+    mentionType: candidate.mentionType,
+    name: candidate.name,
+    reason: "No similar existing concept was retrieved.",
+    sectionTitle: candidate.sectionTitle,
+    summary: learnerFacingText(candidate.summary, candidate.noteContribution),
+    type: candidate.type,
+  };
+}
+
+async function resolveConcept({ candidate, candidates }) {
+  const elapsed = startTimer();
+
+  if (candidates.length === 0) {
+    const resolution = defaultResolutionForNewConcept(candidate);
+    graphLog("concept_resolution.default_new", {
+      candidate: candidate.name,
+      canonicalName: resolution.name,
+      decision: resolution.decision,
+      durationMs: elapsed(),
+    });
+    return resolution;
   }
 
-  const body = await response.json();
-  const content = body?.choices?.[0]?.message?.content;
-  return parseGraphExtractionResponse(content);
+  graphLog("concept_resolution.start", {
+    candidate: candidate.name,
+    candidateCount: candidates.length,
+    retrievedCandidates: candidates.map((concept) => ({
+      id: concept.id,
+      matchReason: concept.matchReason,
+      name: concept.name,
+      score: Number(concept.score ?? 0).toFixed(3),
+    })),
+  });
+
+  const allowedConceptIds = new Set(candidates.map((concept) => concept.id));
+  const response = await requestStructuredJson({
+    schemaName: "knowledge_graph_concept_resolution",
+    jsonSchema: conceptResolutionJsonSchema,
+    temperature: 0.1,
+    messages: [
+      {
+        role: "system",
+        content: [
+          "You resolve one proposed study concept against existing canonical concepts.",
+          "Choose the most useful high-level study node.",
+          "If an existing concept already covers the candidate, reuse it.",
+          "If the candidate is a better broader abstraction, promote it and absorb narrower existing concepts.",
+          "If candidate and existing concepts imply a better abstraction, create that broader concept and absorb the covered concepts.",
+          "If concepts are merely related but not the same abstraction, keep them separate by creating or reusing only the candidate's best node.",
+          "Only put IDs from the provided candidates in reuseConceptId or absorbConceptIds.",
+          "Do not preserve overly specific nodes when a stronger reusable abstraction is available.",
+          "",
+          "Important field rules:",
+          "reason is private logging only: keep it short.",
+          "summary, explanation, and contribution are learner-facing: they are displayed directly in the app.",
+          "Never mention candidate, existing concept, Concept ID, reuse, absorb, resolution, retrieved candidates, or your decision process in summary, explanation, or contribution.",
+          "Never mention graph nodes, node organization, reusable umbrellas, collecting examples, decision axes, merge choices, or how you grouped notes in summary, explanation, or contribution.",
+          "summary should be a concise definition or role of the canonical concept.",
+          "explanation should help study: define the concept, compare/contrast related ideas, explain examples, and call out useful distinctions.",
+          "contribution should be 2-4 sentences explaining how the current note contributes to the concept.",
+          "contribution should be detailed enough that a learner understands the note's angle without opening the original note.",
+          "If the note provides a definition, say what the definition is. If it provides an example, say what the example demonstrates. If it compares ideas, state the comparison.",
+          "If two notes cover the same concept from different angles, explain the difference between those angles.",
+          "Bad contribution: This node can collect examples from many contexts under one decision axis.",
+          "Good contribution: This note compares TCP and UDP as a reliability-versus-latency tradeoff: TCP adds ordering and retransmission, while UDP avoids those guarantees for lower overhead.",
+          "Do not add facts unsupported by the current note or provided concept profiles.",
+        ].join("\n"),
+      },
+      {
+        role: "user",
+        content: [
+          "Candidate concept from current note:",
+          JSON.stringify(candidate, null, 2),
+          "",
+          "Existing concept candidates:",
+          formatResolutionCandidates(candidates),
+          "",
+          "Resolve the candidate to the best canonical concept.",
+        ].join("\n"),
+      },
+    ],
+  });
+  const resolution = parseWithSchema(conceptResolutionSchema, response, "Concept resolution");
+  const reuseConceptId = allowedConceptIds.has(resolution.reuseConceptId) ? resolution.reuseConceptId : null;
+  const absorbConceptIds = resolution.absorbConceptIds.filter((conceptId) => allowedConceptIds.has(conceptId));
+  const fallbackConceptId = reuseConceptId ?? (resolution.decision === "use_existing" ? absorbConceptIds[0] : null);
+  const sanitizedResolution = {
+    absorbConceptIds,
+    candidate: candidate.name,
+    canonicalName: resolution.canonicalName,
+    decision: resolution.decision,
+    durationMs: elapsed(),
+    reuseConceptId,
+  };
+
+  if (resolution.absorbConceptIds.length !== absorbConceptIds.length || resolution.reuseConceptId !== reuseConceptId) {
+    graphWarn("concept_resolution.dropped_invalid_ids", {
+      ...sanitizedResolution,
+      rawAbsorbConceptIds: resolution.absorbConceptIds,
+      rawReuseConceptId: resolution.reuseConceptId,
+      validCandidateIds: [...allowedConceptIds],
+    });
+  }
+
+  graphLog("concept_resolution.done", sanitizedResolution);
+  graphDebug("concept_resolution.reason", {
+    candidate: candidate.name,
+    reason: resolution.reason,
+  });
+
+  return {
+    absorbConceptIds,
+    aliases: [...new Set([...(resolution.aliases || []), ...(candidate.aliases || []), candidate.name])],
+    candidateKey: candidate.key,
+    conceptId: fallbackConceptId,
+    confidence: resolution.confidence,
+    contribution: learnerFacingText(
+      resolution.contribution,
+      candidate.noteContribution,
+      candidate.summary,
+    ),
+    decision: resolution.decision,
+    explanation: learnerFacingText(resolution.explanation, candidate.summary, candidate.noteContribution),
+    excerptMarkdown: candidate.excerptMarkdown,
+    mentionType: candidate.mentionType,
+    name: resolution.canonicalName,
+    reason: resolution.reason,
+    sectionTitle: candidate.sectionTitle,
+    summary: learnerFacingText(resolution.summary, candidate.summary, candidate.noteContribution),
+    type: resolution.type,
+  };
+}
+
+async function resolveCandidateConcepts(candidates) {
+  const embeddingConfig = getGraphEmbeddingConfig();
+  const elapsed = startTimer();
+  graphLog("concept_resolution.batch_start", {
+    candidateCount: candidates.length,
+    embeddingModel: embeddingConfig.model,
+    resolverConcurrency,
+  });
+  const candidateEmbeddings = await requestConceptEmbeddings(candidates.map(conceptProfileText));
+
+  const resolvedConcepts = await mapWithConcurrency(candidates, resolverConcurrency, async (candidate, index) => {
+    const resolutionCandidates = findConceptResolutionCandidates({
+      aliases: candidate.aliases,
+      embedding: candidateEmbeddings[index],
+      embeddingModel: embeddingConfig.model,
+      limit: maxResolutionCandidates,
+      name: candidate.name,
+    });
+
+    return resolveConcept({
+      candidate,
+      candidates: resolutionCandidates,
+    });
+  });
+
+  graphLog("concept_resolution.batch_done", {
+    durationMs: elapsed(),
+    resolvedConceptCount: resolvedConcepts.length,
+    resolvedConcepts: resolvedConcepts.map((concept) => ({
+      absorbConceptIds: concept.absorbConceptIds,
+      canonicalName: concept.name,
+      decision: concept.decision,
+      reuseConceptId: concept.conceptId,
+    })),
+  });
+
+  return resolvedConcepts;
+}
+
+async function requestResolvedRelations({ concepts, documentPath, markdown }) {
+  if (concepts.length < 2) return [];
+
+  const elapsed = startTimer();
+  graphLog("relation_extraction.start", {
+    conceptCount: concepts.length,
+    documentPath,
+  });
+
+  const response = await requestStructuredJson({
+    schemaName: "knowledge_graph_local_relations",
+    jsonSchema: relationExtractionJsonSchema,
+    temperature: 0.1,
+    messages: [
+      {
+        role: "system",
+        content: [
+          "You extract meaningful local relations from one note between already resolved canonical concepts.",
+          "Return only relations supported by the note.",
+          "Relation endpoints must use fromKey/toKey from the provided concept list exactly.",
+          "Prefer high-signal study relationships such as uses, runs_over, enables, depends_on, contrasts_with, replaces, optimizes, part_of, example_of, causes, mitigates, prerequisite_for.",
+          "Do not create relations just because two concepts appear near each other.",
+          "Each relation must include a concise learner-facing explanation and note-grounded excerptMarkdown.",
+          "The relation explanation should explain why the relationship matters for understanding or comparing concepts.",
+          "Do not mention extraction, candidates, concept IDs, or internal graph decisions in relation explanations.",
+          "Do not mention graph nodes, node organization, reusable umbrellas, grouping notes, or merge decisions in relation explanations.",
+          "Write explanations as study guidance. Example: TCP uses acknowledgements to detect missing data and trigger retransmission, which supports reliable delivery.",
+        ].join("\n"),
+      },
+      {
+        role: "user",
+        content: [
+          `Document path: ${documentPath}`,
+          "Resolved concepts:",
+          JSON.stringify(
+            concepts.map((concept) => ({
+              key: concept.candidateKey,
+              name: concept.name,
+              type: concept.type,
+              summary: concept.summary,
+            })),
+            null,
+            2,
+          ),
+          "",
+          "Markdown note:",
+          compactMarkdown(markdown),
+        ].join("\n"),
+      },
+    ],
+  });
+  const relationResult = parseWithSchema(relationExtractionSchema, response, "Relation extraction");
+  const validKeys = new Set(concepts.map((concept) => concept.candidateKey));
+  const rejectedRelations = relationResult.relations.filter(
+    (relation) => !validKeys.has(relation.fromKey) || !validKeys.has(relation.toKey) || relation.fromKey === relation.toKey,
+  );
+  if (rejectedRelations.length > 0) {
+    graphWarn("relation_extraction.rejected_invalid_endpoints", {
+      count: rejectedRelations.length,
+      documentPath,
+      validKeys: [...validKeys],
+    });
+  }
+
+  const relations = relationResult.relations
+    .filter((relation) => validKeys.has(relation.fromKey) && validKeys.has(relation.toKey) && relation.fromKey !== relation.toKey)
+    .map((relation) => ({
+      ...relation,
+      explanation: learnerFacingText(relation.explanation, relation.excerptMarkdown),
+      source: "local",
+    }));
+
+  graphLog("relation_extraction.done", {
+    documentPath,
+    durationMs: elapsed(),
+    relationCount: relations.length,
+    rejectedCount: rejectedRelations.length,
+    relations: relations.map((relation) => ({
+      fromKey: relation.fromKey,
+      relation: relation.relation,
+      toKey: relation.toKey,
+    })),
+  });
+
+  return relations;
+}
+
+async function saveConceptProfileEmbeddings(conceptProfiles) {
+  if (!conceptProfiles.length) return;
+
+  const embeddingConfig = getGraphEmbeddingConfig();
+  const elapsed = startTimer();
+  graphLog("concept_profile_embedding.start", {
+    conceptCount: conceptProfiles.length,
+    model: embeddingConfig.model,
+  });
+  const profilesToEmbed = conceptProfiles.map((concept) => concept.profile);
+  const embeddings = await requestConceptEmbeddings(profilesToEmbed);
+
+  conceptProfiles.forEach((concept, index) => {
+    saveConceptEmbedding({
+      conceptId: concept.id,
+      embedding: embeddings[index],
+      model: embeddingConfig.model,
+      profileHash: hashContent(concept.profile),
+    });
+  });
+
+  graphLog("concept_profile_embedding.done", {
+    conceptCount: conceptProfiles.length,
+    durationMs: elapsed(),
+    model: embeddingConfig.model,
+  });
 }
 
 async function extractDocumentGraph(documentPath, document, markdown) {
+  const elapsed = startTimer();
   const extractionMarkdown = String(markdown || "").trim();
   if (!extractionMarkdown) {
     throw new Error("Graph extraction requires Markdown exported by the active Tiptap editor.");
   }
 
-  const documentHash = hashContent(JSON.stringify(document));
+  const documentHash = hashContent(extractionMarkdown);
   const config = getGraphModelConfig();
   const existingRun = getExtractionRun(documentPath);
 
-  if (existingRun?.document_hash === documentHash && existingRun?.model === config.model) {
-    return {
-      extracted: false,
-      graph: getDocumentGraph(documentPath),
-    };
-  }
-
-  const extraction = await requestGraphExtraction({ documentPath, markdown: extractionMarkdown });
-  const graph = saveExtractedDocumentGraph({
-    documentHash,
+  graphLog("pipeline.start", {
+    cacheModel: config.cacheModel,
+    documentHash: hashPreview(documentHash),
     documentPath,
-    extraction,
+    markdownChars: extractionMarkdown.length,
     model: config.model,
   });
 
-  return {
-    extracted: true,
-    graph,
-  };
+  if (existingRun?.document_hash === documentHash && existingRun?.model === config.cacheModel) {
+    const cachedGraph = getDocumentGraph(documentPath);
+
+    if (cachedGraph.nodes.length > 0) {
+      graphLog("pipeline.cache_hit", {
+        documentHash: hashPreview(documentHash),
+        documentPath,
+        durationMs: elapsed(),
+        edgeCount: cachedGraph.edges.length,
+        model: config.cacheModel,
+        nodeCount: cachedGraph.nodes.length,
+      });
+      return {
+        extracted: false,
+        graph: cachedGraph,
+      };
+    }
+
+    graphWarn("pipeline.cache_empty_rebuild", {
+      documentHash: hashPreview(documentHash),
+      documentPath,
+      durationMs: elapsed(),
+      model: config.cacheModel,
+      reason: "Cached extraction had no renderable document nodes.",
+    });
+  }
+
+  graphLog("pipeline.cache_miss", {
+    existingHash: hashPreview(existingRun?.document_hash),
+    existingModel: existingRun?.model ?? null,
+    nextHash: hashPreview(documentHash),
+    nextModel: config.cacheModel,
+    documentPath,
+  });
+
+  try {
+    const candidates = await requestCandidateConcepts({ documentPath, markdown: extractionMarkdown });
+    const resolvedConcepts = await resolveCandidateConcepts(candidates);
+    const relations = await requestResolvedRelations({
+      concepts: resolvedConcepts,
+      documentPath,
+      markdown: extractionMarkdown,
+    });
+    const saveElapsed = startTimer();
+    const { conceptProfiles, graph } = saveResolvedDocumentGraph({
+      documentHash,
+      documentPath,
+      graphBuild: {
+        concepts: resolvedConcepts,
+        relations,
+      },
+      model: config.cacheModel,
+    });
+
+    graphLog("pipeline.save_done", {
+      conceptProfilesToEmbed: conceptProfiles.length,
+      documentPath,
+      durationMs: saveElapsed(),
+      edgeCount: graph.edges.length,
+      nodeCount: graph.nodes.length,
+    });
+
+    await saveConceptProfileEmbeddings(conceptProfiles);
+
+    graphLog("pipeline.done", {
+      candidateCount: candidates.length,
+      documentPath,
+      durationMs: elapsed(),
+      edgeCount: graph.edges.length,
+      extracted: true,
+      nodeCount: graph.nodes.length,
+      relationCount: relations.length,
+      resolvedConceptCount: resolvedConcepts.length,
+    });
+
+    return {
+      extracted: true,
+      graph,
+    };
+  } catch (error) {
+    graphError("pipeline.failed", error, {
+      documentHash: hashPreview(documentHash),
+      documentPath,
+      durationMs: elapsed(),
+      model: config.cacheModel,
+    });
+    throw error;
+  }
 }
 
 module.exports = {

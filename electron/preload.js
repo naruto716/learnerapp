@@ -64,4 +64,19 @@ contextBridge.exposeInMainWorld("learner", {
   deleteDocumentGraph: (filePath) => {
     return ipcRenderer.invoke("graph:deleteDocumentGraph", filePath);
   },
+  searchGraphConcepts: (query, limit) => {
+    return ipcRenderer.invoke("graph:searchConcepts", query, limit);
+  },
+  updateGraphConcept: (filePath, conceptUpdate) => {
+    return ipcRenderer.invoke("graph:updateConcept", filePath, conceptUpdate);
+  },
+  addGraphConceptMention: (filePath, mentionRequest) => {
+    return ipcRenderer.invoke("graph:addConceptMention", filePath, mentionRequest);
+  },
+  updateGraphRelation: (filePath, relationUpdate) => {
+    return ipcRenderer.invoke("graph:updateRelation", filePath, relationUpdate);
+  },
+  addGraphRelation: (filePath, relationRequest) => {
+    return ipcRenderer.invoke("graph:addRelation", filePath, relationRequest);
+  },
 });

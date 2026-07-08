@@ -32,10 +32,15 @@ const {
 const { extractDocumentGraph } = require("./graph/graphExtraction");
 const {
   closeGraphDatabase,
+  addConceptMentionToDocument,
+  addRelationToDocument,
   deleteDocumentGraph,
   deleteDocumentGraphTree,
   getDocumentGraph,
   replaceDocumentGraphPath,
+  searchConcepts,
+  updateConcept,
+  updateRelation,
 } = require("./graph/graphDb");
 
 loadLocalEnv();
@@ -327,4 +332,36 @@ ipcMain.handle("graph:deleteDocumentGraph", async (_event, filePath) => {
   const documentPath = filePathWithExtension(filePath);
   deleteDocumentGraph(documentPath);
   return getDocumentGraph(documentPath);
+});
+
+ipcMain.handle("graph:searchConcepts", async (_event, query, limit) => {
+  return searchConcepts(query, limit);
+});
+
+ipcMain.handle("graph:updateConcept", async (_event, filePath, conceptUpdate) => {
+  const documentPath = filePathWithExtension(filePath);
+  updateConcept(conceptUpdate);
+  return getDocumentGraph(documentPath);
+});
+
+ipcMain.handle("graph:addConceptMention", async (_event, filePath, mentionRequest) => {
+  const documentPath = filePathWithExtension(filePath);
+  return addConceptMentionToDocument({
+    ...mentionRequest,
+    documentPath,
+  });
+});
+
+ipcMain.handle("graph:updateRelation", async (_event, filePath, relationUpdate) => {
+  const documentPath = filePathWithExtension(filePath);
+  updateRelation(relationUpdate);
+  return getDocumentGraph(documentPath);
+});
+
+ipcMain.handle("graph:addRelation", async (_event, filePath, relationRequest) => {
+  const documentPath = filePathWithExtension(filePath);
+  return addRelationToDocument({
+    ...relationRequest,
+    documentPath,
+  });
 });

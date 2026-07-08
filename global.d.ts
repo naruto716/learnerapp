@@ -48,6 +48,7 @@ declare global {
 
   type KnowledgeConceptMention = {
     confidence: number;
+    contribution: string | null;
     documentPath: string;
     excerptMarkdown: string;
     mentionType: string | null;
@@ -67,8 +68,61 @@ declare global {
     inCurrentDocument: boolean;
     mentions: KnowledgeConceptMention[];
     name: string;
+    explanation: string | null;
     summary: string | null;
     type: string | null;
+  };
+
+  type KnowledgeConceptSearchResult = {
+    id: number;
+    name: string;
+    explanation: string | null;
+    summary: string | null;
+    type: string | null;
+  };
+
+  type KnowledgeConceptUpdate = {
+    conceptId: number;
+    name: string;
+    explanation?: string;
+    summary?: string;
+    type?: string;
+  };
+
+  type KnowledgeConceptMentionRequest = {
+    conceptId?: number | null;
+    concept?: {
+      name: string;
+      explanation?: string;
+      summary?: string;
+      type?: string;
+    };
+    contribution?: string;
+    documentHash?: string | null;
+    excerptMarkdown: string;
+    mentionType?: string;
+    sectionTitle?: string;
+  };
+
+  type KnowledgeRelationUpdate = {
+    explanation?: string;
+    relation: string;
+    relationId: number;
+  };
+
+  type KnowledgeRelationCreateRequest = {
+    documentHash?: string | null;
+    evidenceMarkdown?: string;
+    explanation?: string;
+    fromConceptId: number;
+    relation: string;
+    targetConcept?: {
+      explanation?: string;
+      name: string;
+      summary?: string;
+      type?: string;
+    };
+    toConceptId?: number | null;
   };
 
   type KnowledgeGraphEdge = {
@@ -77,6 +131,7 @@ declare global {
     explanation: string | null;
     id: number;
     relation: string;
+    sourceType: string | null;
     source: number;
     target: number;
   };
@@ -138,6 +193,14 @@ declare global {
       extractDocumentGraph: (filePath: string, markdown: string) => Promise<KnowledgeGraphExtractionResult>;
       getDocumentGraph: (filePath: string) => Promise<KnowledgeDocumentGraph>;
       deleteDocumentGraph: (filePath: string) => Promise<KnowledgeDocumentGraph>;
+      searchGraphConcepts: (query: string, limit?: number) => Promise<KnowledgeConceptSearchResult[]>;
+      updateGraphConcept: (filePath: string, conceptUpdate: KnowledgeConceptUpdate) => Promise<KnowledgeDocumentGraph>;
+      addGraphConceptMention: (
+        filePath: string,
+        mentionRequest: KnowledgeConceptMentionRequest,
+      ) => Promise<KnowledgeDocumentGraph>;
+      updateGraphRelation: (filePath: string, relationUpdate: KnowledgeRelationUpdate) => Promise<KnowledgeDocumentGraph>;
+      addGraphRelation: (filePath: string, relationRequest: KnowledgeRelationCreateRequest) => Promise<KnowledgeDocumentGraph>;
       isFullScreen: () => Promise<boolean>;
       onFullScreenChange: (callback: (isFullScreen: boolean) => void) => () => void;
     };

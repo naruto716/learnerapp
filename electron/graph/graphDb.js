@@ -3,9 +3,11 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const { DatabaseSync } = require("node:sqlite");
+const { graphDebug, graphLog, graphWarn, hashPreview, startTimer } = require("./graphLog");
 
 const databaseFileName = "learner.sqlite";
 let graphDatabase = null;
+let graphDatabaseReadyLogged = false;
 
 function getGraphDatabasePath() {
   return path.join(app.getPath("userData"), databaseFileName);
@@ -40,6 +42,41 @@ function clampConfidence(value, fallback = 0.7) {
   return Math.min(Math.max(confidence, 0), 1);
 }
 
+function vectorToBuffer(vector) {
+  return Buffer.from(new Float32Array(vector).buffer);
+}
+
+function bufferToVector(buffer) {
+  return Array.from(new Float32Array(buffer.buffer, buffer.byteOffset, buffer.byteLength / Float32Array.BYTES_PER_ELEMENT));
+}
+
+function dotProduct(a, b) {
+  const length = Math.min(a.length, b.length);
+  let total = 0;
+
+  for (let index = 0; index < length; index += 1) {
+    total += a[index] * b[index];
+  }
+
+  return total;
+}
+
+function vectorMagnitude(vector) {
+  return Math.sqrt(dotProduct(vector, vector));
+}
+
+function cosineSimilarity(a, b) {
+  const denominator = vectorMagnitude(a) * vectorMagnitude(b);
+  if (!denominator) return 0;
+  return dotProduct(a, b) / denominator;
+}
+
+function ensureColumn(db, tableName, columnName, definition) {
+  const columns = db.prepare(`PRAGMA table_info(${tableName})`).all();
+  if (columns.some((column) => column.name === columnName)) return;
+  db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
+}
+
 function getGraphDatabase() {
   if (graphDatabase) return graphDatabase;
 
@@ -65,6 +102,7 @@ function getGraphDatabase() {
       name TEXT NOT NULL,
       type TEXT,
       summary TEXT,
+      explanation TEXT,
       confidence REAL NOT NULL DEFAULT 0.7,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
@@ -87,6 +125,7 @@ function getGraphDatabase() {
       section_title TEXT,
       excerpt_markdown TEXT NOT NULL,
       excerpt_hash TEXT NOT NULL,
+      contribution TEXT,
       mention_type TEXT,
       confidence REAL NOT NULL DEFAULT 0.7,
       created_at INTEGER NOT NULL,
@@ -108,6 +147,7 @@ function getGraphDatabase() {
       relation TEXT NOT NULL,
       normalized_relation TEXT NOT NULL,
       explanation TEXT,
+      source TEXT NOT NULL DEFAULT 'local',
       confidence REAL NOT NULL DEFAULT 0.7,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
@@ -138,7 +178,29 @@ function getGraphDatabase() {
 
     CREATE INDEX IF NOT EXISTS relation_evidence_document_index
       ON relation_evidence(document_path);
+
+    CREATE TABLE IF NOT EXISTS concept_embeddings (
+      concept_id INTEGER NOT NULL,
+      model TEXT NOT NULL,
+      profile_hash TEXT NOT NULL,
+      dimensions INTEGER NOT NULL,
+      embedding BLOB NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY(concept_id, model),
+      FOREIGN KEY(concept_id) REFERENCES concepts(id) ON DELETE CASCADE
+    );
   `);
+
+  ensureColumn(graphDatabase, "concepts", "explanation", "TEXT");
+  ensureColumn(graphDatabase, "concept_mentions", "contribution", "TEXT");
+  ensureColumn(graphDatabase, "concept_relations", "source", "TEXT NOT NULL DEFAULT 'local'");
+
+  if (!graphDatabaseReadyLogged) {
+    graphLog("db.ready", {
+      databasePath,
+    });
+    graphDatabaseReadyLogged = true;
+  }
 
   return graphDatabase;
 }
@@ -193,13 +255,23 @@ function upsertConcept(concept, now) {
     db.prepare(
       `
         UPDATE concepts
-        SET type = COALESCE(NULLIF(?, ''), type),
+        SET name = COALESCE(NULLIF(?, ''), name),
+            type = COALESCE(NULLIF(?, ''), type),
             summary = COALESCE(NULLIF(?, ''), summary),
+            explanation = COALESCE(NULLIF(?, ''), explanation),
             confidence = MAX(confidence, ?),
             updated_at = ?
         WHERE id = ?
       `,
-    ).run(String(concept.type || ""), String(concept.summary || ""), confidence, now, existingConcept.id);
+    ).run(
+      name,
+      String(concept.type || ""),
+      String(concept.summary || ""),
+      String(concept.explanation || ""),
+      confidence,
+      now,
+      existingConcept.id,
+    );
 
     insertConceptAliases(existingConcept.id, [name, ...aliases], now);
     return existingConcept.id;
@@ -207,14 +279,15 @@ function upsertConcept(concept, now) {
 
   const result = db.prepare(
     `
-      INSERT INTO concepts(normalized_name, name, type, summary, confidence, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO concepts(normalized_name, name, type, summary, explanation, confidence, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `,
   ).run(
     normalizedName,
     name,
     String(concept.type || "").trim() || null,
     String(concept.summary || "").trim() || null,
+    String(concept.explanation || "").trim() || null,
     confidence,
     now,
     now,
@@ -222,6 +295,46 @@ function upsertConcept(concept, now) {
 
   insertConceptAliases(result.lastInsertRowid, [name, ...aliases], now);
   return result.lastInsertRowid;
+}
+
+function updateConceptDetails(conceptId, concept, now) {
+  const existingConcept = getConceptById(conceptId);
+  if (!existingConcept) return null;
+
+  const name = String(concept.name || "").trim();
+  const normalizedName = normalizeConceptName(name);
+  const conflictingConcept = normalizedName
+    ? getGraphDatabase().prepare("SELECT id FROM concepts WHERE normalized_name = ? AND id != ?").get(normalizedName, conceptId)
+    : null;
+  const shouldRename = normalizedName && !conflictingConcept;
+
+  getGraphDatabase().prepare(
+    `
+      UPDATE concepts
+      SET name = CASE WHEN ? THEN ? ELSE name END,
+          normalized_name = CASE WHEN ? THEN ? ELSE normalized_name END,
+          type = COALESCE(NULLIF(?, ''), type),
+          summary = COALESCE(NULLIF(?, ''), summary),
+          explanation = COALESCE(NULLIF(?, ''), explanation),
+          confidence = MAX(confidence, ?),
+          updated_at = ?
+      WHERE id = ?
+    `,
+  ).run(
+    shouldRename ? 1 : 0,
+    name,
+    shouldRename ? 1 : 0,
+    normalizedName,
+    String(concept.type || ""),
+    String(concept.summary || ""),
+    String(concept.explanation || ""),
+    clampConfidence(concept.confidence),
+    now,
+    conceptId,
+  );
+
+  insertConceptAliases(conceptId, [name, ...(Array.isArray(concept.aliases) ? concept.aliases : [])], now);
+  return conceptId;
 }
 
 function insertConceptAliases(conceptId, aliases, now) {
@@ -244,7 +357,7 @@ function insertConceptAliases(conceptId, aliases, now) {
 
 function insertConceptMention(conceptId, documentPath, documentHash, mention, now) {
   const excerptMarkdown = String(mention.excerptMarkdown || mention.excerpt || "").trim();
-  if (!excerptMarkdown) return;
+  if (!excerptMarkdown) return false;
 
   getGraphDatabase().prepare(
     `
@@ -255,15 +368,17 @@ function insertConceptMention(conceptId, documentPath, documentHash, mention, no
         section_title,
         excerpt_markdown,
         excerpt_hash,
+        contribution,
         mention_type,
         confidence,
         created_at,
         updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(concept_id, document_path, excerpt_hash) DO UPDATE SET
         document_hash = excluded.document_hash,
         section_title = excluded.section_title,
+        contribution = excluded.contribution,
         mention_type = excluded.mention_type,
         confidence = excluded.confidence,
         updated_at = excluded.updated_at
@@ -275,11 +390,13 @@ function insertConceptMention(conceptId, documentPath, documentHash, mention, no
     String(mention.sectionTitle || "").trim() || null,
     excerptMarkdown,
     hashContent(excerptMarkdown),
+    String(mention.contribution || "").trim() || null,
     String(mention.mentionType || "").trim() || null,
     clampConfidence(mention.confidence),
     now,
     now,
   );
+  return true;
 }
 
 function upsertRelation(fromConceptId, toConceptId, relation, now) {
@@ -305,11 +422,12 @@ function upsertRelation(fromConceptId, toConceptId, relation, now) {
         UPDATE concept_relations
         SET relation = ?,
             explanation = COALESCE(NULLIF(?, ''), explanation),
+            source = COALESCE(NULLIF(?, ''), source),
             confidence = MAX(confidence, ?),
             updated_at = ?
         WHERE id = ?
       `,
-    ).run(cleanRelation, String(relation.explanation || ""), confidence, now, existing.id);
+    ).run(cleanRelation, String(relation.explanation || ""), String(relation.source || ""), confidence, now, existing.id);
     return existing.id;
   }
 
@@ -321,11 +439,12 @@ function upsertRelation(fromConceptId, toConceptId, relation, now) {
         relation,
         normalized_relation,
         explanation,
+        source,
         confidence,
         created_at,
         updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
   ).run(
     fromConceptId,
@@ -333,6 +452,7 @@ function upsertRelation(fromConceptId, toConceptId, relation, now) {
     cleanRelation,
     normalizedRelation,
     String(relation.explanation || "").trim() || null,
+    String(relation.source || "").trim() || "local",
     confidence,
     now,
     now,
@@ -375,8 +495,325 @@ function insertRelationEvidence(relationId, documentPath, documentHash, relation
   );
 }
 
+function getConceptById(conceptId) {
+  return getGraphDatabase().prepare("SELECT * FROM concepts WHERE id = ?").get(conceptId) ?? null;
+}
+
+function getConceptAliases(conceptId) {
+  return getGraphDatabase()
+    .prepare("SELECT alias FROM concept_aliases WHERE concept_id = ? ORDER BY alias")
+    .all(conceptId)
+    .map((row) => row.alias);
+}
+
+function buildConceptProfile(concept, aliases = []) {
+  return [
+    `Name: ${concept.name}`,
+    aliases.length ? `Aliases: ${aliases.join(", ")}` : "",
+    concept.type ? `Type: ${concept.type}` : "",
+    concept.summary ? `Summary: ${concept.summary}` : "",
+    concept.explanation ? `Explanation: ${concept.explanation}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function getConceptProfiles(conceptIds) {
+  const ids = [...new Set((conceptIds || []).map(Number).filter(Number.isFinite))];
+  return ids
+    .map((conceptId) => {
+      const concept = getConceptById(conceptId);
+      if (!concept) return null;
+      const aliases = getConceptAliases(conceptId);
+
+      return {
+        aliases,
+        confidence: concept.confidence,
+        explanation: concept.explanation,
+        id: concept.id,
+        name: concept.name,
+        normalizedName: concept.normalized_name,
+        profile: buildConceptProfile(concept, aliases),
+        summary: concept.summary,
+        type: concept.type,
+      };
+    })
+    .filter(Boolean);
+}
+
+function findExactConceptCandidates(name, aliases = []) {
+  const db = getGraphDatabase();
+  const normalizedCandidates = [name, ...(Array.isArray(aliases) ? aliases : [])]
+    .map(normalizeConceptName)
+    .filter(Boolean);
+  const concepts = new Map();
+
+  for (const normalizedName of normalizedCandidates) {
+    const concept = db.prepare("SELECT * FROM concepts WHERE normalized_name = ?").get(normalizedName);
+    if (concept) concepts.set(concept.id, concept);
+
+    const alias = db
+      .prepare(
+        `
+          SELECT c.*
+          FROM concept_aliases a
+          INNER JOIN concepts c ON c.id = a.concept_id
+          WHERE a.normalized_alias = ?
+        `,
+      )
+      .get(normalizedName);
+    if (alias) concepts.set(alias.id, alias);
+  }
+
+  return [...concepts.values()];
+}
+
+function saveConceptEmbedding({ conceptId, embedding, model, profileHash }) {
+  if (!Array.isArray(embedding) || embedding.length === 0) return;
+
+  getGraphDatabase().prepare(
+    `
+      INSERT INTO concept_embeddings(concept_id, model, profile_hash, dimensions, embedding, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(concept_id, model) DO UPDATE SET
+        profile_hash = excluded.profile_hash,
+        dimensions = excluded.dimensions,
+        embedding = excluded.embedding,
+        updated_at = excluded.updated_at
+    `,
+  ).run(conceptId, model, profileHash, embedding.length, vectorToBuffer(embedding), Date.now());
+}
+
+function searchConceptEmbeddings(queryEmbedding, model, limit = 8) {
+  if (!Array.isArray(queryEmbedding) || queryEmbedding.length === 0) return [];
+
+  return getGraphDatabase()
+    .prepare(
+      `
+        SELECT
+          c.*,
+          e.embedding
+        FROM concept_embeddings e
+        INNER JOIN concepts c ON c.id = e.concept_id
+        WHERE e.model = ?
+      `,
+    )
+    .all(model)
+    .map((row) => ({
+      ...row,
+      score: cosineSimilarity(queryEmbedding, bufferToVector(row.embedding)),
+    }))
+    .filter((row) => row.score > 0)
+    .sort((first, second) => second.score - first.score)
+    .slice(0, Math.min(Math.max(Number(limit) || 8, 1), 20));
+}
+
+function findConceptResolutionCandidates({ aliases = [], embedding, embeddingModel, limit = 8, name }) {
+  const elapsed = startTimer();
+  const exactCandidates = findExactConceptCandidates(name, aliases).map((concept) => ({
+    ...concept,
+    matchReason: "exact_or_alias",
+    score: 1,
+  }));
+  const vectorCandidates = searchConceptEmbeddings(embedding, embeddingModel, limit).map((concept) => ({
+    ...concept,
+    matchReason: "summary_embedding",
+  }));
+  const candidates = new Map();
+
+  for (const concept of [...exactCandidates, ...vectorCandidates]) {
+    if (!candidates.has(concept.id)) {
+      candidates.set(concept.id, concept);
+      continue;
+    }
+
+    const existing = candidates.get(concept.id);
+    if ((concept.score ?? 0) > (existing.score ?? 0)) {
+      candidates.set(concept.id, concept);
+    }
+  }
+
+  const profiles = getConceptProfiles([...candidates.keys()]).map((profile) => {
+    const candidate = candidates.get(profile.id);
+    return {
+      ...profile,
+      matchReason: candidate.matchReason,
+      score: candidate.score,
+    };
+  });
+
+  graphDebug("db.concept_candidates", {
+    candidateName: name,
+    durationMs: elapsed(),
+    exactCount: exactCandidates.length,
+    resultCount: profiles.length,
+    vectorCount: vectorCandidates.length,
+    results: profiles.map((profile) => ({
+      id: profile.id,
+      matchReason: profile.matchReason,
+      name: profile.name,
+      score: Number(profile.score ?? 0).toFixed(3),
+    })),
+  });
+
+  return profiles;
+}
+
+function insertConceptMentionRow(conceptId, row, now) {
+  getGraphDatabase().prepare(
+    `
+      INSERT INTO concept_mentions(
+        concept_id,
+        document_path,
+        document_hash,
+        section_title,
+        excerpt_markdown,
+        excerpt_hash,
+        contribution,
+        mention_type,
+        confidence,
+        created_at,
+        updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(concept_id, document_path, excerpt_hash) DO UPDATE SET
+        document_hash = excluded.document_hash,
+        section_title = excluded.section_title,
+        contribution = excluded.contribution,
+        mention_type = excluded.mention_type,
+        confidence = excluded.confidence,
+        updated_at = excluded.updated_at
+    `,
+  ).run(
+    conceptId,
+    row.document_path,
+    row.document_hash,
+    row.section_title,
+    row.excerpt_markdown,
+    row.excerpt_hash,
+    row.contribution,
+    row.mention_type,
+    clampConfidence(row.confidence),
+    now,
+    now,
+  );
+}
+
+function insertRelationEvidenceRow(relationId, row, now) {
+  getGraphDatabase().prepare(
+    `
+      INSERT INTO relation_evidence(
+        relation_id,
+        document_path,
+        document_hash,
+        excerpt_markdown,
+        excerpt_hash,
+        confidence,
+        created_at,
+        updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(relation_id, document_path, excerpt_hash) DO UPDATE SET
+        document_hash = excluded.document_hash,
+        confidence = excluded.confidence,
+        updated_at = excluded.updated_at
+    `,
+  ).run(
+    relationId,
+    row.document_path,
+    row.document_hash,
+    row.excerpt_markdown,
+    row.excerpt_hash,
+    clampConfidence(row.confidence),
+    now,
+    now,
+  );
+}
+
+function mergeConceptInto(targetConceptId, sourceConceptId, now) {
+  if (!targetConceptId || !sourceConceptId || targetConceptId === sourceConceptId) return;
+
+  const db = getGraphDatabase();
+  const sourceConcept = getConceptById(sourceConceptId);
+  if (!sourceConcept) {
+    graphWarn("db.merge.skipped_missing_source", {
+      sourceConceptId,
+      targetConceptId,
+    });
+    return;
+  }
+  const targetConcept = getConceptById(targetConceptId);
+  const elapsed = startTimer();
+  graphLog("db.merge.start", {
+    sourceConceptId,
+    sourceName: sourceConcept.name,
+    targetConceptId,
+    targetName: targetConcept?.name ?? null,
+  });
+
+  const sourceAliases = getConceptAliases(sourceConceptId);
+  db.prepare("DELETE FROM concept_aliases WHERE concept_id = ?").run(sourceConceptId);
+  insertConceptAliases(targetConceptId, [sourceConcept.name, ...sourceAliases], now);
+
+  const mentionRows = db.prepare("SELECT * FROM concept_mentions WHERE concept_id = ?").all(sourceConceptId);
+  for (const mentionRow of mentionRows) {
+    insertConceptMentionRow(targetConceptId, mentionRow, now);
+  }
+
+  const relationRows = db.prepare("SELECT * FROM concept_relations WHERE from_concept_id = ? OR to_concept_id = ?").all(
+    sourceConceptId,
+    sourceConceptId,
+  );
+  for (const relationRow of relationRows) {
+    const fromConceptId = relationRow.from_concept_id === sourceConceptId ? targetConceptId : relationRow.from_concept_id;
+    const toConceptId = relationRow.to_concept_id === sourceConceptId ? targetConceptId : relationRow.to_concept_id;
+    const evidenceRows = db.prepare("SELECT * FROM relation_evidence WHERE relation_id = ?").all(relationRow.id);
+
+    if (fromConceptId !== toConceptId) {
+      const mergedRelationId = upsertRelation(
+        fromConceptId,
+        toConceptId,
+        {
+          confidence: relationRow.confidence,
+          explanation: relationRow.explanation,
+          relation: relationRow.relation,
+          source: relationRow.source,
+        },
+        now,
+      );
+
+      for (const evidenceRow of evidenceRows) {
+        insertRelationEvidenceRow(mergedRelationId, evidenceRow, now);
+      }
+    }
+
+    db.prepare("DELETE FROM concept_relations WHERE id = ?").run(relationRow.id);
+  }
+
+  db.prepare("DELETE FROM concept_mentions WHERE concept_id = ?").run(sourceConceptId);
+  db.prepare("DELETE FROM concept_embeddings WHERE concept_id = ?").run(sourceConceptId);
+  db.prepare("DELETE FROM concepts WHERE id = ?").run(sourceConceptId);
+
+  graphLog("db.merge.done", {
+    aliasCount: sourceAliases.length + 1,
+    durationMs: elapsed(),
+    movedMentionCount: mentionRows.length,
+    movedRelationCount: relationRows.length,
+    sourceConceptId,
+    targetConceptId,
+  });
+}
+
+function mergeConcepts(targetConceptId, sourceConceptIds, now) {
+  for (const sourceConceptId of [...new Set((sourceConceptIds || []).map(Number).filter(Number.isFinite))]) {
+    mergeConceptInto(targetConceptId, sourceConceptId, now);
+  }
+}
+
 function deleteDocumentGraphRows(documentPath) {
   const db = getGraphDatabase();
+  const existingConceptMentions = db.prepare("SELECT COUNT(*) AS count FROM concept_mentions WHERE document_path = ?").get(documentPath).count;
+  const existingRelationEvidence = db.prepare("SELECT COUNT(*) AS count FROM relation_evidence WHERE document_path = ?").get(documentPath).count;
   db.prepare("DELETE FROM concept_mentions WHERE document_path = ?").run(documentPath);
   db.prepare("DELETE FROM relation_evidence WHERE document_path = ?").run(documentPath);
   db.prepare("DELETE FROM graph_extraction_runs WHERE document_path = ?").run(documentPath);
@@ -387,6 +824,11 @@ function deleteDocumentGraphRows(documentPath) {
       AND id NOT IN (SELECT DISTINCT from_concept_id FROM concept_relations)
       AND id NOT IN (SELECT DISTINCT to_concept_id FROM concept_relations)
   `).run();
+  graphDebug("db.delete_document_rows", {
+    documentPath,
+    removedConceptMentions: existingConceptMentions,
+    removedRelationEvidence: existingRelationEvidence,
+  });
 }
 
 function saveExtractedDocumentGraph({ documentHash, documentPath, extraction, model }) {
@@ -447,6 +889,140 @@ function saveExtractedDocumentGraph({ documentHash, documentPath, extraction, mo
   return getDocumentGraph(documentPath);
 }
 
+function saveResolvedDocumentGraph({ documentHash, documentPath, graphBuild, model }) {
+  const db = getGraphDatabase();
+  const now = Date.now();
+  const elapsed = startTimer();
+  const conceptIdByKey = new Map();
+  const touchedConceptIds = new Set();
+  const concepts = Array.isArray(graphBuild?.concepts) ? graphBuild.concepts : [];
+  const relations = Array.isArray(graphBuild?.relations) ? graphBuild.relations : [];
+  let insertedMentionCount = 0;
+  let skippedRelationCount = 0;
+
+  graphLog("db.save_resolved.start", {
+    conceptCount: concepts.length,
+    documentHash: hashPreview(documentHash),
+    documentPath,
+    model,
+    relationCount: relations.length,
+  });
+
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    deleteDocumentGraphRows(documentPath);
+
+    for (const concept of concepts) {
+      const absorbedConceptIds = [...new Set((concept.absorbConceptIds || []).map(Number).filter(Number.isFinite))];
+      const existingConcept =
+        Number.isFinite(Number(concept.conceptId)) && getConceptById(Number(concept.conceptId))
+          ? getConceptById(Number(concept.conceptId))
+          : null;
+      const exactConcept = findConceptByNameOrAlias(concept.name, concept.aliases || []);
+      const absorbedConcept = absorbedConceptIds.map(getConceptById).find(Boolean) ?? null;
+      const targetConceptId =
+        existingConcept?.id ?? exactConcept?.id ?? absorbedConcept?.id ?? upsertConcept(concept, now);
+
+      if (!targetConceptId) continue;
+
+      updateConceptDetails(targetConceptId, concept, now);
+      mergeConcepts(
+        targetConceptId,
+        absorbedConceptIds.filter((conceptId) => conceptId !== targetConceptId),
+        now,
+      );
+
+      if (insertConceptMention(targetConceptId, documentPath, documentHash, concept, now)) {
+        insertedMentionCount += 1;
+      }
+      touchedConceptIds.add(targetConceptId);
+
+      const keys = [
+        concept.key,
+        concept.candidateKey,
+        concept.name,
+        ...(Array.isArray(concept.aliases) ? concept.aliases : []),
+      ];
+      for (const key of keys) {
+        const normalizedKey = normalizeConceptName(key);
+        if (normalizedKey) conceptIdByKey.set(normalizedKey, targetConceptId);
+      }
+    }
+
+    for (const relation of relations) {
+      const fromConceptId =
+        conceptIdByKey.get(normalizeConceptName(relation.fromKey || relation.from)) ?? Number(relation.fromConceptId);
+      const toConceptId =
+        conceptIdByKey.get(normalizeConceptName(relation.toKey || relation.to)) ?? Number(relation.toConceptId);
+
+      if (!getConceptById(fromConceptId) || !getConceptById(toConceptId) || fromConceptId === toConceptId) {
+        skippedRelationCount += 1;
+        graphWarn("db.save_resolved.skipped_relation", {
+          documentPath,
+          fromKey: relation.fromKey || relation.from,
+          fromConceptId,
+          relation: relation.relation,
+          toKey: relation.toKey || relation.to,
+          toConceptId,
+        });
+        continue;
+      }
+
+      const relationId = upsertRelation(
+        fromConceptId,
+        toConceptId,
+        {
+          ...relation,
+          source: relation.source || "local",
+        },
+        now,
+      );
+      insertRelationEvidence(relationId, documentPath, documentHash, relation, now);
+    }
+
+    if (concepts.length > 0 && insertedMentionCount === 0) {
+      throw new Error("Graph save produced no concept mentions; refusing to cache an empty graph.");
+    }
+
+    db.prepare(
+      `
+        INSERT INTO graph_extraction_runs(document_path, document_hash, model, extracted_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(document_path) DO UPDATE SET
+          document_hash = excluded.document_hash,
+          model = excluded.model,
+          extracted_at = excluded.extracted_at
+      `,
+    ).run(documentPath, documentHash, model, now);
+
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    graphWarn("db.save_resolved.rollback", {
+      documentPath,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
+
+  const conceptProfiles = getConceptProfiles([...touchedConceptIds]);
+  const graph = getDocumentGraph(documentPath);
+  graphLog("db.save_resolved.done", {
+    conceptProfiles: conceptProfiles.length,
+    documentPath,
+    durationMs: elapsed(),
+    graphEdges: graph.edges.length,
+    graphNodes: graph.nodes.length,
+    insertedMentionCount,
+    skippedRelationCount,
+    touchedConceptIds: [...touchedConceptIds],
+  });
+  return {
+    conceptProfiles,
+    graph,
+  };
+}
+
 function getConceptMentions(conceptId, currentDocumentPath) {
   return getGraphDatabase()
     .prepare(
@@ -455,6 +1031,7 @@ function getConceptMentions(conceptId, currentDocumentPath) {
           document_path AS documentPath,
           section_title AS sectionTitle,
           excerpt_markdown AS excerptMarkdown,
+          contribution,
           mention_type AS mentionType,
           confidence,
           updated_at AS updatedAt
@@ -515,13 +1092,16 @@ function getDocumentGraph(documentPath) {
                 r.to_concept_id AS toConceptId,
                 r.relation,
                 r.explanation,
+                r.source,
                 r.confidence,
                 source.name AS sourceName,
                 source.type AS sourceType,
                 source.summary AS sourceSummary,
+                source.explanation AS sourceExplanation,
                 target.name AS targetName,
                 target.type AS targetType,
-                target.summary AS targetSummary
+                target.summary AS targetSummary,
+                target.explanation AS targetExplanation
               FROM concept_relations r
               INNER JOIN concepts source ON source.id = r.from_concept_id
               INNER JOIN concepts target ON target.id = r.to_concept_id
@@ -539,6 +1119,7 @@ function getDocumentGraph(documentPath) {
         name: relation.sourceName,
         type: relation.sourceType,
         summary: relation.sourceSummary,
+        explanation: relation.sourceExplanation,
       });
     }
 
@@ -548,6 +1129,7 @@ function getDocumentGraph(documentPath) {
         name: relation.targetName,
         type: relation.targetType,
         summary: relation.targetSummary,
+        explanation: relation.targetExplanation,
       });
     }
   }
@@ -562,6 +1144,7 @@ function getDocumentGraph(documentPath) {
       name: concept.name,
       type: concept.type,
       summary: concept.summary,
+      explanation: concept.explanation,
       inCurrentDocument: currentConceptIds.has(concept.id),
       mentions: getConceptMentions(concept.id, documentPath),
     })),
@@ -571,17 +1154,267 @@ function getDocumentGraph(documentPath) {
       target: relation.toConceptId,
       relation: relation.relation,
       explanation: relation.explanation,
+      sourceType: relation.source,
       confidence: relation.confidence,
       evidence: getRelationEvidence(relation.id, documentPath),
     })),
   };
 }
 
+function searchConcepts(query, limit = 12) {
+  const normalizedLimit = Math.min(Math.max(Number(limit) || 12, 1), 50);
+  const cleanQuery = String(query || "").trim();
+  const likeQuery = `%${cleanQuery.replace(/[%_]/g, "\\$&")}%`;
+
+  if (!cleanQuery) {
+    return getGraphDatabase()
+      .prepare(
+        `
+          SELECT id, name, type, summary, explanation
+          FROM concepts
+          ORDER BY updated_at DESC, name
+          LIMIT ?
+        `,
+      )
+      .all(normalizedLimit);
+  }
+
+  return getGraphDatabase()
+    .prepare(
+      `
+        SELECT DISTINCT c.id, c.name, c.type, c.summary, c.explanation
+        FROM concepts c
+        LEFT JOIN concept_aliases a ON a.concept_id = c.id
+        WHERE c.name LIKE ? ESCAPE '\\'
+           OR c.type LIKE ? ESCAPE '\\'
+           OR c.summary LIKE ? ESCAPE '\\'
+           OR c.explanation LIKE ? ESCAPE '\\'
+           OR a.alias LIKE ? ESCAPE '\\'
+        ORDER BY
+          CASE WHEN c.name LIKE ? ESCAPE '\\' THEN 0 ELSE 1 END,
+          c.updated_at DESC,
+          c.name
+        LIMIT ?
+      `,
+    )
+    .all(likeQuery, likeQuery, likeQuery, likeQuery, likeQuery, `${cleanQuery.replace(/[%_]/g, "\\$&")}%`, normalizedLimit);
+}
+
+function updateConcept({ conceptId, explanation, name, summary, type }) {
+  const id = Number(conceptId);
+  if (!Number.isFinite(id) || !getConceptById(id)) {
+    throw new Error("Concept not found.");
+  }
+
+  const cleanName = String(name || "").trim();
+  if (!cleanName) {
+    throw new Error("Concept name cannot be empty.");
+  }
+
+  const normalizedName = normalizeConceptName(cleanName);
+  const conflictingConcept = getGraphDatabase()
+    .prepare("SELECT id FROM concepts WHERE normalized_name = ? AND id != ?")
+    .get(normalizedName, id);
+
+  if (conflictingConcept) {
+    throw new Error("Another concept already uses that name.");
+  }
+
+  getGraphDatabase().prepare(
+    `
+      UPDATE concepts
+      SET normalized_name = ?,
+          name = ?,
+          type = NULLIF(?, ''),
+          summary = NULLIF(?, ''),
+          explanation = NULLIF(?, ''),
+          updated_at = ?
+      WHERE id = ?
+    `,
+  ).run(
+    normalizedName,
+    cleanName,
+    String(type || "").trim(),
+    String(summary || "").trim(),
+    String(explanation || "").trim(),
+    Date.now(),
+    id,
+  );
+  getGraphDatabase().prepare("DELETE FROM concept_embeddings WHERE concept_id = ?").run(id);
+  insertConceptAliases(id, [cleanName], Date.now());
+}
+
+function addConceptMentionToDocument({ conceptId, concept, contribution, documentHash, documentPath, excerptMarkdown, mentionType, sectionTitle }) {
+  const db = getGraphDatabase();
+  const now = Date.now();
+  const cleanExcerpt = String(excerptMarkdown || "").trim();
+  if (!cleanExcerpt) {
+    throw new Error("Cannot attach an empty note excerpt to a concept.");
+  }
+
+  let targetConceptId = Number(conceptId);
+
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    if (!Number.isFinite(targetConceptId) || !getConceptById(targetConceptId)) {
+      targetConceptId = upsertConcept(
+        {
+          confidence: 1,
+          explanation: concept?.explanation,
+          name: concept?.name,
+          summary: concept?.summary,
+          type: concept?.type,
+        },
+        now,
+      );
+    }
+
+    if (!targetConceptId) {
+      throw new Error("Choose an existing concept or provide a new concept name.");
+    }
+
+    insertConceptMention(
+      targetConceptId,
+      documentPath,
+      documentHash || hashContent(cleanExcerpt),
+      {
+        confidence: 1,
+        contribution,
+        excerptMarkdown: cleanExcerpt,
+        mentionType: mentionType || "application",
+        sectionTitle,
+      },
+      now,
+    );
+    db.prepare("DELETE FROM concept_embeddings WHERE concept_id = ?").run(targetConceptId);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+
+  return getDocumentGraph(documentPath);
+}
+
+function updateRelation({ explanation, relation, relationId }) {
+  const id = Number(relationId);
+  const cleanRelation = String(relation || "").trim();
+  if (!Number.isFinite(id)) {
+    throw new Error("Relation not found.");
+  }
+  if (!cleanRelation) {
+    throw new Error("Relation label cannot be empty.");
+  }
+
+  const existingRelation = getGraphDatabase().prepare("SELECT id FROM concept_relations WHERE id = ?").get(id);
+  if (!existingRelation) {
+    throw new Error("Relation not found.");
+  }
+
+  getGraphDatabase().prepare(
+    `
+      UPDATE concept_relations
+      SET relation = ?,
+          normalized_relation = ?,
+          explanation = NULLIF(?, ''),
+          updated_at = ?
+      WHERE id = ?
+    `,
+  ).run(cleanRelation, normalizeRelationName(cleanRelation) || "related_to", String(explanation || "").trim(), Date.now(), id);
+}
+
+function addRelationToDocument({
+  documentHash,
+  documentPath,
+  evidenceMarkdown,
+  explanation,
+  fromConceptId,
+  relation,
+  targetConcept,
+  toConceptId,
+}) {
+  const fromId = Number(fromConceptId);
+  let toId = Number(toConceptId);
+  const cleanRelation = String(relation || "").trim();
+  if (!getConceptById(fromId)) {
+    throw new Error("Source concept not found.");
+  }
+  if (!cleanRelation) {
+    throw new Error("Relation label cannot be empty.");
+  }
+
+  const now = Date.now();
+
+  const db = getGraphDatabase();
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    if (!Number.isFinite(toId) || !getConceptById(toId)) {
+      toId = upsertConcept(
+        {
+          confidence: 1,
+          explanation: targetConcept?.explanation,
+          name: targetConcept?.name,
+          summary: targetConcept?.summary,
+          type: targetConcept?.type,
+        },
+        now,
+      );
+    }
+
+    if (!toId) {
+      throw new Error("Choose an existing target concept or provide a new concept name.");
+    }
+    if (fromId === toId) {
+      throw new Error("Choose two different concepts.");
+    }
+
+    const relationId = upsertRelation(
+      fromId,
+      toId,
+      {
+        confidence: 1,
+        explanation,
+        relation: cleanRelation,
+        source: "manual",
+      },
+      now,
+    );
+
+    const cleanEvidence = String(evidenceMarkdown || "").trim();
+    if (cleanEvidence) {
+      insertRelationEvidence(
+        relationId,
+        documentPath,
+        documentHash || hashContent(cleanEvidence),
+        {
+          confidence: 1,
+          excerptMarkdown: cleanEvidence,
+        },
+        now,
+      );
+    }
+
+    db.prepare("DELETE FROM concept_embeddings WHERE concept_id IN (?, ?)").run(fromId, toId);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+
+  return getDocumentGraph(documentPath);
+}
+
 function deleteDocumentGraph(documentPath) {
+  graphLog("db.delete_graph.start", { documentPath });
+  const elapsed = startTimer();
   getGraphDatabase().exec("BEGIN IMMEDIATE");
   try {
     deleteDocumentGraphRows(documentPath);
     getGraphDatabase().exec("COMMIT");
+    graphLog("db.delete_graph.done", {
+      documentPath,
+      durationMs: elapsed(),
+    });
   } catch (error) {
     getGraphDatabase().exec("ROLLBACK");
     throw error;
@@ -633,8 +1466,17 @@ module.exports = {
   deleteDocumentGraphTree,
   getDocumentGraph,
   getExtractionRun,
+  findConceptResolutionCandidates,
+  getConceptProfiles,
   hashContent,
+  addConceptMentionToDocument,
+  addRelationToDocument,
   normalizeConceptName,
   replaceDocumentGraphPath,
+  saveConceptEmbedding,
   saveExtractedDocumentGraph,
+  saveResolvedDocumentGraph,
+  searchConcepts,
+  updateConcept,
+  updateRelation,
 };

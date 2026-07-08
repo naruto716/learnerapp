@@ -281,6 +281,10 @@ export default function AppShell() {
     return editorAgentToolsRef.current[activeDocumentPath] ?? null;
   }, [activeDocumentPath]);
 
+  const getCurrentDocumentMarkdown = useCallback(() => {
+    return getCurrentDocumentTools()?.read().markdown ?? null;
+  }, [getCurrentDocumentTools]);
+
   const openKnowledgeGraph = useCallback(async () => {
     setIsKnowledgeGraphOpen(true);
     setKnowledgeGraphError(null);
@@ -416,6 +420,7 @@ export default function AppShell() {
       </div>
       <KnowledgeGraphPanel
         error={knowledgeGraphError}
+        getCurrentDocumentMarkdown={getCurrentDocumentMarkdown}
         graph={knowledgeGraph}
         isDeleting={isKnowledgeGraphDeleting}
         isLoading={isKnowledgeGraphLoading}
@@ -423,6 +428,7 @@ export default function AppShell() {
         lastExtractionChanged={lastKnowledgeGraphExtractionChanged}
         onClose={() => setIsKnowledgeGraphOpen(false)}
         onDeleteGraph={deleteKnowledgeGraph}
+        onGraphChange={setKnowledgeGraph}
         onOpenDocument={openDocument}
         onRefresh={openKnowledgeGraph}
         open={isKnowledgeGraphOpen}
