@@ -29,6 +29,14 @@ const {
   semanticSearchIndexedDocuments,
   upsertIndexedDocument,
 } = require("./documentSearchIndex");
+const { extractDocumentGraph } = require("./graph/graphExtraction");
+const {
+  closeGraphDatabase,
+  deleteDocumentGraph,
+  deleteDocumentGraphTree,
+  getDocumentGraph,
+  replaceDocumentGraphPath,
+} = require("./graph/graphDb");
 
 loadLocalEnv();
 
@@ -190,6 +198,7 @@ app.on("window-all-closed", () => {
 
 app.on("before-quit", () => {
   closeSearchDatabase();
+  closeGraphDatabase();
 });
 
 ipcMain.handle("document:list", async () => {
@@ -230,6 +239,12 @@ ipcMain.handle("document:createFile", async (_event, filePath) => {
 
 ipcMain.handle("document:move", async (_event, sourcePath, targetFolderPath) => {
   await moveDocumentEntry(sourcePath, targetFolderPath);
+  replaceDocumentGraphPath(
+    sourcePath,
+    targetFolderPath
+      ? `${String(targetFolderPath).replace(/\/+$/g, "")}/${path.basename(sourcePath)}`
+      : path.basename(sourcePath),
+  );
   await refreshSearchIndex("rebuild after move");
   return {
     directory: getDocumentRoot(),
@@ -242,8 +257,10 @@ ipcMain.handle("document:delete", async (_event, entryPath) => {
   await deleteDocumentEntry(entryPath);
   if (isDocumentFile) {
     updateSearchIndex("delete", () => deleteIndexedDocument(entryPath));
+    deleteDocumentGraph(entryPath);
   } else {
     updateSearchIndex("delete tree", () => deleteIndexedDocumentTree(entryPath));
+    deleteDocumentGraphTree(entryPath);
   }
   return {
     directory: getDocumentRoot(),
@@ -257,6 +274,7 @@ ipcMain.handle("document:rename", async (_event, filePath, newTitle) => {
     deleteIndexedDocument(filePath);
     upsertIndexedDocument(newPath, await readDocumentFile(newPath));
   });
+  replaceDocumentGraphPath(filePath, newPath);
   return {
     directory: getDocumentRoot(),
     newPath,
@@ -294,4 +312,19 @@ ipcMain.handle("document:rebuildEmbeddings", async () => {
 
 ipcMain.handle("document:semanticSearch", async (_event, query, limit) => {
   return semanticSearchIndexedDocuments(query, limit);
+});
+
+ipcMain.handle("graph:extractDocumentGraph", async (_event, filePath, markdown) => {
+  const documentPath = filePathWithExtension(filePath);
+  return extractDocumentGraph(documentPath, await readDocumentFile(documentPath), markdown);
+});
+
+ipcMain.handle("graph:getDocumentGraph", async (_event, filePath) => {
+  return getDocumentGraph(filePathWithExtension(filePath));
+});
+
+ipcMain.handle("graph:deleteDocumentGraph", async (_event, filePath) => {
+  const documentPath = filePathWithExtension(filePath);
+  deleteDocumentGraph(documentPath);
+  return getDocumentGraph(documentPath);
 });

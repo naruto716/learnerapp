@@ -26,6 +26,7 @@
     }
   },
   "dependencies": {
+    "@dagrejs/dagre": "^3.0.0",
     "@langchain/core": "^1.2.1",
     "@langchain/openai": "^1.5.3",
     "@phosphor-icons/react": "^2.1.10",
@@ -35,6 +36,7 @@
     "@tiptap/markdown": "^3.27.1",
     "@tiptap/react": "^3.27.1",
     "@tiptap/starter-kit": "^3.27.1",
+    "@xyflow/react": "^12.11.2",
     "katex": "^0.16.47",
     "langchain": "^1.5.2",
     "lowlight": "^3.3.0",

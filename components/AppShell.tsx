@@ -1,7 +1,9 @@
 "use client";
 
+import { GraphIcon } from "@phosphor-icons/react";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import FloatingIconButton from "@/components/FloatingIconButton";
 import SideBar from "@/components/sidebar/sidebar";
 import DocumentSearchDialog from "@/components/sidebar/DocumentSearchDialog";
 import TopBar from "@/components/topbar/topbar";
@@ -10,6 +12,7 @@ import TiptapEditor, {
   type PersistedEditorState,
 } from "@/components/editor/TiptapEditor";
 import { documentPathToRoute, routeToDocumentPath } from "@/components/documentPaths";
+import KnowledgeGraphPanel from "@/components/graph/KnowledgeGraphPanel";
 import ChatBubble from "./ai/ChatBubble";
 import ChatPanel from "./ai/ChatPanel";
 
@@ -77,6 +80,12 @@ export default function AppShell() {
   const [openTabs, setOpenTabs] = useState<string[]>([]);
   const [isDocumentSearchOpen, setIsDocumentSearchOpen] = useState(false);
   const [isBubbleOpen, setIsBubbleOpen] = useState(false);
+  const [isKnowledgeGraphOpen, setIsKnowledgeGraphOpen] = useState(false);
+  const [isKnowledgeGraphLoading, setIsKnowledgeGraphLoading] = useState(false);
+  const [isKnowledgeGraphDeleting, setIsKnowledgeGraphDeleting] = useState(false);
+  const [knowledgeGraph, setKnowledgeGraph] = useState<KnowledgeDocumentGraph | null>(null);
+  const [knowledgeGraphError, setKnowledgeGraphError] = useState<string | null>(null);
+  const [lastKnowledgeGraphExtractionChanged, setLastKnowledgeGraphExtractionChanged] = useState<boolean | null>(null);
   const [editorStates, setEditorStates] = useState<Record<string, PersistedEditorState>>({});
   const [documentsVersion, setDocumentsVersion] = useState(0);
   const [workspaceLoaded, setWorkspaceLoaded] = useState(false);
@@ -272,8 +281,72 @@ export default function AppShell() {
     return editorAgentToolsRef.current[activeDocumentPath] ?? null;
   }, [activeDocumentPath]);
 
+  const openKnowledgeGraph = useCallback(async () => {
+    setIsKnowledgeGraphOpen(true);
+    setKnowledgeGraphError(null);
+    setLastKnowledgeGraphExtractionChanged(null);
+
+    if (!activeDocumentPath) {
+      setKnowledgeGraph(null);
+      setKnowledgeGraphError("Open a document before viewing its graph.");
+      return;
+    }
+
+    const tools = getCurrentDocumentTools();
+    if (!tools) {
+      setKnowledgeGraph(null);
+      setKnowledgeGraphError("The active editor is not ready yet.");
+      return;
+    }
+
+    const documentSnapshot = tools.read();
+    if (!documentSnapshot.markdown.trim()) {
+      setKnowledgeGraph(null);
+      setKnowledgeGraphError("This document is empty, so there is nothing to extract yet.");
+      return;
+    }
+
+    setKnowledgeGraph((current) => (current?.documentPath === documentSnapshot.path ? current : null));
+    setIsKnowledgeGraphLoading(true);
+
+    try {
+      const result = await window.learner?.extractDocumentGraph(documentSnapshot.path, documentSnapshot.markdown);
+      if (!result) {
+        throw new Error("Graph extraction is not available in this renderer.");
+      }
+
+      setKnowledgeGraph(result.graph);
+      setLastKnowledgeGraphExtractionChanged(result.extracted);
+    } catch (error) {
+      setKnowledgeGraphError(error instanceof Error ? error.message : "Graph extraction failed.");
+    } finally {
+      setIsKnowledgeGraphLoading(false);
+    }
+  }, [activeDocumentPath, getCurrentDocumentTools]);
+
+  const deleteKnowledgeGraph = useCallback(async () => {
+    if (!activeDocumentPath) return;
+
+    setKnowledgeGraphError(null);
+    setIsKnowledgeGraphDeleting(true);
+
+    try {
+      const graph = await window.learner?.deleteDocumentGraph(activeDocumentPath);
+      if (!graph) {
+        throw new Error("Graph deletion is not available in this renderer.");
+      }
+
+      setKnowledgeGraph(graph);
+      setLastKnowledgeGraphExtractionChanged(null);
+    } catch (error) {
+      setKnowledgeGraphError(error instanceof Error ? error.message : "Graph deletion failed.");
+    } finally {
+      setIsKnowledgeGraphDeleting(false);
+    }
+  }, [activeDocumentPath]);
+
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="relative flex h-screen overflow-hidden">
       <SideBar
         activeDocumentPath={activeDocumentPath}
         documentsVersion={documentsVersion}
@@ -299,7 +372,7 @@ export default function AppShell() {
           onSelectTab={openDocument}
           toggleSidebar={() => setIsSidebarOpen((isOpen) => !isOpen)}
         />
-        <main className="min-h-0 flex-1 overflow-hidden">
+        <main className="relative min-h-0 flex-1 overflow-hidden">
           {openTabs.length === 0 ? (
             <div className="p-4 text-sm text-white/50">Select or create a document.</div>
           ) : (
@@ -315,8 +388,45 @@ export default function AppShell() {
               />
             ))
           )}
+          {activeDocumentPath && !isKnowledgeGraphOpen && (
+            <FloatingIconButton
+              ariaLabel="View knowledge graph"
+              className="right-5 top-15"
+              disabled={isKnowledgeGraphLoading}
+              icon={<GraphIcon size={16} className={isKnowledgeGraphLoading ? "animate-pulse" : ""} />}
+              onClick={() => {
+                if (isKnowledgeGraphOpen) {
+                  setIsKnowledgeGraphOpen(false);
+                  return;
+                }
+
+                void openKnowledgeGraph();
+              }}
+              size={8}
+              tooltip={
+                isKnowledgeGraphLoading
+                  ? "Building graph"
+                  : isKnowledgeGraphOpen
+                    ? "Close graph"
+                    : "View graph"
+              }
+            />
+          )}
         </main>
       </div>
+      <KnowledgeGraphPanel
+        error={knowledgeGraphError}
+        graph={knowledgeGraph}
+        isDeleting={isKnowledgeGraphDeleting}
+        isLoading={isKnowledgeGraphLoading}
+        isSidebarOpen={isSidebarOpen}
+        lastExtractionChanged={lastKnowledgeGraphExtractionChanged}
+        onClose={() => setIsKnowledgeGraphOpen(false)}
+        onDeleteGraph={deleteKnowledgeGraph}
+        onOpenDocument={openDocument}
+        onRefresh={openKnowledgeGraph}
+        open={isKnowledgeGraphOpen}
+      />
       <ChatPanel
         getCurrentDocumentTools={getCurrentDocumentTools}
         isOpen={isBubbleOpen}

@@ -55,4 +55,13 @@ contextBridge.exposeInMainWorld("learner", {
   semanticSearchDocuments: (query, limit) => {
     return ipcRenderer.invoke("document:semanticSearch", query, limit);
   },
+  extractDocumentGraph: (filePath, markdown) => {
+    return ipcRenderer.invoke("graph:extractDocumentGraph", filePath, markdown);
+  },
+  getDocumentGraph: (filePath) => {
+    return ipcRenderer.invoke("graph:getDocumentGraph", filePath);
+  },
+  deleteDocumentGraph: (filePath) => {
+    return ipcRenderer.invoke("graph:deleteDocumentGraph", filePath);
+  },
 });

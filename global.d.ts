@@ -46,6 +46,55 @@ declare global {
     title: string;
   };
 
+  type KnowledgeConceptMention = {
+    confidence: number;
+    documentPath: string;
+    excerptMarkdown: string;
+    mentionType: string | null;
+    sectionTitle: string | null;
+    updatedAt: number;
+  };
+
+  type KnowledgeRelationEvidence = {
+    confidence: number;
+    documentPath: string;
+    excerptMarkdown: string;
+    updatedAt: number;
+  };
+
+  type KnowledgeGraphNode = {
+    id: number;
+    inCurrentDocument: boolean;
+    mentions: KnowledgeConceptMention[];
+    name: string;
+    summary: string | null;
+    type: string | null;
+  };
+
+  type KnowledgeGraphEdge = {
+    confidence: number;
+    evidence: KnowledgeRelationEvidence[];
+    explanation: string | null;
+    id: number;
+    relation: string;
+    source: number;
+    target: number;
+  };
+
+  type KnowledgeDocumentGraph = {
+    documentHash: string | null;
+    documentPath: string;
+    edges: KnowledgeGraphEdge[];
+    extractedAt: number | null;
+    model: string | null;
+    nodes: KnowledgeGraphNode[];
+  };
+
+  type KnowledgeGraphExtractionResult = {
+    extracted: boolean;
+    graph: KnowledgeDocumentGraph;
+  };
+
   interface Window {
     learner?: {
       platform: NodeJS.Platform;
@@ -86,6 +135,9 @@ declare global {
       getDocumentEmbeddingStatus: () => Promise<DocumentEmbeddingStatus>;
       rebuildDocumentEmbeddings: () => Promise<DocumentEmbeddingStatus>;
       semanticSearchDocuments: (query: string, limit?: number) => Promise<DocumentSemanticSearchResult[]>;
+      extractDocumentGraph: (filePath: string, markdown: string) => Promise<KnowledgeGraphExtractionResult>;
+      getDocumentGraph: (filePath: string) => Promise<KnowledgeDocumentGraph>;
+      deleteDocumentGraph: (filePath: string) => Promise<KnowledgeDocumentGraph>;
       isFullScreen: () => Promise<boolean>;
       onFullScreenChange: (callback: (isFullScreen: boolean) => void) => () => void;
     };
