@@ -312,6 +312,13 @@ function contentWithSourceLinks(content: string) {
   });
 }
 
+function truncateSourceTitle(title: string, maxLength = 28) {
+  const normalizedTitle = title.trim() || "Untitled note";
+  if (normalizedTitle.length <= maxLength) return normalizedTitle;
+
+  return `${normalizedTitle.slice(0, Math.max(1, maxLength - 3)).trim()}...`;
+}
+
 function normalizeMathDelimiters(content: string) {
   return content
     .split(/(```[\s\S]*?```|`[^`\n]*`)/g)
@@ -376,34 +383,6 @@ function sourcesForMessage(messages: ChatMessage[], messageIndex: number) {
   return [...sourcesById.values()].sort((left, right) => left.id - right.id);
 }
 
-function SourceStrip({
-  onOpenSource,
-  sources,
-}: {
-  onOpenSource: (source: AgentSource) => void;
-  sources: AgentSource[];
-}) {
-  if (sources.length === 0) return null;
-
-  return (
-    <div className="mt-3 flex flex-wrap gap-1.5">
-      {sources.map((source) => (
-        <button
-          type="button"
-          className="max-w-full rounded-full bg-white/[0.07] px-2.5 py-1 text-[11px] text-white/58 transition hover:bg-white/[0.12] hover:text-white/88"
-          key={`${source.path}-${source.chunkIndex}`}
-          onClick={() => onOpenSource(source)}
-          title={`${source.path}\n\n${source.excerpt}`}
-        >
-          <span className="text-white/38">source {source.id}</span>
-          <span className="mx-1 text-white/24">·</span>
-          <span>{source.title}</span>
-        </button>
-      ))}
-    </div>
-  );
-}
-
 function MessageContent({
   message,
   onOpenSource,
@@ -432,7 +411,7 @@ function MessageContent({
                   onClick={() => onOpenSource(source)}
                   title={`${source.path}\n\n${source.excerpt}`}
                 >
-                  {children}
+                  {truncateSourceTitle(source.title)}
                 </button>
               );
             }
@@ -449,7 +428,21 @@ function MessageContent({
       >
         {contentWithSourceLinks(normalizeMathDelimiters(message.content))}
       </ReactMarkdown>
-      <SourceStrip onOpenSource={onOpenSource} sources={sources} />
+    </div>
+  );
+}
+
+function ChatLoadingSkeleton() {
+  return (
+    <div className="flex justify-start">
+      <div className="w-full max-w-[72%] space-y-2 px-1 py-1" aria-label="Assistant is thinking">
+        <div className="h-3.5 w-24 animate-pulse rounded-full bg-white/[0.10]" />
+        <div className="space-y-2">
+          <div className="h-3.5 w-full animate-pulse rounded-full bg-white/[0.08]" />
+          <div className="h-3.5 w-5/6 animate-pulse rounded-full bg-white/[0.07]" />
+          <div className="h-3.5 w-2/3 animate-pulse rounded-full bg-white/[0.06]" />
+        </div>
+      </div>
     </div>
   );
 }
@@ -969,6 +962,8 @@ export default function ChatPanel({
     ? `${isSidebarOpen ? "left-64" : "left-0"} right-0 top-10 bottom-0 h-auto w-auto rounded-none`
     : "bottom-16 right-4 h-[min(620px,calc(100vh-6rem))] w-[min(520px,calc(100vw-2rem))] rounded-[22px]";
   const contentWidth = isFullscreen ? "mx-auto w-full max-w-4xl" : "";
+  const showAgentSkeleton =
+    isAgentRunning && !messages.some((message) => message.role === "assistant" && message.isStreaming);
 
   return (
     <section
@@ -1045,7 +1040,7 @@ export default function ChatPanel({
                   <div
                     className={`text-sm leading-relaxed ${
                       message.role === "user"
-                        ? "max-w-[78%] px-1 py-1 text-right text-white/88"
+                        ? "max-w-[78%] rounded-2xl rounded-br-md bg-white/[0.10] px-3.5 py-2.5 text-left text-white/92 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)]"
                         : message.role === "tool"
                           ? "max-w-[78%] px-1 py-0.5 text-white/55"
                           : "min-w-0 flex-1 px-1 py-1 text-white/88"
@@ -1071,7 +1066,7 @@ export default function ChatPanel({
                     ) : message.role === "tool" ? (
                       <ToolResultMessage message={message} />
                     ) : message.role === "assistant" && !message.content ? (
-                      <p className="text-white/45">Thinking...</p>
+                      <ChatLoadingSkeleton />
                     ) : (
                       (message.content || message.role === "assistant") && (
                         <MessageContent
@@ -1093,6 +1088,7 @@ export default function ChatPanel({
                   </div>
                 </div>
               ))}
+              {showAgentSkeleton && <ChatLoadingSkeleton />}
             </div>
           )}
           <div ref={messagesEndRef} />

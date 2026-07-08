@@ -75,6 +75,14 @@ html[data-platform="darwin"] .mac-traffic-spacer {
   width: 76px;
 }
 
+html[data-platform="darwin"][data-fullscreen="true"] .mac-traffic-padding {
+  padding-left: 20px;
+}
+
+html[data-platform="darwin"][data-fullscreen="true"] .mac-traffic-spacer {
+  width: 0;
+}
+
 .ProseMirror p {
   margin: 0 0 0.75rem;
 }

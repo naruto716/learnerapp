@@ -262,7 +262,7 @@ export default function SideBar({
       }`}
     >
       <div className="mac-traffic-padding flex h-10 items-center justify-between gap-2 pr-3">
-        <p className="text-sm font-medium">Files</p>
+        <p className="text-sm font-medium ml-1">HexNote</p>
         <div className="app-no-drag flex gap-1">
           <IconButton
             ariaLabel="Search notes"

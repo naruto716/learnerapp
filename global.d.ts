@@ -86,6 +86,8 @@ declare global {
       getDocumentEmbeddingStatus: () => Promise<DocumentEmbeddingStatus>;
       rebuildDocumentEmbeddings: () => Promise<DocumentEmbeddingStatus>;
       semanticSearchDocuments: (query: string, limit?: number) => Promise<DocumentSemanticSearchResult[]>;
+      isFullScreen: () => Promise<boolean>;
+      onFullScreenChange: (callback: (isFullScreen: boolean) => void) => () => void;
     };
   }
 }

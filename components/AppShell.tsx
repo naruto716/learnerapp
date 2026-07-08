@@ -84,11 +84,30 @@ export default function AppShell() {
   const editorAgentToolsRef = useRef<Record<string, CurrentDocumentAgentTools>>({});
 
   useEffect(() => {
+    const root = document.documentElement;
+    const platform = window.learner?.platform ?? navigator.platform.toLowerCase();
+    root.dataset.platform = platform === "darwin" || platform.includes("mac") ? "darwin" : platform;
+
+    let isMounted = true;
+    const setFullScreenAttribute = (isFullScreen: boolean) => {
+      root.dataset.fullscreen = isFullScreen ? "true" : "false";
+    };
+
+    setFullScreenAttribute(false);
+    window.learner?.isFullScreen?.().then((isFullScreen) => {
+      if (isMounted) setFullScreenAttribute(isFullScreen);
+    });
+    const removeFullScreenListener = window.learner?.onFullScreenChange?.(setFullScreenAttribute);
+
+    return () => {
+      isMounted = false;
+      removeFullScreenListener?.();
+    };
+  }, []);
+
+  useEffect(() => {
     if (restoredWorkspaceRef.current) return;
     restoredWorkspaceRef.current = true;
-
-    const platform = window.learner?.platform ?? navigator.platform.toLowerCase();
-    document.documentElement.dataset.platform = platform === "darwin" || platform.includes("mac") ? "darwin" : platform;
 
     const workspace = readWorkspaceState();
     const timer = window.setTimeout(() => {

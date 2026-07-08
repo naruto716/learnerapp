@@ -2,6 +2,14 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("learner", {
   platform: process.platform,
+  isFullScreen: () => {
+    return ipcRenderer.invoke("window:is-fullscreen");
+  },
+  onFullScreenChange: (callback) => {
+    const listener = (_event, isFullScreen) => callback(isFullScreen);
+    ipcRenderer.on("window:fullscreen-change", listener);
+    return () => ipcRenderer.removeListener("window:fullscreen-change", listener);
+  },
   listDocuments: () => {
     return ipcRenderer.invoke("document:list");
   },

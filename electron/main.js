@@ -81,6 +81,14 @@ function resolveDocumentAsset(requestUrl) {
   return resolveDocumentAssetPath(decodeURIComponent(url.pathname).replace(/^\/+/g, ""));
 }
 
+function notifyFullScreenChange(win) {
+  win.webContents.send("window:fullscreen-change", win.isFullScreen());
+}
+
+ipcMain.handle("window:is-fullscreen", (event) => {
+  return BrowserWindow.fromWebContents(event.sender)?.isFullScreen() ?? false;
+});
+
 function createWindow() {
   const isMac = process.platform === "darwin";
   const win = new BrowserWindow({
@@ -97,6 +105,9 @@ function createWindow() {
       nodeIntegration: false,
     },
   });
+
+  win.on("enter-full-screen", () => notifyFullScreenChange(win));
+  win.on("leave-full-screen", () => notifyFullScreenChange(win));
 
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
