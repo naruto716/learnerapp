@@ -67,6 +67,9 @@ contextBridge.exposeInMainWorld("learner", {
   searchGraphConcepts: (query, limit) => {
     return ipcRenderer.invoke("graph:searchConcepts", query, limit);
   },
+  searchRelatedGraphConcepts: (concept, limit) => {
+    return ipcRenderer.invoke("graph:searchRelatedConcepts", concept, limit);
+  },
   updateGraphConcept: (filePath, conceptUpdate) => {
     return ipcRenderer.invoke("graph:updateConcept", filePath, conceptUpdate);
   },

@@ -29,7 +29,7 @@ const {
   semanticSearchIndexedDocuments,
   upsertIndexedDocument,
 } = require("./documentSearchIndex");
-const { extractDocumentGraph } = require("./graph/graphExtraction");
+const { extractDocumentGraph, searchRelatedConcepts } = require("./graph/graphExtraction");
 const {
   closeGraphDatabase,
   addConceptMentionToDocument,
@@ -337,6 +337,10 @@ ipcMain.handle("graph:deleteDocumentGraph", async (_event, filePath) => {
 
 ipcMain.handle("graph:searchConcepts", async (_event, query, limit) => {
   return searchConcepts(query, limit);
+});
+
+ipcMain.handle("graph:searchRelatedConcepts", async (_event, concept, limit) => {
+  return searchRelatedConcepts(concept, limit);
 });
 
 ipcMain.handle("graph:updateConcept", async (_event, filePath, conceptUpdate) => {

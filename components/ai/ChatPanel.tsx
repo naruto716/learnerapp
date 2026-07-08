@@ -32,6 +32,11 @@ const maxImages = 5;
 const maxImageSize = 4 * 1024 * 1024;
 const acceptedImageTypes = ["image/jpeg", "image/png", "image/gif", "image/webp"];
 
+function documentToolPath(documentPath: string) {
+  const trimmedPath = documentPath.trim().replace(/^\/+/, "");
+  return trimmedPath.toLowerCase().endsWith(".json") ? trimmedPath : `${trimmedPath}.json`;
+}
+
 type ChatMessage = {
   id: string;
   role: "user" | "assistant" | "tool";
@@ -487,16 +492,26 @@ function ToolResultMessage({ message }: { message: ChatMessage }) {
 }
 
 export default function ChatPanel({
+  closeDocumentTab,
+  ensureDocumentTools,
   getCurrentDocumentTools,
+  getDocumentTools,
+  getOpenDocumentPaths,
   isSidebarOpen,
   isOpen,
   onClose,
+  onDocumentsChanged,
   onOpenDocument,
 }: {
+  closeDocumentTab: (documentPath: string, documentType?: DocumentNode["type"]) => void;
+  ensureDocumentTools: (documentPath: string) => Promise<CurrentDocumentAgentTools | null>;
   getCurrentDocumentTools: () => CurrentDocumentAgentTools | null;
+  getDocumentTools: (documentPath: string) => CurrentDocumentAgentTools | null;
+  getOpenDocumentPaths: () => string[];
   isSidebarOpen: boolean;
   isOpen: boolean;
   onClose: () => void;
+  onDocumentsChanged: () => void;
   onOpenDocument: (documentPath: string) => void;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -727,6 +742,56 @@ export default function ChatPanel({
     }
   }
 
+  function getPatchDocumentTools(patch: ProposedDocumentPatch) {
+    const normalizedPath = documentToolPath(patch.documentPath);
+    const exactTools = getDocumentTools(normalizedPath);
+    if (exactTools) return exactTools;
+
+    const currentTools = getCurrentDocumentTools();
+    return currentTools?.path === normalizedPath ? currentTools : null;
+  }
+
+  function applyPatchToDocument(patch: ProposedDocumentPatch): ProposedDocumentPatch {
+    const documentTools = getPatchDocumentTools(patch);
+    if (!documentTools) {
+      return {
+        ...patch,
+        status: "error",
+        error: `Open ${patch.documentPath} before applying this edit.`,
+      };
+    }
+
+    const result = documentTools.applyPatch(patch);
+
+    if (result.failures.length === 0) {
+      documentTools.clearPatchPreview(patch.id);
+    }
+
+    return {
+      ...patch,
+      status: result.failures.length > 0 ? "error" : "applied",
+      error: result.failures.join("\n") || undefined,
+    };
+  }
+
+  function toolResultWithPatchStatus(result: unknown, patch: ProposedDocumentPatch) {
+    const parsed = parseToolResult(result);
+    if (!parsed || typeof parsed !== "object") return result;
+
+    return JSON.stringify(
+      {
+        ...(parsed as Record<string, unknown>),
+        message:
+          patch.status === "applied"
+            ? "Edit applied automatically. The user can undo it from this message."
+            : patch.error ?? "Edit could not be applied automatically.",
+        patch,
+      },
+      null,
+      2,
+    );
+  }
+
   function applyPatch(patchId: string) {
     const patch = messagesRef.current
       .flatMap((message) => message.patches ?? [])
@@ -734,31 +799,14 @@ export default function ChatPanel({
 
     if (!patch) return;
 
-    const documentTools = getCurrentDocumentTools();
-    if (!documentTools) {
-      updatePatch(patchId, (current) => ({
-        ...current,
-        status: "error",
-        error: "Open the target document before applying this patch.",
-      }));
-      return;
-    }
-
-    const result = documentTools.applyPatch(patch);
-
-    if (result.failures.length === 0) {
-      documentTools.clearPatchPreview(patchId);
-    }
-
-    updatePatch(patchId, (current) => ({
-      ...current,
-      status: result.failures.length > 0 ? "error" : "applied",
-      error: result.failures.join("\n") || undefined,
-    }));
+    updatePatch(patchId, () => applyPatchToDocument(patch));
   }
 
   function undoPatch(patchId: string) {
-    const documentTools = getCurrentDocumentTools();
+    const patch = messagesRef.current
+      .flatMap((message) => message.patches ?? [])
+      .find((candidate) => candidate.id === patchId);
+    const documentTools = patch ? getPatchDocumentTools(patch) : getCurrentDocumentTools();
     if (!documentTools) {
       updatePatch(patchId, (current) => ({
         ...current,
@@ -778,7 +826,14 @@ export default function ChatPanel({
   }
 
   function rejectPatch(patchId: string) {
-    getCurrentDocumentTools()?.clearPatchPreview(patchId);
+    const patch = messagesRef.current
+      .flatMap((message) => message.patches ?? [])
+      .find((candidate) => candidate.id === patchId);
+    if (patch) {
+      getPatchDocumentTools(patch)?.clearPatchPreview(patchId);
+    } else {
+      getCurrentDocumentTools()?.clearPatchPreview(patchId);
+    }
     updatePatch(patchId, (patch) => ({
       ...patch,
       status: "rejected",
@@ -830,7 +885,11 @@ export default function ChatPanel({
 
       for await (const chunk of runStudyAgentLoop({
         contextState: agentContextState,
+        closeDocumentTab,
+        ensureDocumentTools,
         getCurrentDocumentTools,
+        getDocumentTools,
+        getOpenDocumentPaths,
         messages: messagesForAgent
           .filter(
             (message): message is ChatMessage & { role: "user" | "assistant" } =>
@@ -841,6 +900,7 @@ export default function ChatPanel({
             content: message.content,
             images: message.images,
           })),
+        onDocumentsChanged,
         signal: abortController.signal,
       })) {
         if (chunk.type === "tool_call") {
@@ -857,16 +917,17 @@ export default function ChatPanel({
         }
 
         if (chunk.type === "tool_result") {
-          const patch = toolResultPatch(chunk.result);
+          const proposedPatch = toolResultPatch(chunk.result);
+          const appliedPatch = proposedPatch ? applyPatchToDocument(proposedPatch) : null;
           const toolMessage: ChatMessage = {
             id: generateId("message"),
             role: "tool",
             content: "",
             createdAt: Date.now(),
-            patches: patch ? [patch] : undefined,
+            patches: appliedPatch ? [appliedPatch] : undefined,
             toolCallId: chunk.toolCallId,
             toolName: chunk.toolName,
-            toolResult: chunk.result,
+            toolResult: appliedPatch ? toolResultWithPatchStatus(chunk.result, appliedPatch) : chunk.result,
           };
 
           commitMessages([...messagesRef.current, toolMessage]);

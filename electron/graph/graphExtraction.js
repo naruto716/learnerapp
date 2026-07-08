@@ -464,6 +464,44 @@ async function resolveCandidateConcepts(candidates) {
   return resolvedConcepts;
 }
 
+async function searchRelatedConcepts({ aliases = [], name, summary = "", type = "" }, limit = maxResolutionCandidates) {
+  const cleanName = String(name || "").trim();
+  if (!cleanName) {
+    throw new Error("Concept name is required.");
+  }
+
+  const embeddingConfig = getGraphEmbeddingConfig();
+  const elapsed = startTimer();
+  graphLog("concept_related_search.start", {
+    limit,
+    name: cleanName,
+  });
+
+  const [embedding] = await requestConceptEmbeddings([
+    conceptProfileText({
+      aliases,
+      name: cleanName,
+      summary,
+      type,
+    }),
+  ]);
+  const concepts = findConceptResolutionCandidates({
+    aliases,
+    embedding,
+    embeddingModel: embeddingConfig.model,
+    limit,
+    name: cleanName,
+  });
+
+  graphLog("concept_related_search.done", {
+    durationMs: elapsed(),
+    name: cleanName,
+    resultCount: concepts.length,
+  });
+
+  return concepts;
+}
+
 async function requestResolvedRelations({ concepts, documentPath, markdown }) {
   if (concepts.length < 2) return [];
 
@@ -691,4 +729,5 @@ async function extractDocumentGraph(documentPath, document, markdown) {
 module.exports = {
   extractDocumentGraph,
   parseGraphExtractionResponse,
+  searchRelatedConcepts,
 };

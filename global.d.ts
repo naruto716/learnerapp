@@ -75,10 +75,21 @@ declare global {
 
   type KnowledgeConceptSearchResult = {
     id: number;
+    aliases?: string[];
+    matchReason?: string;
     name: string;
     explanation: string | null;
+    mentions?: KnowledgeConceptMention[];
+    score?: number;
     summary: string | null;
     type: string | null;
+  };
+
+  type KnowledgeConceptSearchQuery = {
+    aliases?: string[];
+    name: string;
+    summary?: string;
+    type?: string;
   };
 
   type KnowledgeConceptUpdate = {
@@ -201,6 +212,10 @@ declare global {
       getDocumentGraph: (filePath: string) => Promise<KnowledgeDocumentGraph>;
       deleteDocumentGraph: (filePath: string) => Promise<KnowledgeDocumentGraph>;
       searchGraphConcepts: (query: string, limit?: number) => Promise<KnowledgeConceptSearchResult[]>;
+      searchRelatedGraphConcepts: (
+        concept: KnowledgeConceptSearchQuery,
+        limit?: number,
+      ) => Promise<KnowledgeConceptSearchResult[]>;
       updateGraphConcept: (filePath: string, conceptUpdate: KnowledgeConceptUpdate) => Promise<KnowledgeDocumentGraph>;
       addGraphConceptMention: (
         filePath: string,

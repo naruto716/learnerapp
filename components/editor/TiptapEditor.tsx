@@ -51,6 +51,7 @@ export type CurrentDocumentAgentTools = {
     patchableMarkdown: string;
     patchBaseHash: string;
   };
+  markdownToDocument: (markdown: string) => TiptapDocument;
   previewPatch: (
     patch: ProposedDocumentPatch,
     actions?: {
@@ -836,6 +837,7 @@ export default function TiptapEditor({
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [title, setTitle] = useState(documentTitle(documentPath));
+  const [loadedDocumentPath, setLoadedDocumentPath] = useState<string | null>(null);
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const editorScrollRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<Editor | null>(null);
@@ -1069,13 +1071,15 @@ export default function TiptapEditor({
     async function loadDocument() {
       if (!editor) return;
 
+      loadedRef.current = false;
+      setLoadedDocumentPath(null);
+
       try {
         if (!window.learner) {
           setError("Documents are available in Electron.");
           return;
         }
 
-        loadedRef.current = false;
         const document = await window.learner.readDocument(documentPath);
 
         if (!ignore) {
@@ -1097,12 +1101,14 @@ export default function TiptapEditor({
             }
 
             loadedRef.current = true;
+            setLoadedDocumentPath(documentPath);
           });
 
           setError("");
         }
       } catch (loadError) {
         if (!ignore) {
+          setLoadedDocumentPath(null);
           setError(loadError instanceof Error ? loadError.message : "Failed to load document.");
         }
       }
@@ -1257,7 +1263,7 @@ export default function TiptapEditor({
   }, [documentPath, editor]);
 
   useEffect(() => {
-    if (!editor || !onAgentToolsChange) return;
+    if (!editor || !onAgentToolsChange || loadedDocumentPath !== documentPath) return;
 
     const setEditorPatchPreview = (preview: AiPatchDecorationState) => {
       editor.view.dispatch(editor.state.tr.setMeta(aiPatchPreviewPluginKey, preview));
@@ -1396,6 +1402,7 @@ export default function TiptapEditor({
       path: documentPath,
       title: documentTitle(documentPath),
       read: readDocument,
+      markdownToDocument: (markdown) => markdownToTiptapJson(editor, markdown) as TiptapDocument,
       previewPatch: (patch, actions) => {
         restoreActivePatchPreview();
 
@@ -1689,7 +1696,7 @@ export default function TiptapEditor({
       setEditorPatchPreview(null);
       onAgentToolsChange(documentPath, null);
     };
-  }, [documentPath, editor, onAgentToolsChange, resolvePatchPreview]);
+  }, [documentPath, editor, loadedDocumentPath, onAgentToolsChange, resolvePatchPreview]);
 
   return (
     <section className={`${active ? "block" : "hidden"} relative h-full min-h-0`}>

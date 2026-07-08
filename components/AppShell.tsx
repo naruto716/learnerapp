@@ -25,6 +25,20 @@ type WorkspaceState = {
   editorStates: Record<string, PersistedEditorState>;
 };
 
+function normalizeDocumentToolPath(documentPath: string) {
+  const trimmedPath = documentPath.trim().replace(/^\/+/, "");
+  if (!trimmedPath) return "";
+  return trimmedPath.toLowerCase().endsWith(".json") ? trimmedPath : `${trimmedPath}.json`;
+}
+
+function normalizeFolderPath(folderPath: string) {
+  return folderPath.trim().replace(/^\/+/, "").replace(/\/+$/g, "").replace(/\.json$/i, "");
+}
+
+function normalizeDeletedPath(documentPath: string, documentType: DocumentNode["type"]) {
+  return documentType === "folder" ? normalizeFolderPath(documentPath) : normalizeDocumentToolPath(documentPath);
+}
+
 function readWorkspaceState(): WorkspaceState {
   if (typeof window === "undefined") {
     return { openTabs: [], lastActivePath: null, editorStates: {} };
@@ -37,10 +51,17 @@ function readWorkspaceState(): WorkspaceState {
     }
 
     const parsed = JSON.parse(stored) as Partial<WorkspaceState>;
+    const rawEditorStates = parsed.editorStates ?? {};
+    const editorStates = Object.fromEntries(
+      Object.entries(rawEditorStates).map(([documentPath, state]) => [normalizeDocumentToolPath(documentPath), state]),
+    );
+
     return {
-      openTabs: Array.isArray(parsed.openTabs) ? parsed.openTabs : [],
-      lastActivePath: parsed.lastActivePath ?? null,
-      editorStates: parsed.editorStates ?? {},
+      openTabs: Array.isArray(parsed.openTabs)
+        ? parsed.openTabs.map(normalizeDocumentToolPath).filter(Boolean)
+        : [],
+      lastActivePath: parsed.lastActivePath ? normalizeDocumentToolPath(parsed.lastActivePath) : null,
+      editorStates,
     };
   } catch {
     return { openTabs: [], lastActivePath: null, editorStates: {} };
@@ -56,7 +77,12 @@ function replacePath(paths: string[], oldPath: string, newPath: string) {
 }
 
 function isDeletedDocumentPath(documentPath: string, deletedPath: string, deletedType: DocumentNode["type"]) {
-  return deletedType === "folder" ? documentPath.startsWith(`${deletedPath}/`) : documentPath === deletedPath;
+  const normalizedDocumentPath = normalizeDocumentToolPath(documentPath);
+  const normalizedDeletedPath = normalizeDeletedPath(deletedPath, deletedType);
+
+  return deletedType === "folder"
+    ? normalizedDocumentPath.startsWith(`${normalizedDeletedPath}/`)
+    : normalizedDocumentPath === normalizedDeletedPath;
 }
 
 function reorderList(items: string[], source: string, target: string, position: "before" | "after") {
@@ -92,8 +118,17 @@ export default function AppShell() {
   const [documentsVersion, setDocumentsVersion] = useState(0);
   const [workspaceLoaded, setWorkspaceLoaded] = useState(false);
   const restoredWorkspaceRef = useRef(false);
+  const openTabsRef = useRef<string[]>([]);
   const previousActiveDocumentPathRef = useRef<string | null>(activeDocumentPath);
   const editorAgentToolsRef = useRef<Record<string, CurrentDocumentAgentTools>>({});
+  const pendingEditorToolsRef = useRef<Record<string, Array<(tools: CurrentDocumentAgentTools | null) => void>>>({});
+
+  const updateOpenTabs = useCallback((update: (current: string[]) => string[]) => {
+    const nextTabs = update(openTabsRef.current);
+    openTabsRef.current = nextTabs;
+    setOpenTabs(nextTabs);
+    return nextTabs;
+  }, []);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -115,7 +150,7 @@ export default function AppShell() {
       isMounted = false;
       removeFullScreenListener?.();
     };
-  }, []);
+  }, [updateOpenTabs]);
 
   useEffect(() => {
     if (restoredWorkspaceRef.current) return;
@@ -123,6 +158,7 @@ export default function AppShell() {
 
     const workspace = readWorkspaceState();
     const timer = window.setTimeout(() => {
+      openTabsRef.current = workspace.openTabs;
       setOpenTabs(workspace.openTabs);
       setEditorStates(workspace.editorStates);
       setWorkspaceLoaded(true);
@@ -154,14 +190,14 @@ export default function AppShell() {
     if (!activeDocumentPath) return;
 
     const timer = window.setTimeout(() => {
-      setOpenTabs((current) => {
+      updateOpenTabs((current) => {
         if (current.includes(activeDocumentPath)) return current;
         return [...current, activeDocumentPath];
       });
     }, 0);
 
     return () => window.clearTimeout(timer);
-  }, [activeDocumentPath]);
+  }, [activeDocumentPath, updateOpenTabs]);
 
   useEffect(() => {
     if (previousActiveDocumentPathRef.current === activeDocumentPath) return;
@@ -182,11 +218,12 @@ export default function AppShell() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  }, [updateOpenTabs]);
 
   function openDocument(documentPath: string) {
-    setOpenTabs((current) => (current.includes(documentPath) ? current : [...current, documentPath]));
-    router.push(documentPathToRoute(documentPath));
+    const normalizedPath = normalizeDocumentToolPath(documentPath);
+    updateOpenTabs((current) => (current.includes(normalizedPath) ? current : [...current, normalizedPath]));
+    router.push(documentPathToRoute(normalizedPath));
   }
 
   function markDocumentsChanged() {
@@ -194,7 +231,7 @@ export default function AppShell() {
   }
 
   function handleDocumentMoved(oldPath: string, newPath: string) {
-    setOpenTabs((current) => replacePath(current, oldPath, newPath));
+    updateOpenTabs((current) => replacePath(current, oldPath, newPath));
     setEditorStates((current) => {
       const next = { ...current };
       for (const [path, state] of Object.entries(current)) {
@@ -214,7 +251,7 @@ export default function AppShell() {
   }
 
   function handleDocumentDeleted(deletedPath: string, deletedType: DocumentNode["type"]) {
-    setOpenTabs((current) => {
+    updateOpenTabs((current) => {
       const activeIndex = activeDocumentPath ? current.indexOf(activeDocumentPath) : -1;
       const nextTabs = current.filter((path) => !isDeletedDocumentPath(path, deletedPath, deletedType));
 
@@ -246,7 +283,7 @@ export default function AppShell() {
   }
 
   function handleDocumentRenamed(oldPath: string, newPath: string) {
-    setOpenTabs((current) => current.map((path) => (path === oldPath ? newPath : path)));
+    updateOpenTabs((current) => current.map((path) => (path === oldPath ? newPath : path)));
     setEditorStates((current) => {
       const next = { ...current };
       if (next[oldPath]) {
@@ -267,7 +304,7 @@ export default function AppShell() {
   }
 
   function closeTab(documentPath: string) {
-    setOpenTabs((current) => {
+    updateOpenTabs((current) => {
       const tabIndex = current.indexOf(documentPath);
       const nextTabs = current.filter((path) => path !== documentPath);
 
@@ -281,10 +318,17 @@ export default function AppShell() {
   }
 
   const updateEditorAgentTools = useCallback((documentPath: string, tools: CurrentDocumentAgentTools | null) => {
+    const normalizedPath = normalizeDocumentToolPath(documentPath);
+
     if (tools) {
-      editorAgentToolsRef.current[documentPath] = tools;
+      editorAgentToolsRef.current[normalizedPath] = tools;
+      const pendingResolvers = pendingEditorToolsRef.current[normalizedPath];
+      if (pendingResolvers?.length) {
+        delete pendingEditorToolsRef.current[normalizedPath];
+        pendingResolvers.forEach((resolve) => resolve(tools));
+      }
     } else {
-      delete editorAgentToolsRef.current[documentPath];
+      delete editorAgentToolsRef.current[normalizedPath];
     }
   }, []);
 
@@ -292,6 +336,40 @@ export default function AppShell() {
     if (!activeDocumentPath) return null;
     return editorAgentToolsRef.current[activeDocumentPath] ?? null;
   }, [activeDocumentPath]);
+
+  const getDocumentTools = useCallback((documentPath: string) => {
+    const normalizedPath = normalizeDocumentToolPath(documentPath);
+    return editorAgentToolsRef.current[normalizedPath] ?? null;
+  }, []);
+
+  const getOpenDocumentPaths = useCallback(() => openTabsRef.current, []);
+
+  const ensureDocumentTools = useCallback((documentPath: string) => {
+    const normalizedPath = normalizeDocumentToolPath(documentPath);
+    const existingTools = editorAgentToolsRef.current[normalizedPath];
+    if (existingTools) return Promise.resolve(existingTools);
+
+    updateOpenTabs((current) => (current.includes(normalizedPath) ? current : [...current, normalizedPath]));
+
+    return new Promise<CurrentDocumentAgentTools | null>((resolve) => {
+      let timeout = 0;
+      const resolver = (tools: CurrentDocumentAgentTools | null) => {
+        window.clearTimeout(timeout);
+        resolve(tools);
+      };
+
+      timeout = window.setTimeout(() => {
+        const pendingResolvers = pendingEditorToolsRef.current[normalizedPath] ?? [];
+        pendingEditorToolsRef.current[normalizedPath] = pendingResolvers.filter((pending) => pending !== resolver);
+        resolve(editorAgentToolsRef.current[normalizedPath] ?? null);
+      }, 4000);
+
+      pendingEditorToolsRef.current[normalizedPath] = [
+        ...(pendingEditorToolsRef.current[normalizedPath] ?? []),
+        resolver,
+      ];
+    });
+  }, [updateOpenTabs]);
 
   const getCurrentDocumentMarkdown = useCallback(() => {
     return getCurrentDocumentTools()?.read().markdown ?? null;
@@ -482,7 +560,7 @@ export default function AppShell() {
           openTabs={openTabs}
           onCloseTab={closeTab}
           onReorderTabs={(sourcePath, targetPath, position) => {
-            setOpenTabs((current) => reorderList(current, sourcePath, targetPath, position));
+            updateOpenTabs((current) => reorderList(current, sourcePath, targetPath, position));
           }}
           onSelectTab={openDocument}
           toggleSidebar={() => setIsSidebarOpen((isOpen) => !isOpen)}
@@ -547,10 +625,17 @@ export default function AppShell() {
         progress={knowledgeGraphProgress}
       />
       <ChatPanel
+        closeDocumentTab={(documentPath, documentType = "file") => {
+          handleDocumentDeleted(normalizeDeletedPath(documentPath, documentType), documentType);
+        }}
+        ensureDocumentTools={ensureDocumentTools}
         getCurrentDocumentTools={getCurrentDocumentTools}
+        getDocumentTools={getDocumentTools}
+        getOpenDocumentPaths={getOpenDocumentPaths}
         isOpen={isBubbleOpen}
         isSidebarOpen={isSidebarOpen}
         onClose={() => setIsBubbleOpen(false)}
+        onDocumentsChanged={markDocumentsChanged}
         onOpenDocument={openDocument}
       />
       <DocumentSearchDialog
