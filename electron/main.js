@@ -34,6 +34,7 @@ const {
   closeGraphDatabase,
   addConceptMentionToDocument,
   addRelationToDocument,
+  deleteConceptFromDocument,
   deleteDocumentGraph,
   deleteDocumentGraphTree,
   getDocumentGraph,
@@ -350,6 +351,11 @@ ipcMain.handle("graph:addConceptMention", async (_event, filePath, mentionReques
     ...mentionRequest,
     documentPath,
   });
+});
+
+ipcMain.handle("graph:deleteConceptFromDocument", async (_event, filePath, conceptId) => {
+  const documentPath = filePathWithExtension(filePath);
+  return deleteConceptFromDocument(documentPath, conceptId);
 });
 
 ipcMain.handle("graph:updateRelation", async (_event, filePath, relationUpdate) => {

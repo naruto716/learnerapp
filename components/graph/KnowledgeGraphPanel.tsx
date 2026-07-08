@@ -44,7 +44,9 @@ type KnowledgeGraphPanelProps = {
   onGraphChange: (graph: KnowledgeDocumentGraph) => void;
   onOpenDocument: (documentPath: string) => void;
   onRefresh: () => void;
+  onRefreshOpenTabs: () => void;
   open: boolean;
+  progress: KnowledgeGraphProgress | null;
 };
 
 type ConceptDialogMode = "create" | "edit";
@@ -273,6 +275,68 @@ function GraphHeaderButton({
   );
 }
 
+function markdownTextPreview(markdown: string) {
+  return markdown
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/!\[[^\]]*]\([^)]*\)/g, " ")
+    .replace(/\[([^\]]+)]\([^)]*\)/g, "$1")
+    .replace(/[#>*_\-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function mentionStudyText(mention: KnowledgeConceptMention) {
+  const contribution = mention.contribution?.trim();
+  if (contribution) return contribution;
+
+  const excerpt = markdownTextPreview(mention.excerptMarkdown);
+  return excerpt.length > 320 ? `${excerpt.slice(0, 320).trim()}...` : excerpt;
+}
+
+function ConceptAcrossNotes({
+  mentions,
+  node,
+  onOpenDocument,
+}: {
+  mentions: KnowledgeConceptMention[];
+  node: KnowledgeGraphNode;
+  onOpenDocument: (documentPath: string) => void;
+}) {
+  const usefulMentions = mentions.filter((mention) => mentionStudyText(mention));
+
+  if (usefulMentions.length > 1) {
+    return (
+      <section className="space-y-3 border-l border-white/12 pl-3">
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-white/35">Across notes</p>
+        {usefulMentions.map((mention, index) => (
+          <div className="space-y-1.5" key={`${mention.documentPath}-${mention.updatedAt}-${index}`}>
+            <div className="flex min-w-0 items-center gap-2">
+              <button
+                className="truncate text-left text-sm font-medium text-white/78 transition hover:text-white"
+                onClick={() => onOpenDocument(mention.documentPath)}
+                type="button"
+              >
+                {documentTitle(mention.documentPath)}
+              </button>
+              {mention.mentionType && (
+                <span className="shrink-0 rounded-full bg-white/[0.06] px-2 py-0.5 text-[10px] uppercase tracking-wide text-white/34">
+                  {mention.mentionType.replace(/_/g, " ")}
+                </span>
+              )}
+            </div>
+            <p className="text-sm leading-6 text-white/62">{mentionStudyText(mention)}</p>
+          </div>
+        ))}
+      </section>
+    );
+  }
+
+  if (!node.explanation) return null;
+
+  return <p className="border-l border-white/12 pl-3 text-sm leading-6 text-white/56">{node.explanation}</p>;
+}
+
 function GraphMention({
   mention,
   onOpenDocument,
@@ -294,10 +358,7 @@ function GraphMention({
       </summary>
       {mention.sectionTitle && <p className="mt-3 text-[11px] font-semibold uppercase tracking-wide text-white/35">{mention.sectionTitle}</p>}
       {mention.contribution && (
-        <div className="mt-3 rounded-lg bg-black/14 px-3 py-2">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-white/35">How this note fits</p>
-          <p className="mt-1 text-sm leading-6 text-white/72">{mention.contribution}</p>
-        </div>
+        <p className="mt-3 text-sm leading-6 text-white/72">{mention.contribution}</p>
       )}
       <div className="mt-3">
         <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-white/35">Source excerpt</p>
@@ -329,10 +390,14 @@ export default function KnowledgeGraphPanel({
   onGraphChange,
   onOpenDocument,
   onRefresh,
+  onRefreshOpenTabs,
   open,
+  progress,
 }: KnowledgeGraphPanelProps) {
   const [deleteConfirming, setDeleteConfirming] = useState(false);
+  const [conceptDeleteConfirming, setConceptDeleteConfirming] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+  const [isDeletingConcept, setIsDeletingConcept] = useState(false);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [nodePositions, setNodePositions] = useState<Map<number, GraphNodePosition>>(new Map());
   const [selectedNodeId, setSelectedNodeId] = useState<number | null>(null);
@@ -389,6 +454,7 @@ export default function KnowledgeGraphPanel({
   const selectedEdge = graph?.edges.find((edge) => edge.id === selectedEdgeId) ?? null;
   const selectedEdgeSource = graph?.nodes.find((node) => node.id === selectedEdge?.source) ?? null;
   const selectedEdgeTarget = graph?.nodes.find((node) => node.id === selectedEdge?.target) ?? null;
+  const progressPercent = progress?.total ? Math.round((progress.completed / progress.total) * 100) : 0;
   const selectedNodeMentions = selectedNode
     ? [...selectedNode.mentions].sort((first, second) => {
         if (first.documentPath === graph?.documentPath && second.documentPath !== graph?.documentPath) return -1;
@@ -504,6 +570,24 @@ export default function KnowledgeGraphPanel({
     }
   }
 
+  async function removeSelectedConceptFromCurrentNote() {
+    if (!graph || !selectedNode) return;
+
+    setEditError(null);
+    setIsDeletingConcept(true);
+    try {
+      const nextGraph = await window.learner?.deleteGraphConceptFromDocument(graph.documentPath, selectedNode.id);
+      if (nextGraph) onGraphChange(nextGraph);
+      setSelectedNodeId(null);
+      setSelectedEdgeId(null);
+      setConceptDeleteConfirming(false);
+    } catch (saveError) {
+      setEditError(saveError instanceof Error ? saveError.message : "Could not remove concept from this note.");
+    } finally {
+      setIsDeletingConcept(false);
+    }
+  }
+
   async function submitConnectionDialog() {
     if (!graph || !selectedNode) return;
 
@@ -594,6 +678,20 @@ export default function KnowledgeGraphPanel({
                 ? `${graph.nodes.length} concepts, ${graph.edges.length} relations`
                 : "Extract concepts and relations from this note"}
             </p>
+            {progress && (
+              <div className="mt-1.5 w-[220px] max-w-full">
+                <div className="h-1 overflow-hidden rounded-full bg-white/[0.08]">
+                  <div
+                    className="h-full rounded-full bg-white/55 transition-[width] duration-200"
+                    style={{ width: `${progressPercent}%` }}
+                  />
+                </div>
+                <p className="mt-1 truncate text-[11px] text-white/38">
+                  {progress.label} · {progress.completed}/{progress.total}
+                  {progress.failed > 0 ? ` · ${progress.failed} failed` : ""}
+                </p>
+              </div>
+            )}
           </div>
           {lastExtractionChanged !== null && (
             <span className="rounded-full bg-white/[0.07] px-2 py-1 text-[11px] text-white/46">
@@ -605,6 +703,10 @@ export default function KnowledgeGraphPanel({
         <div className="flex items-center gap-1">
           <GraphHeaderButton disabled={!graph} label="Add concept" onClick={openCreateConceptDialog}>
             <PlusIcon size={17} weight="bold" />
+          </GraphHeaderButton>
+
+          <GraphHeaderButton disabled={isLoading || isDeleting} label="Extract open tab graphs" onClick={onRefreshOpenTabs}>
+            <GraphIcon size={16} className={isLoading ? "animate-pulse" : ""} />
           </GraphHeaderButton>
 
           {deleteConfirming ? (
@@ -664,16 +766,19 @@ export default function KnowledgeGraphPanel({
               nodes={flowNodes}
               onEdgeClick={(_event, edge) => {
                 setEditError(null);
+                setConceptDeleteConfirming(false);
                 setSelectedNodeId(null);
                 setSelectedEdgeId(Number(edge.id));
               }}
               onNodeClick={(_event, node) => {
                 setEditError(null);
+                setConceptDeleteConfirming(false);
                 setSelectedEdgeId(null);
                 setSelectedNodeId(Number(node.id));
               }}
               onPaneClick={() => {
                 setEditError(null);
+                setConceptDeleteConfirming(false);
                 setSelectedEdgeId(null);
                 setSelectedNodeId(null);
               }}
@@ -708,6 +813,7 @@ export default function KnowledgeGraphPanel({
                     aria-label="Close graph inspector"
                     className={iconButtonClassName}
                     onClick={() => {
+                      setConceptDeleteConfirming(false);
                       setSelectedEdgeId(null);
                       setSelectedNodeId(null);
                     }}
@@ -731,9 +837,11 @@ export default function KnowledgeGraphPanel({
                         ) : (
                           <p className="text-sm text-white/42">No summary yet.</p>
                         )}
-                        {selectedNode.explanation && (
-                          <p className="border-l border-white/12 pl-3 text-sm leading-6 text-white/56">{selectedNode.explanation}</p>
-                        )}
+                        <ConceptAcrossNotes
+                          mentions={selectedNodeMentions}
+                          node={selectedNode}
+                          onOpenDocument={onOpenDocument}
+                        />
                         <div className="flex flex-wrap gap-2">
                           <button className={textButtonClassName} onClick={openEditConceptDialog} type="button">
                             <PencilSimpleIcon size={15} />
@@ -743,6 +851,38 @@ export default function KnowledgeGraphPanel({
                             <LinkIcon size={15} />
                             Add connection
                           </button>
+                          {selectedNode.inCurrentDocument && (
+                            conceptDeleteConfirming ? (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-red-300/10 px-1.5 py-1 text-xs text-red-100">
+                                <span className="px-1">Remove from this note?</span>
+                                <button
+                                  className="rounded-full px-2 py-1 text-white/45 transition hover:bg-white/[0.08] hover:text-white/85"
+                                  onClick={() => setConceptDeleteConfirming(false)}
+                                  type="button"
+                                >
+                                  Cancel
+                                </button>
+                                <button
+                                  className="rounded-full bg-red-200/90 px-2 py-1 font-medium text-red-950 transition hover:bg-red-100 disabled:opacity-45"
+                                  disabled={isDeletingConcept}
+                                  onClick={removeSelectedConceptFromCurrentNote}
+                                  type="button"
+                                >
+                                  Remove
+                                </button>
+                              </span>
+                            ) : (
+                              <button
+                                className={`${textButtonClassName} hover:text-red-100`}
+                                disabled={isDeletingConcept}
+                                onClick={() => setConceptDeleteConfirming(true)}
+                                type="button"
+                              >
+                                <TrashIcon size={15} />
+                                Remove from note
+                              </button>
+                            )
+                          )}
                         </div>
                       </section>
 

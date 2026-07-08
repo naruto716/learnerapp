@@ -73,6 +73,9 @@ contextBridge.exposeInMainWorld("learner", {
   addGraphConceptMention: (filePath, mentionRequest) => {
     return ipcRenderer.invoke("graph:addConceptMention", filePath, mentionRequest);
   },
+  deleteGraphConceptFromDocument: (filePath, conceptId) => {
+    return ipcRenderer.invoke("graph:deleteConceptFromDocument", filePath, conceptId);
+  },
   updateGraphRelation: (filePath, relationUpdate) => {
     return ipcRenderer.invoke("graph:updateRelation", filePath, relationUpdate);
   },

@@ -150,6 +150,13 @@ declare global {
     graph: KnowledgeDocumentGraph;
   };
 
+  type KnowledgeGraphProgress = {
+    completed: number;
+    failed: number;
+    label: string;
+    total: number;
+  };
+
   interface Window {
     learner?: {
       platform: NodeJS.Platform;
@@ -199,6 +206,7 @@ declare global {
         filePath: string,
         mentionRequest: KnowledgeConceptMentionRequest,
       ) => Promise<KnowledgeDocumentGraph>;
+      deleteGraphConceptFromDocument: (filePath: string, conceptId: number) => Promise<KnowledgeDocumentGraph>;
       updateGraphRelation: (filePath: string, relationUpdate: KnowledgeRelationUpdate) => Promise<KnowledgeDocumentGraph>;
       addGraphRelation: (filePath: string, relationRequest: KnowledgeRelationCreateRequest) => Promise<KnowledgeDocumentGraph>;
       isFullScreen: () => Promise<boolean>;

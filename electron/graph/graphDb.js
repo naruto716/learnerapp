@@ -256,9 +256,9 @@ function upsertConcept(concept, now) {
       `
         UPDATE concepts
         SET name = COALESCE(NULLIF(?, ''), name),
-            type = COALESCE(NULLIF(?, ''), type),
-            summary = COALESCE(NULLIF(?, ''), summary),
-            explanation = COALESCE(NULLIF(?, ''), explanation),
+            type = COALESCE(type, NULLIF(?, '')),
+            summary = COALESCE(summary, NULLIF(?, '')),
+            explanation = COALESCE(explanation, NULLIF(?, '')),
             confidence = MAX(confidence, ?),
             updated_at = ?
         WHERE id = ?
@@ -297,7 +297,7 @@ function upsertConcept(concept, now) {
   return result.lastInsertRowid;
 }
 
-function updateConceptDetails(conceptId, concept, now) {
+function updateConceptDetails(conceptId, concept, now, { allowRename = false, overwriteExistingDetails = false } = {}) {
   const existingConcept = getConceptById(conceptId);
   if (!existingConcept) return null;
 
@@ -306,16 +306,16 @@ function updateConceptDetails(conceptId, concept, now) {
   const conflictingConcept = normalizedName
     ? getGraphDatabase().prepare("SELECT id FROM concepts WHERE normalized_name = ? AND id != ?").get(normalizedName, conceptId)
     : null;
-  const shouldRename = normalizedName && !conflictingConcept;
+  const shouldRename = allowRename && normalizedName && !conflictingConcept;
 
   getGraphDatabase().prepare(
     `
       UPDATE concepts
       SET name = CASE WHEN ? THEN ? ELSE name END,
           normalized_name = CASE WHEN ? THEN ? ELSE normalized_name END,
-          type = COALESCE(NULLIF(?, ''), type),
-          summary = COALESCE(NULLIF(?, ''), summary),
-          explanation = COALESCE(NULLIF(?, ''), explanation),
+          type = CASE WHEN ? THEN COALESCE(NULLIF(?, ''), type) ELSE COALESCE(type, NULLIF(?, '')) END,
+          summary = CASE WHEN ? THEN COALESCE(NULLIF(?, ''), summary) ELSE COALESCE(summary, NULLIF(?, '')) END,
+          explanation = CASE WHEN ? THEN COALESCE(NULLIF(?, ''), explanation) ELSE COALESCE(explanation, NULLIF(?, '')) END,
           confidence = MAX(confidence, ?),
           updated_at = ?
       WHERE id = ?
@@ -325,8 +325,14 @@ function updateConceptDetails(conceptId, concept, now) {
     name,
     shouldRename ? 1 : 0,
     normalizedName,
+    overwriteExistingDetails ? 1 : 0,
     String(concept.type || ""),
+    String(concept.type || ""),
+    overwriteExistingDetails ? 1 : 0,
     String(concept.summary || ""),
+    String(concept.summary || ""),
+    overwriteExistingDetails ? 1 : 0,
+    String(concept.explanation || ""),
     String(concept.explanation || ""),
     clampConfidence(concept.confidence),
     now,
@@ -810,13 +816,7 @@ function mergeConcepts(targetConceptId, sourceConceptIds, now) {
   }
 }
 
-function deleteDocumentGraphRows(documentPath) {
-  const db = getGraphDatabase();
-  const existingConceptMentions = db.prepare("SELECT COUNT(*) AS count FROM concept_mentions WHERE document_path = ?").get(documentPath).count;
-  const existingRelationEvidence = db.prepare("SELECT COUNT(*) AS count FROM relation_evidence WHERE document_path = ?").get(documentPath).count;
-  db.prepare("DELETE FROM concept_mentions WHERE document_path = ?").run(documentPath);
-  db.prepare("DELETE FROM relation_evidence WHERE document_path = ?").run(documentPath);
-  db.prepare("DELETE FROM graph_extraction_runs WHERE document_path = ?").run(documentPath);
+function pruneGraphOrphans(db) {
   db.prepare("DELETE FROM concept_relations WHERE id NOT IN (SELECT DISTINCT relation_id FROM relation_evidence)").run();
   db.prepare(`
     DELETE FROM concepts
@@ -824,6 +824,17 @@ function deleteDocumentGraphRows(documentPath) {
       AND id NOT IN (SELECT DISTINCT from_concept_id FROM concept_relations)
       AND id NOT IN (SELECT DISTINCT to_concept_id FROM concept_relations)
   `).run();
+  db.prepare("DELETE FROM concept_embeddings WHERE concept_id NOT IN (SELECT id FROM concepts)").run();
+}
+
+function deleteDocumentGraphRows(documentPath) {
+  const db = getGraphDatabase();
+  const existingConceptMentions = db.prepare("SELECT COUNT(*) AS count FROM concept_mentions WHERE document_path = ?").get(documentPath).count;
+  const existingRelationEvidence = db.prepare("SELECT COUNT(*) AS count FROM relation_evidence WHERE document_path = ?").get(documentPath).count;
+  db.prepare("DELETE FROM concept_mentions WHERE document_path = ?").run(documentPath);
+  db.prepare("DELETE FROM relation_evidence WHERE document_path = ?").run(documentPath);
+  db.prepare("DELETE FROM graph_extraction_runs WHERE document_path = ?").run(documentPath);
+  pruneGraphOrphans(db);
   graphDebug("db.delete_document_rows", {
     documentPath,
     removedConceptMentions: existingConceptMentions,
@@ -920,12 +931,16 @@ function saveResolvedDocumentGraph({ documentHash, documentPath, graphBuild, mod
           : null;
       const exactConcept = findConceptByNameOrAlias(concept.name, concept.aliases || []);
       const absorbedConcept = absorbedConceptIds.map(getConceptById).find(Boolean) ?? null;
+      const usesExistingConcept = Boolean(existingConcept || exactConcept);
       const targetConceptId =
         existingConcept?.id ?? exactConcept?.id ?? absorbedConcept?.id ?? upsertConcept(concept, now);
 
       if (!targetConceptId) continue;
 
-      updateConceptDetails(targetConceptId, concept, now);
+      updateConceptDetails(targetConceptId, concept, now, {
+        allowRename: !usesExistingConcept,
+        overwriteExistingDetails: !usesExistingConcept,
+      });
       mergeConcepts(
         targetConceptId,
         absorbedConceptIds.filter((conceptId) => conceptId !== targetConceptId),
@@ -1296,6 +1311,56 @@ function addConceptMentionToDocument({ conceptId, concept, contribution, documen
   return getDocumentGraph(documentPath);
 }
 
+function deleteConceptFromDocument(documentPath, conceptId) {
+  const id = Number(conceptId);
+  if (!Number.isFinite(id) || !getConceptById(id)) {
+    throw new Error("Concept not found.");
+  }
+
+  const db = getGraphDatabase();
+  const elapsed = startTimer();
+  graphLog("db.delete_concept_from_document.start", {
+    conceptId: id,
+    documentPath,
+  });
+
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const removedRelationEvidence = db
+      .prepare(
+        `
+          DELETE FROM relation_evidence
+          WHERE document_path = ?
+            AND relation_id IN (
+              SELECT id
+              FROM concept_relations
+              WHERE from_concept_id = ? OR to_concept_id = ?
+            )
+        `,
+      )
+      .run(documentPath, id, id).changes;
+    const removedConceptMentions = db
+      .prepare("DELETE FROM concept_mentions WHERE document_path = ? AND concept_id = ?")
+      .run(documentPath, id).changes;
+
+    pruneGraphOrphans(db);
+    db.exec("COMMIT");
+
+    graphLog("db.delete_concept_from_document.done", {
+      conceptId: id,
+      documentPath,
+      durationMs: elapsed(),
+      removedConceptMentions,
+      removedRelationEvidence,
+    });
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+
+  return getDocumentGraph(documentPath);
+}
+
 function updateRelation({ explanation, relation, relationId }) {
   const id = Number(relationId);
   const cleanRelation = String(relation || "").trim();
@@ -1431,7 +1496,7 @@ function deleteDocumentGraphTree(folderPath) {
     db.prepare("DELETE FROM concept_mentions WHERE document_path LIKE ?").run(prefix);
     db.prepare("DELETE FROM relation_evidence WHERE document_path LIKE ?").run(prefix);
     db.prepare("DELETE FROM graph_extraction_runs WHERE document_path LIKE ?").run(prefix);
-    db.prepare("DELETE FROM concept_relations WHERE id NOT IN (SELECT DISTINCT relation_id FROM relation_evidence)").run();
+    pruneGraphOrphans(db);
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");
@@ -1462,6 +1527,7 @@ function replaceDocumentGraphPath(oldPath, newPath) {
 
 module.exports = {
   closeGraphDatabase,
+  deleteConceptFromDocument,
   deleteDocumentGraph,
   deleteDocumentGraphTree,
   getDocumentGraph,

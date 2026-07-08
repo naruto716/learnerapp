@@ -1,6 +1,6 @@
 const { graphError, graphLog, startTimer } = require("./graphLog");
 
-const graphPipelineVersion = "concept-resolver-v4";
+const graphPipelineVersion = "concept-resolver-v6";
 const defaultGraphModel = "gpt-5.3-codex-spark";
 const defaultGraphBaseUrl = "http://127.0.0.1:8317/v1";
 const defaultProxyApiKey = "sk-cliproxy-michael-2026";

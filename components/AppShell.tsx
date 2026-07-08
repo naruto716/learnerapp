@@ -17,6 +17,7 @@ import ChatBubble from "./ai/ChatBubble";
 import ChatPanel from "./ai/ChatPanel";
 
 const workspaceStorageKey = "learner.workspace.v1";
+const graphExtractionConcurrency = 3;
 
 type WorkspaceState = {
   openTabs: string[];
@@ -85,11 +86,13 @@ export default function AppShell() {
   const [isKnowledgeGraphDeleting, setIsKnowledgeGraphDeleting] = useState(false);
   const [knowledgeGraph, setKnowledgeGraph] = useState<KnowledgeDocumentGraph | null>(null);
   const [knowledgeGraphError, setKnowledgeGraphError] = useState<string | null>(null);
+  const [knowledgeGraphProgress, setKnowledgeGraphProgress] = useState<KnowledgeGraphProgress | null>(null);
   const [lastKnowledgeGraphExtractionChanged, setLastKnowledgeGraphExtractionChanged] = useState<boolean | null>(null);
   const [editorStates, setEditorStates] = useState<Record<string, PersistedEditorState>>({});
   const [documentsVersion, setDocumentsVersion] = useState(0);
   const [workspaceLoaded, setWorkspaceLoaded] = useState(false);
   const restoredWorkspaceRef = useRef(false);
+  const previousActiveDocumentPathRef = useRef<string | null>(activeDocumentPath);
   const editorAgentToolsRef = useRef<Record<string, CurrentDocumentAgentTools>>({});
 
   useEffect(() => {
@@ -158,6 +161,15 @@ export default function AppShell() {
     }, 0);
 
     return () => window.clearTimeout(timer);
+  }, [activeDocumentPath]);
+
+  useEffect(() => {
+    if (previousActiveDocumentPathRef.current === activeDocumentPath) return;
+
+    previousActiveDocumentPathRef.current = activeDocumentPath;
+    setIsKnowledgeGraphOpen(false);
+    setKnowledgeGraphError(null);
+    setLastKnowledgeGraphExtractionChanged(null);
   }, [activeDocumentPath]);
 
   useEffect(() => {
@@ -312,6 +324,12 @@ export default function AppShell() {
 
     setKnowledgeGraph((current) => (current?.documentPath === documentSnapshot.path ? current : null));
     setIsKnowledgeGraphLoading(true);
+    setKnowledgeGraphProgress({
+      completed: 0,
+      failed: 0,
+      label: "Extracting current note",
+      total: 1,
+    });
 
     try {
       const result = await window.learner?.extractDocumentGraph(documentSnapshot.path, documentSnapshot.markdown);
@@ -321,12 +339,105 @@ export default function AppShell() {
 
       setKnowledgeGraph(result.graph);
       setLastKnowledgeGraphExtractionChanged(result.extracted);
+      setKnowledgeGraphProgress({
+        completed: 1,
+        failed: 0,
+        label: result.extracted ? "Graph updated" : "Graph already current",
+        total: 1,
+      });
     } catch (error) {
+      setKnowledgeGraphProgress({
+        completed: 1,
+        failed: 1,
+        label: "Graph extraction failed",
+        total: 1,
+      });
       setKnowledgeGraphError(error instanceof Error ? error.message : "Graph extraction failed.");
     } finally {
       setIsKnowledgeGraphLoading(false);
+      window.setTimeout(() => {
+        setKnowledgeGraphProgress(null);
+      }, 900);
     }
   }, [activeDocumentPath, getCurrentDocumentTools]);
+
+  const extractOpenTabGraphs = useCallback(async () => {
+    const snapshots = openTabs
+      .map((documentPath) => editorAgentToolsRef.current[documentPath]?.read())
+      .filter((snapshot): snapshot is ReturnType<CurrentDocumentAgentTools["read"]> => Boolean(snapshot?.markdown.trim()));
+
+    if (snapshots.length === 0) {
+      setKnowledgeGraphError("Open at least one non-empty document before extracting open tab graphs.");
+      return;
+    }
+
+    setIsKnowledgeGraphOpen(true);
+    setKnowledgeGraphError(null);
+    setIsKnowledgeGraphLoading(true);
+    setKnowledgeGraphProgress({
+      completed: 0,
+      failed: 0,
+      label: `Extracting ${snapshots.length} open tab${snapshots.length === 1 ? "" : "s"}`,
+      total: snapshots.length,
+    });
+
+    let nextIndex = 0;
+    let completed = 0;
+    let failed = 0;
+    const activeGraphResultRef: { current: KnowledgeGraphExtractionResult | null } = { current: null };
+
+    async function worker() {
+      while (nextIndex < snapshots.length) {
+        const snapshot = snapshots[nextIndex];
+        nextIndex += 1;
+
+        try {
+          const result = await window.learner?.extractDocumentGraph(snapshot.path, snapshot.markdown);
+          if (!result) {
+            throw new Error("Graph extraction is not available in this renderer.");
+          }
+
+          if (snapshot.path === activeDocumentPath) {
+            activeGraphResultRef.current = result;
+          }
+        } catch {
+          failed += 1;
+        } finally {
+          completed += 1;
+          setKnowledgeGraphProgress({
+            completed,
+            failed,
+            label: `Extracting ${snapshots.length} open tab${snapshots.length === 1 ? "" : "s"}`,
+            total: snapshots.length,
+          });
+        }
+      }
+    }
+
+    try {
+      await Promise.all(
+        Array.from({ length: Math.min(graphExtractionConcurrency, snapshots.length) }, () => worker()),
+      );
+
+      if (activeGraphResultRef.current) {
+        setKnowledgeGraph(activeGraphResultRef.current.graph);
+        setLastKnowledgeGraphExtractionChanged(activeGraphResultRef.current.extracted);
+      } else if (activeDocumentPath) {
+        const graph = await window.learner?.getDocumentGraph(activeDocumentPath);
+        if (graph) setKnowledgeGraph(graph);
+        setLastKnowledgeGraphExtractionChanged(null);
+      }
+
+      if (failed > 0) {
+        setKnowledgeGraphError(`${failed} graph extraction${failed === 1 ? "" : "s"} failed.`);
+      }
+    } finally {
+      setIsKnowledgeGraphLoading(false);
+      window.setTimeout(() => {
+        setKnowledgeGraphProgress(null);
+      }, 900);
+    }
+  }, [activeDocumentPath, openTabs]);
 
   const deleteKnowledgeGraph = useCallback(async () => {
     if (!activeDocumentPath) return;
@@ -431,7 +542,9 @@ export default function AppShell() {
         onGraphChange={setKnowledgeGraph}
         onOpenDocument={openDocument}
         onRefresh={openKnowledgeGraph}
+        onRefreshOpenTabs={extractOpenTabGraphs}
         open={isKnowledgeGraphOpen}
+        progress={knowledgeGraphProgress}
       />
       <ChatPanel
         getCurrentDocumentTools={getCurrentDocumentTools}
