@@ -15,7 +15,6 @@ const {
 } = require("./graphModel");
 const { graphDebug, graphError, graphLog, graphWarn, hashPreview, startTimer } = require("./graphLog");
 
-const maxCandidateConcepts = 18;
 const maxResolutionCandidates = 8;
 const resolverConcurrency = 4;
 
@@ -38,7 +37,7 @@ const candidateConceptSchema = z
 
 const candidateExtractionSchema = z
   .object({
-    concepts: z.array(candidateConceptSchema).max(maxCandidateConcepts),
+    concepts: z.array(candidateConceptSchema),
   })
   .strict();
 
@@ -189,7 +188,6 @@ async function requestCandidateConcepts({ documentPath, markdown }) {
   graphLog("candidate_extraction.start", {
     documentPath,
     markdownChars: markdown.length,
-    maxCandidateConcepts,
   });
 
   const response = await requestStructuredJson({
@@ -207,7 +205,11 @@ async function requestCandidateConcepts({ documentPath, markdown }) {
           "If a specific detail appears, fold it into the summary of a broader concept when possible.",
           "A good concept name is something a learner would search for or compare across notes, such as TCP reliability, UDP reliability tradeoff, transport checksums, handshake protocols, congestion control, or HTTP over transport protocols.",
           "A bad concept name is a raw implementation detail with no broader study value.",
-          `Return at most ${maxCandidateConcepts} concepts.`,
+          "Choose the number of concepts based on the note's length and density. Short focused notes may need only a few concepts; long dense notes may need many more.",
+          "Do not pad the graph with weak concepts, but do not omit important high-level ideas just because there are many of them.",
+          "Example: a short note only defining TCP vs UDP might extract TCP reliability, UDP best-effort delivery, and reliability-latency tradeoff.",
+          "Example: a long networking note covering TCP setup, reliability, flow control, congestion control, teardown, UDP, checksums, and HTTP should extract each of those reusable study topics when the note gives meaningful detail.",
+          "Example: a long math note with definitions, theorems, proof techniques, worked examples, and applications should extract the reusable definitions, theorem ideas, proof methods, and application concepts that a learner would review or connect across notes.",
           "Each concept must include note-grounded excerptMarkdown and a concise learner-facing summary.",
           "summary must define the concept or explain its role in the note. Do not describe your extraction process.",
           "noteContribution is shown as study details under the source note.",
