@@ -1,48 +1,46 @@
 const { graphError, graphLog, startTimer } = require("./graphLog");
+const { getAiSettings } = require("../aiSettings");
 
 const graphPipelineVersion = "concept-resolver-v6";
-const defaultGraphModel = "gpt-5.3-codex-spark";
-const defaultGraphBaseUrl = "http://127.0.0.1:8317/v1";
-const defaultProxyApiKey = "sk-cliproxy-michael-2026";
-const defaultEmbeddingModel = "text-embedding-3-small";
 
-function isLocalProxyBaseUrl(baseUrl) {
-  return /^https?:\/\/(127\.0\.0\.1|localhost):8317(\/|$)/i.test(baseUrl);
-}
-
-function getGraphModelConfig() {
-  const baseUrl = String(
-    process.env.LEARNER_GRAPH_BASE_URL ||
-      process.env.LEARNER_AI_BASE_URL ||
-      process.env.OPENAI_BASE_URL ||
-      defaultGraphBaseUrl,
-  ).replace(/\/+$/g, "");
-  const apiKey = isLocalProxyBaseUrl(baseUrl)
-    ? process.env.LEARNER_GRAPH_API_KEY || process.env.LEARNER_AI_API_KEY || defaultProxyApiKey
-    : process.env.LEARNER_GRAPH_API_KEY ||
+function getGraphModelConfig(settings = {}) {
+  const aiSettings = getAiSettings({
+    baseUrl: process.env.LEARNER_GRAPH_BASE_URL || process.env.LEARNER_AI_BASE_URL || process.env.OPENAI_BASE_URL,
+    apiKey:
+      process.env.LEARNER_GRAPH_API_KEY ||
       process.env.LEARNER_AI_API_KEY ||
       process.env.OPENAI_API_KEY ||
-      process.env.LEARNER_OPENAI_API_KEY ||
-      defaultProxyApiKey;
+      process.env.LEARNER_OPENAI_API_KEY,
+    graphModel: process.env.LEARNER_GRAPH_MODEL || process.env.LEARNER_AI_MODEL,
+    ...settings,
+  });
+  const model = aiSettings.graphModel;
 
   return {
-    apiKey: String(apiKey || "").trim(),
-    baseUrl,
-    cacheModel: `${String(process.env.LEARNER_GRAPH_MODEL || process.env.LEARNER_AI_MODEL || defaultGraphModel).trim()}:${graphPipelineVersion}`,
-    model: String(process.env.LEARNER_GRAPH_MODEL || process.env.LEARNER_AI_MODEL || defaultGraphModel).trim(),
+    apiKey: aiSettings.apiKey,
+    baseUrl: aiSettings.baseUrl,
+    cacheModel: `${model}:${graphPipelineVersion}`,
+    model,
   };
 }
 
-function getGraphEmbeddingConfig() {
+function getGraphEmbeddingConfig(settings = {}) {
+  const aiSettings = getAiSettings({
+    baseUrl: process.env.OPENAI_BASE_URL,
+    apiKey: process.env.OPENAI_API_KEY || process.env.LEARNER_OPENAI_API_KEY,
+    embeddingModel: process.env.LEARNER_GRAPH_EMBEDDING_MODEL,
+    ...settings,
+  });
+
   return {
-    apiKey: String(process.env.OPENAI_API_KEY || process.env.LEARNER_OPENAI_API_KEY || "").trim(),
-    baseUrl: String(process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/+$/g, ""),
-    model: String(process.env.LEARNER_GRAPH_EMBEDDING_MODEL || defaultEmbeddingModel).trim(),
+    apiKey: aiSettings.apiKey,
+    baseUrl: aiSettings.baseUrl,
+    model: aiSettings.embeddingModel,
   };
 }
 
-async function requestStructuredJson({ jsonSchema, messages, schemaName, temperature = 0.1, timeoutMs = 120_000 }) {
-  const config = getGraphModelConfig();
+async function requestStructuredJson({ jsonSchema, messages, schemaName, settings, temperature = 0.1, timeoutMs = 120_000 }) {
+  const config = getGraphModelConfig(settings);
 
   if (!config.apiKey) {
     throw new Error("Graph extraction API key is not configured.");
@@ -116,8 +114,8 @@ async function requestStructuredJson({ jsonSchema, messages, schemaName, tempera
   }
 }
 
-async function requestConceptEmbeddings(input) {
-  const config = getGraphEmbeddingConfig();
+async function requestConceptEmbeddings(input, settings) {
+  const config = getGraphEmbeddingConfig(settings);
   const values = Array.isArray(input) ? input : [input];
 
   if (!config.apiKey) {

@@ -46,17 +46,26 @@ contextBridge.exposeInMainWorld("learner", {
   rebuildDocumentSearchIndex: () => {
     return ipcRenderer.invoke("document:rebuildSearchIndex");
   },
-  getDocumentEmbeddingStatus: () => {
-    return ipcRenderer.invoke("document:embeddingStatus");
+  configureAi: (settings) => {
+    return ipcRenderer.invoke("ai:configure", settings);
   },
-  rebuildDocumentEmbeddings: () => {
-    return ipcRenderer.invoke("document:rebuildEmbeddings");
+  listAiModels: (settings) => {
+    return ipcRenderer.invoke("ai:listModels", settings);
   },
-  semanticSearchDocuments: (query, limit) => {
-    return ipcRenderer.invoke("document:semanticSearch", query, limit);
+  generateImage: (request) => {
+    return ipcRenderer.invoke("ai:generateImage", request);
   },
-  extractDocumentGraph: (filePath, markdown) => {
-    return ipcRenderer.invoke("graph:extractDocumentGraph", filePath, markdown);
+  getDocumentEmbeddingStatus: (settings) => {
+    return ipcRenderer.invoke("document:embeddingStatus", settings);
+  },
+  rebuildDocumentEmbeddings: (settings) => {
+    return ipcRenderer.invoke("document:rebuildEmbeddings", settings);
+  },
+  semanticSearchDocuments: (query, limit, settings) => {
+    return ipcRenderer.invoke("document:semanticSearch", query, limit, settings);
+  },
+  extractDocumentGraph: (filePath, markdown, settings) => {
+    return ipcRenderer.invoke("graph:extractDocumentGraph", filePath, markdown, settings);
   },
   getDocumentGraph: (filePath) => {
     return ipcRenderer.invoke("graph:getDocumentGraph", filePath);
@@ -67,8 +76,8 @@ contextBridge.exposeInMainWorld("learner", {
   searchGraphConcepts: (query, limit) => {
     return ipcRenderer.invoke("graph:searchConcepts", query, limit);
   },
-  searchRelatedGraphConcepts: (concept, limit) => {
-    return ipcRenderer.invoke("graph:searchRelatedConcepts", concept, limit);
+  searchRelatedGraphConcepts: (concept, limit, settings) => {
+    return ipcRenderer.invoke("graph:searchRelatedConcepts", concept, limit, settings);
   },
   updateGraphConcept: (filePath, conceptUpdate) => {
     return ipcRenderer.invoke("graph:updateConcept", filePath, conceptUpdate);

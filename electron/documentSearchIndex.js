@@ -4,10 +4,10 @@ const fsSync = require("fs");
 const fs = require("fs/promises");
 const path = require("path");
 const { DatabaseSync } = require("node:sqlite");
+const { getAiSettings } = require("./aiSettings");
 
 const databaseFileName = "learner.sqlite";
 const orderFileName = ".documents-order.json";
-const embeddingModel = "text-embedding-3-small";
 const embeddingBatchSize = 64;
 const maxChunkCharacters = 2800;
 const chunkOverlapCharacters = 250;
@@ -396,18 +396,18 @@ function searchIndexedDocuments(query, limit = 20) {
   }
 }
 
-function getEmbeddingApiKey() {
-  return String(process.env.OPENAI_API_KEY || process.env.LEARNER_OPENAI_API_KEY || "").trim();
-}
-
-function getEmbeddingBaseUrl() {
-  return String(process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/+$/g, "");
-}
-
-function getEmbeddingConfig() {
+function getEmbeddingConfig(settings) {
+  const aiSettings = getAiSettings({
+    apiKey: process.env.OPENAI_API_KEY || process.env.LEARNER_OPENAI_API_KEY,
+    baseUrl: process.env.OPENAI_BASE_URL,
+    embeddingModel: process.env.LEARNER_GRAPH_EMBEDDING_MODEL,
+    ...settings,
+  });
   return {
-    configured: Boolean(getEmbeddingApiKey()),
-    model: embeddingModel,
+    apiKey: aiSettings.apiKey,
+    baseUrl: aiSettings.baseUrl,
+    configured: Boolean(aiSettings.apiKey),
+    model: aiSettings.embeddingModel,
   };
 }
 
@@ -422,6 +422,7 @@ function queueDocumentEmbedding(documentPath) {
 }
 
 function queueMissingDocumentEmbeddings() {
+  const { model } = getEmbeddingConfig();
   const rows = getSearchDatabase()
     .prepare(
       `
@@ -433,7 +434,7 @@ function queueMissingDocumentEmbeddings() {
         WHERE e.chunk_hash IS NULL
       `,
     )
-    .all(embeddingModel);
+    .all(model);
 
   rows.forEach((row) => queueDocumentEmbedding(row.path));
 }
@@ -443,7 +444,8 @@ function queueAllDocumentEmbeddings() {
   rows.forEach((row) => queueDocumentEmbedding(row.path));
 }
 
-function getPendingEmbeddingChunks(documentPath) {
+function getPendingEmbeddingChunks(documentPath, settings) {
+  const { model } = getEmbeddingConfig(settings);
   return getSearchDatabase()
     .prepare(
       `
@@ -459,7 +461,7 @@ function getPendingEmbeddingChunks(documentPath) {
         LIMIT ?
       `,
     )
-    .all(embeddingModel, documentPath, embeddingBatchSize);
+    .all(model, documentPath, embeddingBatchSize);
 }
 
 function vectorToBuffer(vector) {
@@ -491,13 +493,14 @@ function cosineSimilarity(a, b) {
   return dotProduct(a, b) / denominator;
 }
 
-async function requestEmbeddings(input) {
-  const apiKey = getEmbeddingApiKey();
+async function requestEmbeddings(input, settings) {
+  const config = getEmbeddingConfig(settings);
+  const apiKey = config.apiKey;
   if (!apiKey) {
     throw new Error("OPENAI_API_KEY is not set.");
   }
 
-  const response = await fetch(`${getEmbeddingBaseUrl()}/embeddings`, {
+  const response = await fetch(`${config.baseUrl}/embeddings`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -505,7 +508,7 @@ async function requestEmbeddings(input) {
     },
     body: JSON.stringify({
       input,
-      model: embeddingModel,
+      model: config.model,
     }),
     signal: AbortSignal.timeout(45_000),
   });
@@ -526,8 +529,9 @@ async function requestEmbeddings(input) {
     .map((item) => item.embedding);
 }
 
-function saveChunkEmbeddings(chunks, embeddings) {
+function saveChunkEmbeddings(chunks, embeddings, settings) {
   const db = getSearchDatabase();
+  const { model } = getEmbeddingConfig(settings);
   const insertEmbedding = db.prepare(`
     INSERT INTO chunk_embeddings(chunk_hash, model, dimensions, embedding, updated_at)
     VALUES (?, ?, ?, ?, ?)
@@ -543,7 +547,7 @@ function saveChunkEmbeddings(chunks, embeddings) {
     chunks.forEach((chunk, index) => {
       const embedding = embeddings[index];
       if (!Array.isArray(embedding) || embedding.length === 0) return;
-      insertEmbedding.run(chunk.chunk_hash, embeddingModel, embedding.length, vectorToBuffer(embedding), updatedAt);
+      insertEmbedding.run(chunk.chunk_hash, model, embedding.length, vectorToBuffer(embedding), updatedAt);
     });
     db.exec("COMMIT");
   } catch (error) {
@@ -552,20 +556,20 @@ function saveChunkEmbeddings(chunks, embeddings) {
   }
 }
 
-async function embedMissingChunksForDocument(documentPath) {
+async function embedMissingChunksForDocument(documentPath, settings) {
   while (true) {
-    const chunks = getPendingEmbeddingChunks(documentPath);
+    const chunks = getPendingEmbeddingChunks(documentPath, settings);
     if (chunks.length === 0) return;
 
-    const embeddings = await requestEmbeddings(chunks.map((chunk) => chunk.text));
-    saveChunkEmbeddings(chunks, embeddings);
+    const embeddings = await requestEmbeddings(chunks.map((chunk) => chunk.text), settings);
+    saveChunkEmbeddings(chunks, embeddings, settings);
   }
 }
 
-async function processEmbeddingQueue() {
+async function processEmbeddingQueue(settings) {
   if (embeddingWorkerRunning) return;
 
-  const apiKey = getEmbeddingApiKey();
+  const apiKey = getEmbeddingConfig(settings).apiKey;
   if (!apiKey) {
     lastEmbeddingError = "OPENAI_API_KEY is not set.";
     if (!missingEmbeddingKeyWarned && embeddingQueue.size > 0) {
@@ -583,7 +587,7 @@ async function processEmbeddingQueue() {
     while (embeddingQueue.size > 0) {
       const [documentPath] = embeddingQueue;
       embeddingQueue.delete(documentPath);
-      await embedMissingChunksForDocument(documentPath);
+      await embedMissingChunksForDocument(documentPath, settings);
     }
   } catch (error) {
     lastEmbeddingError = error instanceof Error ? error.message : "Document embedding failed.";
@@ -593,8 +597,9 @@ async function processEmbeddingQueue() {
   }
 }
 
-function getDocumentEmbeddingStatus() {
+function getDocumentEmbeddingStatus(settings) {
   const db = getSearchDatabase();
+  const config = getEmbeddingConfig(settings);
   const chunks = db.prepare("SELECT COUNT(*) AS count FROM document_chunks").get().count;
   const embeddedChunks = db
     .prepare(
@@ -606,10 +611,11 @@ function getDocumentEmbeddingStatus() {
           AND e.model = ?
       `,
     )
-    .get(embeddingModel).count;
+    .get(config.model).count;
 
   return {
-    ...getEmbeddingConfig(),
+    configured: config.configured,
+    model: config.model,
     chunks,
     embeddedChunks,
     lastError: lastEmbeddingError,
@@ -618,18 +624,20 @@ function getDocumentEmbeddingStatus() {
   };
 }
 
-function rebuildDocumentEmbeddings() {
-  getSearchDatabase().prepare("DELETE FROM chunk_embeddings WHERE model = ?").run(embeddingModel);
+function rebuildDocumentEmbeddings(settings) {
+  const { model } = getEmbeddingConfig(settings);
+  getSearchDatabase().prepare("DELETE FROM chunk_embeddings WHERE model = ?").run(model);
   queueAllDocumentEmbeddings();
-  return getDocumentEmbeddingStatus();
+  return getDocumentEmbeddingStatus(settings);
 }
 
-async function semanticSearchIndexedDocuments(query, limit = 10) {
+async function semanticSearchIndexedDocuments(query, limit = 10, settings) {
   const normalizedQuery = String(query || "").trim();
   if (!normalizedQuery) return [];
 
   const safeLimit = Math.min(Math.max(Number(limit) || 10, 1), 30);
-  const [queryEmbedding] = await requestEmbeddings([normalizedQuery]);
+  const config = getEmbeddingConfig(settings);
+  const [queryEmbedding] = await requestEmbeddings([normalizedQuery], settings);
   const rows = getSearchDatabase()
     .prepare(
       `
@@ -646,7 +654,7 @@ async function semanticSearchIndexedDocuments(query, limit = 10) {
           AND e.model = ?
       `,
     )
-    .all(embeddingModel);
+    .all(config.model);
 
   return rows
     .map((row) => ({

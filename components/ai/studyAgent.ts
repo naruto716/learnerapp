@@ -4,16 +4,10 @@ import { ChatOpenAI } from "@langchain/openai";
 import { getEncoding } from "js-tiktoken";
 import { createAgent, tool } from "langchain";
 import { z } from "zod";
+import { readAiSettings } from "./aiSettings";
 import type { ProposedDocumentPatch } from "./documentPatch";
 import type { CurrentDocumentAgentTools } from "@/components/editor/TiptapEditor";
 
-const proxyApiKeyStorageKey = "learner.ai.proxyKey.v1";
-const proxyBaseUrlStorageKey = "learner.ai.proxyBaseUrl.v1";
-const modelStorageKey = "learner.ai.model.v1";
-
-const defaultProxyApiKey = "sk-cliproxy-michael-2026";
-const defaultProxyBaseUrl = "http://127.0.0.1:8317/v1";
-const defaultModel = "gpt-5.5";
 const maxHistoryInputTokens = 200_000;
 const summarizeWhenHistoryExceedsTokens = 140_000;
 const recentHistoryTargetTokens = 60_000;
@@ -99,22 +93,19 @@ type ModelMessage = {
       >;
 };
 
-function readLocalSetting(storageKey: string, fallback: string) {
-  if (typeof window === "undefined") return fallback;
-  return localStorage.getItem(storageKey)?.trim() || fallback;
-}
-
 function createLearnerModel() {
+  const settings = readAiSettings();
+
   return new ChatOpenAI({
-    model: readLocalSetting(modelStorageKey, defaultModel),
-    apiKey: readLocalSetting(proxyApiKeyStorageKey, defaultProxyApiKey),
+    model: settings.chatModel,
+    apiKey: settings.apiKey,
     reasoning: {
       effort: "xhigh",
     },
     temperature: 0.25,
     streamUsage: false,
     configuration: {
-      baseURL: readLocalSetting(proxyBaseUrlStorageKey, defaultProxyBaseUrl),
+      baseURL: settings.baseUrl,
       dangerouslyAllowBrowser: true,
     },
   });
@@ -472,11 +463,15 @@ function createStudyTools({
         }
 
         try {
-          const results = await window.learner.semanticSearchDocuments(query, Math.min(Math.max(limit, 1), 8));
+          const results = await window.learner.semanticSearchDocuments(
+            query,
+            Math.min(Math.max(limit, 1), 8),
+            readAiSettings(),
+          );
           const sources = registerSources(results);
 
           if (sources.length === 0) {
-            const status = await window.learner.getDocumentEmbeddingStatus?.();
+            const status = await window.learner.getDocumentEmbeddingStatus?.(readAiSettings());
             return [
               "No matching note sources were found.",
               status
@@ -893,7 +888,7 @@ function createStudyTools({
         const snapshot = documentTools.read();
         if (!snapshot.markdown.trim()) return "The note is empty, so there is no graph to extract.";
 
-        const result = await window.learner.extractDocumentGraph(snapshot.path, snapshot.markdown);
+        const result = await window.learner.extractDocumentGraph(snapshot.path, snapshot.markdown, readAiSettings());
         return JSON.stringify(
           {
             type: "extract_note_graph",
@@ -944,6 +939,7 @@ function createStudyTools({
         const concepts = await window.learner.searchRelatedGraphConcepts(
           { aliases, name, summary, type },
           Math.min(Math.max(limit, 1), 12),
+          readAiSettings(),
         );
         return JSON.stringify(
           {

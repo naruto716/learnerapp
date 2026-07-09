@@ -183,7 +183,7 @@ async function mapWithConcurrency(items, concurrency, callback) {
   return results;
 }
 
-async function requestCandidateConcepts({ documentPath, markdown }) {
+async function requestCandidateConcepts({ documentPath, markdown, settings }) {
   const elapsed = startTimer();
   graphLog("candidate_extraction.start", {
     documentPath,
@@ -193,6 +193,7 @@ async function requestCandidateConcepts({ documentPath, markdown }) {
   const response = await requestStructuredJson({
     schemaName: "knowledge_graph_candidate_concepts",
     jsonSchema: candidateExtractionJsonSchema,
+    settings,
     temperature: 0.15,
     messages: [
       {
@@ -294,7 +295,7 @@ function defaultResolutionForNewConcept(candidate) {
   };
 }
 
-async function resolveConcept({ candidate, candidates }) {
+async function resolveConcept({ candidate, candidates, settings }) {
   const elapsed = startTimer();
 
   if (candidates.length === 0) {
@@ -323,6 +324,7 @@ async function resolveConcept({ candidate, candidates }) {
   const response = await requestStructuredJson({
     schemaName: "knowledge_graph_concept_resolution",
     jsonSchema: conceptResolutionJsonSchema,
+    settings,
     temperature: 0.1,
     messages: [
       {
@@ -427,15 +429,15 @@ async function resolveConcept({ candidate, candidates }) {
   };
 }
 
-async function resolveCandidateConcepts(candidates) {
-  const embeddingConfig = getGraphEmbeddingConfig();
+async function resolveCandidateConcepts(candidates, settings) {
+  const embeddingConfig = getGraphEmbeddingConfig(settings);
   const elapsed = startTimer();
   graphLog("concept_resolution.batch_start", {
     candidateCount: candidates.length,
     embeddingModel: embeddingConfig.model,
     resolverConcurrency,
   });
-  const candidateEmbeddings = await requestConceptEmbeddings(candidates.map(conceptProfileText));
+  const candidateEmbeddings = await requestConceptEmbeddings(candidates.map(conceptProfileText), settings);
 
   const resolvedConcepts = await mapWithConcurrency(candidates, resolverConcurrency, async (candidate, index) => {
     const resolutionCandidates = findConceptResolutionCandidates({
@@ -449,6 +451,7 @@ async function resolveCandidateConcepts(candidates) {
     return resolveConcept({
       candidate,
       candidates: resolutionCandidates,
+      settings,
     });
   });
 
@@ -466,27 +469,30 @@ async function resolveCandidateConcepts(candidates) {
   return resolvedConcepts;
 }
 
-async function searchRelatedConcepts({ aliases = [], name, summary = "", type = "" }, limit = maxResolutionCandidates) {
+async function searchRelatedConcepts({ aliases = [], name, summary = "", type = "" }, limit = maxResolutionCandidates, settings) {
   const cleanName = String(name || "").trim();
   if (!cleanName) {
     throw new Error("Concept name is required.");
   }
 
-  const embeddingConfig = getGraphEmbeddingConfig();
+  const embeddingConfig = getGraphEmbeddingConfig(settings);
   const elapsed = startTimer();
   graphLog("concept_related_search.start", {
     limit,
     name: cleanName,
   });
 
-  const [embedding] = await requestConceptEmbeddings([
-    conceptProfileText({
-      aliases,
-      name: cleanName,
-      summary,
-      type,
-    }),
-  ]);
+  const [embedding] = await requestConceptEmbeddings(
+    [
+      conceptProfileText({
+        aliases,
+        name: cleanName,
+        summary,
+        type,
+      }),
+    ],
+    settings,
+  );
   const concepts = findConceptResolutionCandidates({
     aliases,
     embedding,
@@ -504,7 +510,7 @@ async function searchRelatedConcepts({ aliases = [], name, summary = "", type = 
   return concepts;
 }
 
-async function requestResolvedRelations({ concepts, documentPath, markdown }) {
+async function requestResolvedRelations({ concepts, documentPath, markdown, settings }) {
   if (concepts.length < 2) return [];
 
   const elapsed = startTimer();
@@ -516,6 +522,7 @@ async function requestResolvedRelations({ concepts, documentPath, markdown }) {
   const response = await requestStructuredJson({
     schemaName: "knowledge_graph_local_relations",
     jsonSchema: relationExtractionJsonSchema,
+    settings,
     temperature: 0.1,
     messages: [
       {
@@ -591,17 +598,17 @@ async function requestResolvedRelations({ concepts, documentPath, markdown }) {
   return relations;
 }
 
-async function saveConceptProfileEmbeddings(conceptProfiles) {
+async function saveConceptProfileEmbeddings(conceptProfiles, settings) {
   if (!conceptProfiles.length) return;
 
-  const embeddingConfig = getGraphEmbeddingConfig();
+  const embeddingConfig = getGraphEmbeddingConfig(settings);
   const elapsed = startTimer();
   graphLog("concept_profile_embedding.start", {
     conceptCount: conceptProfiles.length,
     model: embeddingConfig.model,
   });
   const profilesToEmbed = conceptProfiles.map((concept) => concept.profile);
-  const embeddings = await requestConceptEmbeddings(profilesToEmbed);
+  const embeddings = await requestConceptEmbeddings(profilesToEmbed, settings);
 
   conceptProfiles.forEach((concept, index) => {
     saveConceptEmbedding({
@@ -619,7 +626,7 @@ async function saveConceptProfileEmbeddings(conceptProfiles) {
   });
 }
 
-async function extractDocumentGraph(documentPath, document, markdown) {
+async function extractDocumentGraph(documentPath, document, markdown, settings) {
   const elapsed = startTimer();
   const extractionMarkdown = String(markdown || "").trim();
   if (!extractionMarkdown) {
@@ -627,7 +634,7 @@ async function extractDocumentGraph(documentPath, document, markdown) {
   }
 
   const documentHash = hashContent(extractionMarkdown);
-  const config = getGraphModelConfig();
+  const config = getGraphModelConfig(settings);
   const existingRun = getExtractionRun(documentPath);
 
   graphLog("pipeline.start", {
@@ -674,12 +681,13 @@ async function extractDocumentGraph(documentPath, document, markdown) {
   });
 
   try {
-    const candidates = await requestCandidateConcepts({ documentPath, markdown: extractionMarkdown });
-    const resolvedConcepts = await resolveCandidateConcepts(candidates);
+    const candidates = await requestCandidateConcepts({ documentPath, markdown: extractionMarkdown, settings });
+    const resolvedConcepts = await resolveCandidateConcepts(candidates, settings);
     const relations = await requestResolvedRelations({
       concepts: resolvedConcepts,
       documentPath,
       markdown: extractionMarkdown,
+      settings,
     });
     const saveElapsed = startTimer();
     const { conceptProfiles, graph } = saveResolvedDocumentGraph({
@@ -700,7 +708,7 @@ async function extractDocumentGraph(documentPath, document, markdown) {
       nodeCount: graph.nodes.length,
     });
 
-    await saveConceptProfileEmbeddings(conceptProfiles);
+    await saveConceptProfileEmbeddings(conceptProfiles, settings);
 
     graphLog("pipeline.done", {
       candidateCount: candidates.length,

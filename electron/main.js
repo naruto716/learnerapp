@@ -17,6 +17,8 @@ const {
   saveDocumentFile,
 } = require("./documentUtil");
 const { loadLocalEnv } = require("./localEnv");
+const { configureAiSettings } = require("./aiSettings");
+const { generateImage, listAiModels } = require("./imageGeneration");
 const {
   closeSearchDatabase,
   deleteIndexedDocument,
@@ -108,8 +110,8 @@ function createWindow() {
   const win = new BrowserWindow({
     width: 1200,
     height: 800,
-    minWidth: 900,
-    minHeight: 600,
+    minWidth: 600,
+    minHeight: 400,
     title: "Learner",
     ...(isMac ? { titleBarStyle: "hiddenInset", trafficLightPosition: { x: 14, y: 12 } } : { frame: false }),
     backgroundColor: "#1f1f1f",
@@ -308,21 +310,37 @@ ipcMain.handle("document:rebuildSearchIndex", async () => {
   await rebuildDocumentSearchIndex(getDocumentRoot());
 });
 
-ipcMain.handle("document:embeddingStatus", async () => {
-  return getDocumentEmbeddingStatus();
+ipcMain.handle("document:embeddingStatus", async (_event, settings) => {
+  configureAiSettings(settings);
+  return getDocumentEmbeddingStatus(settings);
 });
 
-ipcMain.handle("document:rebuildEmbeddings", async () => {
-  return rebuildDocumentEmbeddings();
+ipcMain.handle("document:rebuildEmbeddings", async (_event, settings) => {
+  configureAiSettings(settings);
+  return rebuildDocumentEmbeddings(settings);
 });
 
-ipcMain.handle("document:semanticSearch", async (_event, query, limit) => {
-  return semanticSearchIndexedDocuments(query, limit);
+ipcMain.handle("document:semanticSearch", async (_event, query, limit, settings) => {
+  return semanticSearchIndexedDocuments(query, limit, settings);
 });
 
-ipcMain.handle("graph:extractDocumentGraph", async (_event, filePath, markdown) => {
+ipcMain.handle("ai:configure", async (_event, settings) => {
+  return configureAiSettings(settings);
+});
+
+ipcMain.handle("ai:listModels", async (_event, settings) => {
+  configureAiSettings(settings);
+  return listAiModels(settings);
+});
+
+ipcMain.handle("ai:generateImage", async (_event, request) => {
+  configureAiSettings(request?.settings);
+  return generateImage(request);
+});
+
+ipcMain.handle("graph:extractDocumentGraph", async (_event, filePath, markdown, settings) => {
   const documentPath = filePathWithExtension(filePath);
-  return extractDocumentGraph(documentPath, await readDocumentFile(documentPath), markdown);
+  return extractDocumentGraph(documentPath, await readDocumentFile(documentPath), markdown, settings);
 });
 
 ipcMain.handle("graph:getDocumentGraph", async (_event, filePath) => {
@@ -339,8 +357,8 @@ ipcMain.handle("graph:searchConcepts", async (_event, query, limit) => {
   return searchConcepts(query, limit);
 });
 
-ipcMain.handle("graph:searchRelatedConcepts", async (_event, concept, limit) => {
-  return searchRelatedConcepts(concept, limit);
+ipcMain.handle("graph:searchRelatedConcepts", async (_event, concept, limit, settings) => {
+  return searchRelatedConcepts(concept, limit, settings);
 });
 
 ipcMain.handle("graph:updateConcept", async (_event, filePath, conceptUpdate) => {

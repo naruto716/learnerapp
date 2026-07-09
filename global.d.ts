@@ -38,6 +38,44 @@ declare global {
     running: boolean;
   };
 
+  type LearnerAiSettings = {
+    apiKey?: string;
+    baseUrl?: string;
+    chatModel?: string;
+    graphModel?: string;
+    embeddingModel?: string;
+    imageModel?: string;
+    imageSize?: string;
+    imageQuality?: string;
+    imageBackground?: string;
+    imageOutputFormat?: string;
+  };
+
+  type LearnerAiModel = {
+    created?: number;
+    id: string;
+    object?: string;
+    owned_by?: string;
+  };
+
+  type LearnerImageGenerationRequest = {
+    prompt: string;
+    settings?: LearnerAiSettings;
+  };
+
+  type LearnerImageGenerationResult = {
+    background: string;
+    b64Json: string;
+    dataUrl: string;
+    durationMs: number;
+    model: string;
+    outputFormat: string;
+    prompt: string;
+    quality: string;
+    size: string;
+    usage: unknown;
+  };
+
   type DocumentSemanticSearchResult = {
     chunkIndex: number;
     path: string;
@@ -205,16 +243,28 @@ declare global {
       saveDocumentImage: (fileName: string, data: Uint8Array) => Promise<string>;
       searchDocuments: (query: string, limit?: number) => Promise<DocumentSearchResult[]>;
       rebuildDocumentSearchIndex: () => Promise<void>;
-      getDocumentEmbeddingStatus: () => Promise<DocumentEmbeddingStatus>;
-      rebuildDocumentEmbeddings: () => Promise<DocumentEmbeddingStatus>;
-      semanticSearchDocuments: (query: string, limit?: number) => Promise<DocumentSemanticSearchResult[]>;
-      extractDocumentGraph: (filePath: string, markdown: string) => Promise<KnowledgeGraphExtractionResult>;
+      configureAi: (settings?: LearnerAiSettings) => Promise<LearnerAiSettings>;
+      listAiModels: (settings?: LearnerAiSettings) => Promise<LearnerAiModel[]>;
+      generateImage: (request: LearnerImageGenerationRequest) => Promise<LearnerImageGenerationResult>;
+      getDocumentEmbeddingStatus: (settings?: LearnerAiSettings) => Promise<DocumentEmbeddingStatus>;
+      rebuildDocumentEmbeddings: (settings?: LearnerAiSettings) => Promise<DocumentEmbeddingStatus>;
+      semanticSearchDocuments: (
+        query: string,
+        limit?: number,
+        settings?: LearnerAiSettings,
+      ) => Promise<DocumentSemanticSearchResult[]>;
+      extractDocumentGraph: (
+        filePath: string,
+        markdown: string,
+        settings?: LearnerAiSettings,
+      ) => Promise<KnowledgeGraphExtractionResult>;
       getDocumentGraph: (filePath: string) => Promise<KnowledgeDocumentGraph>;
       deleteDocumentGraph: (filePath: string) => Promise<KnowledgeDocumentGraph>;
       searchGraphConcepts: (query: string, limit?: number) => Promise<KnowledgeConceptSearchResult[]>;
       searchRelatedGraphConcepts: (
         concept: KnowledgeConceptSearchQuery,
         limit?: number,
+        settings?: LearnerAiSettings,
       ) => Promise<KnowledgeConceptSearchResult[]>;
       updateGraphConcept: (filePath: string, conceptUpdate: KnowledgeConceptUpdate) => Promise<KnowledgeDocumentGraph>;
       addGraphConceptMention: (

@@ -13,6 +13,8 @@ import TiptapEditor, {
 } from "@/components/editor/TiptapEditor";
 import { documentPathToRoute, routeToDocumentPath } from "@/components/documentPaths";
 import KnowledgeGraphPanel from "@/components/graph/KnowledgeGraphPanel";
+import AiSettingsDialog from "@/components/settings/AiSettingsDialog";
+import { readAiSettings } from "./ai/aiSettings";
 import ChatBubble from "./ai/ChatBubble";
 import ChatPanel from "./ai/ChatPanel";
 
@@ -107,6 +109,7 @@ export default function AppShell() {
   const [openTabs, setOpenTabs] = useState<string[]>([]);
   const [isDocumentSearchOpen, setIsDocumentSearchOpen] = useState(false);
   const [isBubbleOpen, setIsBubbleOpen] = useState(false);
+  const [isAiSettingsOpen, setIsAiSettingsOpen] = useState(false);
   const [isKnowledgeGraphOpen, setIsKnowledgeGraphOpen] = useState(false);
   const [isKnowledgeGraphLoading, setIsKnowledgeGraphLoading] = useState(false);
   const [isKnowledgeGraphDeleting, setIsKnowledgeGraphDeleting] = useState(false);
@@ -151,6 +154,10 @@ export default function AppShell() {
       removeFullScreenListener?.();
     };
   }, [updateOpenTabs]);
+
+  useEffect(() => {
+    void window.learner?.configureAi?.(readAiSettings());
+  }, []);
 
   useEffect(() => {
     if (restoredWorkspaceRef.current) return;
@@ -410,7 +417,11 @@ export default function AppShell() {
     });
 
     try {
-      const result = await window.learner?.extractDocumentGraph(documentSnapshot.path, documentSnapshot.markdown);
+      const result = await window.learner?.extractDocumentGraph(
+        documentSnapshot.path,
+        documentSnapshot.markdown,
+        readAiSettings(),
+      );
       if (!result) {
         throw new Error("Graph extraction is not available in this renderer.");
       }
@@ -470,7 +481,7 @@ export default function AppShell() {
         nextIndex += 1;
 
         try {
-          const result = await window.learner?.extractDocumentGraph(snapshot.path, snapshot.markdown);
+          const result = await window.learner?.extractDocumentGraph(snapshot.path, snapshot.markdown, readAiSettings());
           if (!result) {
             throw new Error("Graph extraction is not available in this renderer.");
           }
@@ -559,6 +570,7 @@ export default function AppShell() {
           isSidebarOpen={isSidebarOpen}
           openTabs={openTabs}
           onCloseTab={closeTab}
+          onOpenSettings={() => setIsAiSettingsOpen(true)}
           onReorderTabs={(sourcePath, targetPath, position) => {
             updateOpenTabs((current) => reorderList(current, sourcePath, targetPath, position));
           }}
@@ -643,6 +655,7 @@ export default function AppShell() {
         onClose={() => setIsDocumentSearchOpen(false)}
         onOpenDocument={openDocument}
       />
+      <AiSettingsDialog open={isAiSettingsOpen} onClose={() => setIsAiSettingsOpen(false)} />
       <ChatBubble isOpen={isBubbleOpen} toggleBubbleOpen={() => setIsBubbleOpen((isOpen) => !isOpen)} />
     </div>
   );
