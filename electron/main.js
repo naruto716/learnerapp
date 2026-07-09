@@ -20,6 +20,14 @@ const { loadLocalEnv } = require("./localEnv");
 const { configureAiSettings } = require("./aiSettings");
 const { generateImage, listAiModels } = require("./imageGeneration");
 const {
+  clearDocumentMastery,
+  closeMasteryDatabase,
+  generateDocumentMastery,
+  generateDocumentMasteryMetaphor,
+  getDocumentMastery,
+  updateMasteryConceptLevel,
+} = require("./mastery/masteryConcepts");
+const {
   closeSearchDatabase,
   deleteIndexedDocument,
   deleteIndexedDocumentTree,
@@ -207,6 +215,7 @@ app.on("window-all-closed", () => {
 app.on("before-quit", () => {
   closeSearchDatabase();
   closeGraphDatabase();
+  closeMasteryDatabase();
 });
 
 ipcMain.handle("document:list", async () => {
@@ -336,6 +345,76 @@ ipcMain.handle("ai:listModels", async (_event, settings) => {
 ipcMain.handle("ai:generateImage", async (_event, request) => {
   configureAiSettings(request?.settings);
   return generateImage(request);
+});
+
+ipcMain.handle("mastery:getDocumentMastery", async (_event, filePath, markdown) => {
+  return getDocumentMastery(filePathWithExtension(filePath), markdown);
+});
+
+ipcMain.handle("mastery:generateDocumentMastery", async (_event, request) => {
+  if (!request?.documentPath) {
+    throw new Error("Document path is required.");
+  }
+
+  configureAiSettings(request?.settings);
+  return generateDocumentMastery({
+    ...request,
+    documentPath: filePathWithExtension(request.documentPath),
+  });
+});
+
+ipcMain.handle("mastery:updateConceptLevel", async (_event, request) => {
+  if (!request?.documentPath) {
+    throw new Error("Document path is required.");
+  }
+
+  return updateMasteryConceptLevel({
+    ...request,
+    documentPath: filePathWithExtension(request.documentPath),
+  });
+});
+
+ipcMain.handle("mastery:generateMetaphor", async (_event, request) => {
+  if (!request?.documentPath) {
+    throw new Error("Document path is required.");
+  }
+
+  const documentPath = filePathWithExtension(request.documentPath);
+  const sendProgress = (progress) => {
+    _event.sender.send("mastery:metaphorProgress", {
+      ...progress,
+      documentPath,
+    });
+  };
+
+  configureAiSettings(request?.settings);
+  try {
+    return await generateDocumentMasteryMetaphor({
+      ...request,
+      documentPath,
+      onProgress: sendProgress,
+    });
+  } catch (error) {
+    sendProgress({
+      completed: 0,
+      failed: 1,
+      label: error instanceof Error ? error.message : "Mastery metaphor generation failed.",
+      phase: "error",
+      total: 1,
+    });
+    throw error;
+  }
+});
+
+ipcMain.handle("mastery:clearDocumentMastery", async (_event, request) => {
+  if (!request?.documentPath) {
+    throw new Error("Document path is required.");
+  }
+
+  return clearDocumentMastery({
+    ...request,
+    documentPath: filePathWithExtension(request.documentPath),
+  });
 });
 
 ipcMain.handle("graph:extractDocumentGraph", async (_event, filePath, markdown, settings) => {

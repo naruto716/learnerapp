@@ -4,6 +4,7 @@ const fsSync = require("fs");
 const fs = require("fs/promises");
 const path = require("path");
 const { DatabaseSync } = require("node:sqlite");
+const { embedTexts } = require("./aiClient");
 const { getAiSettings } = require("./aiSettings");
 
 const databaseFileName = "learner.sqlite";
@@ -495,33 +496,12 @@ async function requestEmbeddings(input, settings) {
     throw new Error("AI API key is not configured in settings.");
   }
 
-  const response = await fetch(`${config.baseUrl}/embeddings`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      input,
-      model: config.model,
-    }),
-    signal: AbortSignal.timeout(45_000),
+  const { embeddings } = await embedTexts(input, {
+    model: config.model,
+    settings,
+    timeoutMs: 45_000,
   });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Embedding request failed (${response.status}): ${errorText.slice(0, 300)}`);
-  }
-
-  const body = await response.json();
-  if (!Array.isArray(body.data)) {
-    throw new Error("Embedding response did not include a data array.");
-  }
-
-  return body.data
-    .slice()
-    .sort((a, b) => a.index - b.index)
-    .map((item) => item.embedding);
+  return embeddings;
 }
 
 function saveChunkEmbeddings(chunks, embeddings, settings) {

@@ -55,6 +55,26 @@ contextBridge.exposeInMainWorld("learner", {
   generateImage: (request) => {
     return ipcRenderer.invoke("ai:generateImage", request);
   },
+  getDocumentMastery: (filePath, markdown) => {
+    return ipcRenderer.invoke("mastery:getDocumentMastery", filePath, markdown);
+  },
+  generateDocumentMastery: (request) => {
+    return ipcRenderer.invoke("mastery:generateDocumentMastery", request);
+  },
+  updateDocumentMasteryConceptLevel: (request) => {
+    return ipcRenderer.invoke("mastery:updateConceptLevel", request);
+  },
+  generateDocumentMasteryMetaphor: (request) => {
+    return ipcRenderer.invoke("mastery:generateMetaphor", request);
+  },
+  onMasteryMetaphorProgress: (callback) => {
+    const listener = (_event, progress) => callback(progress);
+    ipcRenderer.on("mastery:metaphorProgress", listener);
+    return () => ipcRenderer.removeListener("mastery:metaphorProgress", listener);
+  },
+  clearDocumentMastery: (request) => {
+    return ipcRenderer.invoke("mastery:clearDocumentMastery", request);
+  },
   getDocumentEmbeddingStatus: (settings) => {
     return ipcRenderer.invoke("document:embeddingStatus", settings);
   },

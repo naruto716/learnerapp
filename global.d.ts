@@ -206,6 +206,97 @@ declare global {
     total: number;
   };
 
+  type MasteryLevel = "new" | "familiar" | "developing" | "proficient" | "advanced" | "mastered";
+
+  type MasteryConcept = {
+    explanationMarkdown: string;
+    id: number;
+    masteryLevel: MasteryLevel;
+    masteryRationale: string;
+    name: string;
+    sourceExcerptMarkdown: string;
+    status: string;
+    type: string;
+    updatedAt: number;
+  };
+
+  type MasteryMetaphorConceptScene = {
+    conceptId: number;
+    conceptName: string;
+    imagePath: string | null;
+    imagePrompt: string;
+    roleName: string;
+    sceneMarkdown: string;
+    visceralCueMarkdown: string;
+  };
+
+  type MasteryMetaphor = {
+    conceptScenes: MasteryMetaphorConceptScene[];
+    conceptSignature: string;
+    documentHash: string;
+    generatedAt: number;
+    id: number;
+    imageModel: string | null;
+    imagePath: string | null;
+    imagePrompt: string;
+    memorySceneMarkdown: string;
+    model: string | null;
+    stale: boolean;
+    title: string;
+  };
+
+  type MasteryMetaphorProgressPhase = "planning" | "images" | "saving" | "done" | "error";
+
+  type MasteryMetaphorProgress = {
+    completed: number;
+    documentPath?: string;
+    failed: number;
+    label: string;
+    phase: MasteryMetaphorProgressPhase;
+    total: number;
+  };
+
+  type DocumentMastery = {
+    concepts: MasteryConcept[];
+    currentDocumentHash: string;
+    documentHash: string;
+    documentPath: string;
+    generatedAt: number | null;
+    metaphor: MasteryMetaphor | null;
+    model: string | null;
+    stale: boolean;
+  };
+
+  type DocumentMasteryGenerationRequest = {
+    documentPath: string;
+    force?: boolean;
+    markdown: string;
+    settings?: LearnerAiSettings;
+  };
+
+  type DocumentMasteryGenerationResult = {
+    generated: boolean;
+    mastery: DocumentMastery;
+  };
+
+  type DocumentMasteryLevelUpdateRequest = {
+    conceptId: number;
+    documentPath: string;
+    markdown?: string;
+    masteryLevel: MasteryLevel;
+  };
+
+  type DocumentMasteryMetaphorGenerationRequest = {
+    documentPath: string;
+    markdown: string;
+    settings?: LearnerAiSettings;
+  };
+
+  type DocumentMasteryClearRequest = {
+    documentPath: string;
+    markdown?: string;
+  };
+
   interface Window {
     learner?: {
       platform: NodeJS.Platform;
@@ -246,6 +337,18 @@ declare global {
       configureAi: (settings?: LearnerAiSettings) => Promise<LearnerAiSettings>;
       listAiModels: (settings?: LearnerAiSettings) => Promise<LearnerAiModel[]>;
       generateImage: (request: LearnerImageGenerationRequest) => Promise<LearnerImageGenerationResult>;
+      getDocumentMastery: (filePath: string, markdown: string) => Promise<DocumentMastery>;
+      generateDocumentMastery: (
+        request: DocumentMasteryGenerationRequest,
+      ) => Promise<DocumentMasteryGenerationResult>;
+      updateDocumentMasteryConceptLevel: (
+        request: DocumentMasteryLevelUpdateRequest,
+      ) => Promise<DocumentMastery>;
+      generateDocumentMasteryMetaphor: (
+        request: DocumentMasteryMetaphorGenerationRequest,
+      ) => Promise<DocumentMastery>;
+      onMasteryMetaphorProgress: (callback: (progress: MasteryMetaphorProgress) => void) => () => void;
+      clearDocumentMastery: (request: DocumentMasteryClearRequest) => Promise<DocumentMastery>;
       getDocumentEmbeddingStatus: (settings?: LearnerAiSettings) => Promise<DocumentEmbeddingStatus>;
       rebuildDocumentEmbeddings: (settings?: LearnerAiSettings) => Promise<DocumentEmbeddingStatus>;
       semanticSearchDocuments: (

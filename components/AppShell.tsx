@@ -13,6 +13,7 @@ import TiptapEditor, {
 } from "@/components/editor/TiptapEditor";
 import { documentPathToRoute, routeToDocumentPath } from "@/components/documentPaths";
 import KnowledgeGraphPanel from "@/components/graph/KnowledgeGraphPanel";
+import MasteryController from "@/components/mastery/MasteryController";
 import AiSettingsDialog from "@/components/settings/AiSettingsDialog";
 import { readAiSettings } from "./ai/aiSettings";
 import ChatBubble from "./ai/ChatBubble";
@@ -117,6 +118,7 @@ export default function AppShell() {
   const [knowledgeGraphError, setKnowledgeGraphError] = useState<string | null>(null);
   const [knowledgeGraphProgress, setKnowledgeGraphProgress] = useState<KnowledgeGraphProgress | null>(null);
   const [lastKnowledgeGraphExtractionChanged, setLastKnowledgeGraphExtractionChanged] = useState<boolean | null>(null);
+  const [isMasteryOpen, setIsMasteryOpen] = useState(false);
   const [editorStates, setEditorStates] = useState<Record<string, PersistedEditorState>>({});
   const [documentsVersion, setDocumentsVersion] = useState(0);
   const [workspaceLoaded, setWorkspaceLoaded] = useState(false);
@@ -213,6 +215,7 @@ export default function AppShell() {
     setIsKnowledgeGraphOpen(false);
     setKnowledgeGraphError(null);
     setLastKnowledgeGraphExtractionChanged(null);
+    setIsMasteryOpen(false);
   }, [activeDocumentPath]);
 
   useEffect(() => {
@@ -593,7 +596,7 @@ export default function AppShell() {
               />
             ))
           )}
-          {activeDocumentPath && !isKnowledgeGraphOpen && (
+          {activeDocumentPath && !isKnowledgeGraphOpen && !isMasteryOpen && (
             <FloatingIconButton
               ariaLabel="View knowledge graph"
               className="right-5 top-15"
@@ -617,6 +620,14 @@ export default function AppShell() {
               }
             />
           )}
+          <MasteryController
+            activeDocumentPath={activeDocumentPath}
+            getCurrentDocumentTools={getCurrentDocumentTools}
+            hidden={isKnowledgeGraphOpen}
+            isSidebarOpen={isSidebarOpen}
+            key={activeDocumentPath ?? "no-document"}
+            onOpenChange={setIsMasteryOpen}
+          />
         </main>
       </div>
       <KnowledgeGraphPanel
