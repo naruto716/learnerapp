@@ -397,12 +397,7 @@ function searchIndexedDocuments(query, limit = 20) {
 }
 
 function getEmbeddingConfig(settings) {
-  const aiSettings = getAiSettings({
-    apiKey: process.env.OPENAI_API_KEY || process.env.LEARNER_OPENAI_API_KEY,
-    baseUrl: process.env.OPENAI_BASE_URL,
-    embeddingModel: process.env.LEARNER_GRAPH_EMBEDDING_MODEL,
-    ...settings,
-  });
+  const aiSettings = getAiSettings(settings);
   return {
     apiKey: aiSettings.apiKey,
     baseUrl: aiSettings.baseUrl,
@@ -497,7 +492,7 @@ async function requestEmbeddings(input, settings) {
   const config = getEmbeddingConfig(settings);
   const apiKey = config.apiKey;
   if (!apiKey) {
-    throw new Error("OPENAI_API_KEY is not set.");
+    throw new Error("AI API key is not configured in settings.");
   }
 
   const response = await fetch(`${config.baseUrl}/embeddings`, {
@@ -571,9 +566,9 @@ async function processEmbeddingQueue(settings) {
 
   const apiKey = getEmbeddingConfig(settings).apiKey;
   if (!apiKey) {
-    lastEmbeddingError = "OPENAI_API_KEY is not set.";
+    lastEmbeddingError = "AI API key is not configured in settings.";
     if (!missingEmbeddingKeyWarned && embeddingQueue.size > 0) {
-      console.warn("Document embeddings skipped: OPENAI_API_KEY is not set.");
+      console.warn("Document embeddings skipped: AI API key is not configured in settings.");
       missingEmbeddingKeyWarned = true;
     }
     embeddingQueue.clear();

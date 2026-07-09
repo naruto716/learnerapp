@@ -4,16 +4,7 @@ const { getAiSettings } = require("../aiSettings");
 const graphPipelineVersion = "concept-resolver-v6";
 
 function getGraphModelConfig(settings = {}) {
-  const aiSettings = getAiSettings({
-    baseUrl: process.env.LEARNER_GRAPH_BASE_URL || process.env.LEARNER_AI_BASE_URL || process.env.OPENAI_BASE_URL,
-    apiKey:
-      process.env.LEARNER_GRAPH_API_KEY ||
-      process.env.LEARNER_AI_API_KEY ||
-      process.env.OPENAI_API_KEY ||
-      process.env.LEARNER_OPENAI_API_KEY,
-    graphModel: process.env.LEARNER_GRAPH_MODEL || process.env.LEARNER_AI_MODEL,
-    ...settings,
-  });
+  const aiSettings = getAiSettings(settings);
   const model = aiSettings.graphModel;
 
   return {
@@ -25,12 +16,7 @@ function getGraphModelConfig(settings = {}) {
 }
 
 function getGraphEmbeddingConfig(settings = {}) {
-  const aiSettings = getAiSettings({
-    baseUrl: process.env.OPENAI_BASE_URL,
-    apiKey: process.env.OPENAI_API_KEY || process.env.LEARNER_OPENAI_API_KEY,
-    embeddingModel: process.env.LEARNER_GRAPH_EMBEDDING_MODEL,
-    ...settings,
-  });
+  const aiSettings = getAiSettings(settings);
 
   return {
     apiKey: aiSettings.apiKey,
@@ -119,7 +105,7 @@ async function requestConceptEmbeddings(input, settings) {
   const values = Array.isArray(input) ? input : [input];
 
   if (!config.apiKey) {
-    throw new Error("OPENAI_API_KEY is not set for graph concept embeddings.");
+    throw new Error("AI API key is not configured in settings for graph concept embeddings.");
   }
 
   if (values.length === 0) return [];

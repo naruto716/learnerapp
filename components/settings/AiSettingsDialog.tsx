@@ -150,6 +150,9 @@ export default function AiSettingsDialog({
 
         <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4">
           <Section title="Connection">
+            <p className="text-sm leading-6 text-white/48">
+              Shared endpoint and API key for chat, graph extraction, embeddings, and image generation.
+            </p>
             <div className="grid gap-3 sm:grid-cols-[1fr_220px]">
               <Field label="Base URL" onChange={(value) => updateSetting("baseUrl", value)} value={settings.baseUrl} />
               <Field
@@ -162,6 +165,9 @@ export default function AiSettingsDialog({
           </Section>
 
           <Section title="Models">
+            <p className="text-sm leading-6 text-white/48">
+              Each capability can use a different model on the same configured endpoint.
+            </p>
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label="Chat model" onChange={(value) => updateSetting("chatModel", value)} value={settings.chatModel} />
               <Field label="Graph model" onChange={(value) => updateSetting("graphModel", value)} value={settings.graphModel} />
