@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CurrentDocumentAgentTools } from "@/components/editor/TiptapEditor";
 import { readAiSettings } from "@/components/ai/aiSettings";
+import { readMasterySettings } from "./masterySettings";
 
 type UseDocumentMasteryOptions = {
   activeDocumentPath: string | null;
@@ -85,7 +86,7 @@ export function useDocumentMastery({
     if (validation.snapshot === null) {
       setMastery(null);
       setError(validation.error);
-      return;
+      return false;
     }
 
     const documentSnapshot = validation.snapshot;
@@ -103,8 +104,10 @@ export function useDocumentMastery({
       }
 
       setMastery(result.mastery);
+      return true;
     } catch (generationError) {
       setError(generationError instanceof Error ? generationError.message : "Mastery extraction failed.");
+      return false;
     } finally {
       setIsLoading(false);
     }
@@ -154,7 +157,7 @@ export function useDocumentMastery({
     }
   }, [activeDocumentPath, getCurrentDocumentTools, setIsOpen]);
 
-  const updateConceptMasteryLevel = useCallback(async (conceptId: number, masteryLevel: MasteryLevel) => {
+  const updateConceptMasteryScore = useCallback(async (conceptId: number, score: number) => {
     setError(null);
 
     const tools = getCurrentDocumentTools();
@@ -172,8 +175,9 @@ export function useDocumentMastery({
           concept.id === conceptId
             ? {
                 ...concept,
-                masteryLevel,
+                overallScore: score,
                 masteryRationale: "Set manually by you.",
+                stageStates: concept.stageStates.map((stageState) => ({ ...stageState, score })),
                 updatedAt: Date.now(),
               }
             : concept,
@@ -185,11 +189,12 @@ export function useDocumentMastery({
     masteryUpdateSequenceRef.current = updateSequence;
 
     try {
-      const updatedMastery = await window.learner?.updateDocumentMasteryConceptLevel({
+      const updatedMastery = await window.learner?.updateDocumentMasteryConceptScore({
         conceptId,
         documentPath: validation.snapshot.path,
         markdown: validation.snapshot.markdown,
-        masteryLevel,
+        masterySettings: readMasterySettings(),
+        score,
       });
       if (!updatedMastery) {
         throw new Error("Mastery editing is not available in this renderer.");
@@ -207,6 +212,19 @@ export function useDocumentMastery({
       }
     }
   }, [activeDocumentPath, getCurrentDocumentTools, mastery]);
+
+  const refreshMastery = useCallback(async () => {
+    const tools = getCurrentDocumentTools();
+    const validation = readValidSnapshot(activeDocumentPath, tools, "viewing");
+    if (validation.snapshot === null) return null;
+
+    const refreshed = await window.learner?.getDocumentMastery(
+      validation.snapshot.path,
+      validation.snapshot.markdown,
+    );
+    if (refreshed) setMastery(refreshed);
+    return refreshed ?? null;
+  }, [activeDocumentPath, getCurrentDocumentTools]);
 
   const generateMetaphor = useCallback(async () => {
     setError(null);
@@ -300,6 +318,7 @@ export function useDocumentMastery({
     mastery,
     metaphorProgress,
     openMastery,
-    updateConceptMasteryLevel,
+    refreshMastery,
+    updateConceptMasteryScore,
   };
 }

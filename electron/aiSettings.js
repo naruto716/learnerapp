@@ -9,6 +9,7 @@ const defaultAiSettings = {
   imageQuality: "low",
   imageBackground: "opaque",
   imageOutputFormat: "png",
+  userProfile: "",
 };
 
 let runtimeAiSettings = { ...defaultAiSettings };
@@ -33,6 +34,7 @@ function normalizeAiSettings(settings = {}) {
     imageQuality: cleanSetting(settings.imageQuality, defaultAiSettings.imageQuality),
     imageBackground: cleanSetting(settings.imageBackground, defaultAiSettings.imageBackground),
     imageOutputFormat: cleanSetting(settings.imageOutputFormat, defaultAiSettings.imageOutputFormat),
+    userProfile: cleanSetting(settings.userProfile, defaultAiSettings.userProfile),
   };
 }
 

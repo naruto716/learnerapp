@@ -5,6 +5,7 @@ import FloatingIconButton from "@/components/FloatingIconButton";
 import type { CurrentDocumentAgentTools } from "@/components/editor/TiptapEditor";
 import MasteryPanel from "./MasteryPanel";
 import { useDocumentMastery } from "./useDocumentMastery";
+import { useMasteryCards } from "./useMasteryCards";
 
 type MasteryControllerProps = {
   activeDocumentPath: string | null;
@@ -21,6 +22,11 @@ export default function MasteryController({
   isSidebarOpen,
   onOpenChange,
 }: MasteryControllerProps) {
+  const masteryController = useDocumentMastery({
+    activeDocumentPath,
+    getCurrentDocumentTools,
+    onOpenChange,
+  });
   const {
     clearMastery,
     closeMastery,
@@ -33,12 +39,27 @@ export default function MasteryController({
     mastery,
     metaphorProgress,
     openMastery,
-    updateConceptMasteryLevel,
-  } = useDocumentMastery({
+    refreshMastery,
+    updateConceptMasteryScore,
+  } = masteryController;
+  const cardsController = useMasteryCards({
     activeDocumentPath,
     getCurrentDocumentTools,
-    onOpenChange,
+    isOpen,
+    onMasteryChanged: refreshMastery,
   });
+
+  const generateAndSyncCards = async (force = false) => {
+    const generated = await generateMastery(force);
+    if (generated) await cardsController.loadCards();
+    return generated;
+  };
+
+  const clearAndSyncCards = async () => {
+    const cleared = await clearMastery();
+    if (cleared) await cardsController.loadCards();
+    return cleared;
+  };
 
   return (
     <>
@@ -56,17 +77,27 @@ export default function MasteryController({
         />
       )}
       <MasteryPanel
+        cardError={cardsController.error}
+        cardProgress={cardsController.progress}
+        cardState={cardsController.cardState}
         error={error}
+        isCardDiscussing={cardsController.isDiscussing}
+        isCardEvaluating={cardsController.isEvaluating}
+        isCardGenerating={cardsController.isGenerating}
         isMetaphorLoading={isMetaphorLoading}
         isLoading={isLoading}
         isSidebarOpen={isSidebarOpen}
         mastery={mastery}
         metaphorProgress={metaphorProgress}
-        onClear={clearMastery}
+        onClear={clearAndSyncCards}
+        onClearCards={cardsController.clearCards}
         onClose={closeMastery}
+        onContinueCardDiscussion={cardsController.continueDiscussion}
+        onEvaluateCard={cardsController.evaluateCard}
+        onGenerateCards={cardsController.generateCards}
         onGenerateMetaphor={generateMetaphor}
-        onMasteryLevelChange={updateConceptMasteryLevel}
-        onGenerate={generateMastery}
+        onMasteryScoreChange={updateConceptMasteryScore}
+        onGenerate={generateAndSyncCards}
         open={isOpen}
       />
     </>

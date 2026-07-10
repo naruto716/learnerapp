@@ -659,12 +659,13 @@ export default function KnowledgeGraphPanel({
     }
   }
 
+  if (!open) return null;
+
   return (
     <section
-      aria-hidden={!open}
-      className={`app-no-drag fixed bottom-0 right-0 top-10 z-30 flex flex-col bg-[#171717]/88 text-white shadow-[0_30px_90px_rgba(0,0,0,0.5)] ring-1 ring-white/[0.08] backdrop-blur-[24px] transition-all duration-200 ${
-        open ? "translate-y-0 opacity-100" : "pointer-events-none translate-y-2 opacity-0"
-      } ${isSidebarOpen ? "left-64" : "left-0"}`}
+      className={`app-no-drag fixed bottom-0 right-0 top-10 z-30 flex flex-col bg-[#171717]/88 text-white shadow-[0_30px_90px_rgba(0,0,0,0.5)] ring-1 ring-white/[0.08] backdrop-blur-[24px] ${
+        isSidebarOpen ? "left-64" : "left-0"
+      }`}
     >
       <header className="flex h-14 shrink-0 items-center justify-between px-5">
         <div className="flex min-w-0 items-center gap-3">

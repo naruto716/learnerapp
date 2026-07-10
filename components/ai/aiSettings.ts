@@ -11,6 +11,7 @@ export type LearnerAiSettings = {
   imageQuality: string;
   imageBackground: string;
   imageOutputFormat: string;
+  userProfile: string;
 };
 
 export const aiSettingsStorageKeys = {
@@ -24,6 +25,7 @@ export const aiSettingsStorageKeys = {
   imageQuality: "learner.ai.imageQuality.v1",
   imageBackground: "learner.ai.imageBackground.v1",
   imageOutputFormat: "learner.ai.imageOutputFormat.v1",
+  userProfile: "learner.ai.userProfile.v1",
 } as const;
 
 export const defaultAiSettings: LearnerAiSettings = {
@@ -37,6 +39,7 @@ export const defaultAiSettings: LearnerAiSettings = {
   imageQuality: "low",
   imageBackground: "opaque",
   imageOutputFormat: "png",
+  userProfile: "",
 };
 
 function readSetting(key: keyof LearnerAiSettings) {
@@ -56,6 +59,7 @@ export function readAiSettings(): LearnerAiSettings {
     imageQuality: readSetting("imageQuality"),
     imageBackground: readSetting("imageBackground"),
     imageOutputFormat: readSetting("imageOutputFormat"),
+    userProfile: readSetting("userProfile"),
   };
 }
 

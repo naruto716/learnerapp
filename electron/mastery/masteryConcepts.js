@@ -7,11 +7,13 @@ const { z } = require("zod");
 const { requestStructuredOutput } = require("../aiClient");
 const { resolveDocumentAssetPath, saveDocumentImage } = require("../documentUtil");
 const { generateImage } = require("../imageGeneration");
+const { normalizeMasteryScoringSettings } = require("./masteryScoring");
 
 const databaseFileName = "learner.sqlite";
 let masteryDatabase = null;
 
 const masteryLevels = ["new", "familiar", "developing", "proficient", "advanced", "mastered"];
+const masteryStages = [2, 3, 4, 5, 6];
 
 const generatedConceptSchema = z
   .object({
@@ -99,6 +101,26 @@ function getMasteryDatabase() {
     CREATE INDEX IF NOT EXISTS mastery_concepts_document_index
       ON mastery_concepts(document_path, status, sort_order);
 
+    CREATE TABLE IF NOT EXISTS mastery_stage_states (
+      concept_id INTEGER NOT NULL,
+      stage INTEGER NOT NULL CHECK(stage BETWEEN 2 AND 6),
+      score REAL NOT NULL DEFAULT 0 CHECK(score BETWEEN 0 AND 100),
+      attempt_count INTEGER NOT NULL DEFAULT 0,
+      last_reviewed_at INTEGER,
+      next_due_at INTEGER,
+      fsrs_difficulty REAL,
+      fsrs_stability REAL,
+      fsrs_retrievability REAL,
+      lapse_count INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'active',
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY(concept_id, stage),
+      FOREIGN KEY(concept_id) REFERENCES mastery_concepts(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS mastery_stage_states_due_index
+      ON mastery_stage_states(status, next_due_at);
+
     CREATE TABLE IF NOT EXISTS mastery_metaphor_runs (
       id INTEGER PRIMARY KEY,
       document_path TEXT NOT NULL,
@@ -150,6 +172,14 @@ function tableHasColumn(db, tableName, columnName) {
     .prepare(`PRAGMA table_info(${tableName})`)
     .all()
     .some((column) => column.name === columnName);
+}
+
+function tableExists(db, tableName) {
+  return Boolean(
+    db
+      .prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?")
+      .get(tableName),
+  );
 }
 
 function migrateMasteryConceptsSchema(db) {
@@ -308,14 +338,74 @@ function compactMarkdown(markdown, maxLength = 36_000) {
   return `${normalized.slice(0, maxLength)}\n\n[truncated for mastery concept extraction]`;
 }
 
+function ensureMasteryStageStates(conceptIds) {
+  const ids = [...new Set(conceptIds.map(Number).filter((conceptId) => Number.isInteger(conceptId) && conceptId > 0))];
+  if (ids.length === 0) return;
+
+  const insert = getMasteryDatabase().prepare(`
+    INSERT OR IGNORE INTO mastery_stage_states(
+      concept_id,
+      stage,
+      score,
+      attempt_count,
+      lapse_count,
+      status,
+      updated_at
+    )
+    VALUES (?, ?, 0, 0, 0, 'active', ?)
+  `);
+  const now = Date.now();
+
+  ids.forEach((conceptId) => {
+    masteryStages.forEach((stage) => insert.run(conceptId, stage, now));
+  });
+}
+
+function getConceptStageStates(conceptId) {
+  const rows = getMasteryDatabase()
+    .prepare(
+      `
+        SELECT *
+        FROM mastery_stage_states
+        WHERE concept_id = ?
+        ORDER BY stage ASC
+      `,
+    )
+    .all(conceptId);
+  const rowsByStage = new Map(rows.map((row) => [row.stage, row]));
+
+  return masteryStages.map((stage) => {
+    const row = rowsByStage.get(stage);
+    return {
+      attemptCount: row?.attempt_count ?? 0,
+      fsrsDifficulty: row?.fsrs_difficulty ?? null,
+      fsrsRetrievability: row?.fsrs_retrievability ?? null,
+      fsrsStability: row?.fsrs_stability ?? null,
+      lastReviewedAt: row?.last_reviewed_at ?? null,
+      lapseCount: row?.lapse_count ?? 0,
+      nextDueAt: row?.next_due_at ?? null,
+      score: Number(row?.score ?? 0),
+      stage,
+      status: row?.status ?? "active",
+    };
+  });
+}
+
 function rowToConcept(row) {
+  const stageStates = getConceptStageStates(row.id);
+  const overallScore = Math.round(
+    stageStates.reduce((total, state) => total + state.score, 0) / masteryStages.length,
+  );
+
   return {
     explanationMarkdown: cleanExplanationMarkdown(row.explanation_markdown || ""),
     id: row.id,
     masteryLevel: row.mastery_level,
     masteryRationale: row.mastery_rationale || "",
     name: row.name,
+    overallScore,
     sourceExcerptMarkdown: row.source_excerpt_markdown || "",
+    stageStates,
     status: row.status,
     type: row.type || "",
     updatedAt: row.updated_at,
@@ -399,7 +489,7 @@ function getLatestRun(documentPath) {
 }
 
 function getActiveConceptRows(documentPath) {
-  return getMasteryDatabase()
+  const rows = getMasteryDatabase()
     .prepare(
       `
         SELECT *
@@ -409,6 +499,8 @@ function getActiveConceptRows(documentPath) {
       `,
     )
     .all(documentPath);
+  ensureMasteryStageStates(rows.map((row) => row.id));
+  return rows;
 }
 
 function getLatestMetaphorRun(documentPath) {
@@ -507,6 +599,12 @@ function clearDocumentMastery({ documentPath, markdown = "" }) {
 
   db.exec("BEGIN IMMEDIATE");
   try {
+    if (tableExists(db, "mastery_cards")) {
+      db.prepare("DELETE FROM mastery_cards WHERE document_path = ?").run(normalizedPath);
+    }
+    if (tableExists(db, "mastery_weaknesses")) {
+      db.prepare("DELETE FROM mastery_weaknesses WHERE document_path = ?").run(normalizedPath);
+    }
     db
       .prepare(
         `
@@ -1221,33 +1319,91 @@ async function generateDocumentMasteryMetaphor({ documentPath, markdown = "", se
   return getDocumentMastery(normalizedPath, cleanMarkdown);
 }
 
-function updateMasteryConceptLevel({ conceptId, documentPath, markdown = "", masteryLevel }) {
+function updateMasteryConceptLevel({ conceptId, documentPath, markdown = "", masteryLevel, masterySettings = {} }) {
+  if (!masteryLevels.includes(masteryLevel)) {
+    throw new Error("Invalid mastery level.");
+  }
+
+  const thresholds = normalizeMasteryScoringSettings(masterySettings).thresholds;
+  const scoresByLevel = { new: 0, ...thresholds };
+
+  return updateMasteryConceptScore({
+    conceptId,
+    documentPath,
+    markdown,
+    masterySettings,
+    score: scoresByLevel[masteryLevel],
+  });
+}
+
+function masteryLevelForStageStates(stageStates, masterySettings = {}) {
+  const thresholds = normalizeMasteryScoringSettings(masterySettings).thresholds;
+  const scores = stageStates.map((state) => Number(state.score || 0));
+  const attemptCount = stageStates.reduce((total, state) => total + Number(state.attemptCount ?? state.attempt_count ?? 0), 0);
+  const overall = scores.reduce((total, score) => total + score, 0) / Math.max(1, scores.length);
+
+  if (attemptCount === 0 && overall === 0) return "new";
+  if (overall >= thresholds.mastered) return "mastered";
+  if (overall >= thresholds.advanced) return "advanced";
+  if (overall >= thresholds.proficient) return "proficient";
+  if (overall >= thresholds.developing) return "developing";
+  if (overall >= thresholds.familiar) return "familiar";
+  return "new";
+}
+
+function updateMasteryConceptScore({ conceptId, documentPath, markdown = "", masterySettings = {}, score }) {
   const normalizedPath = normalizeDocumentPath(documentPath);
   const numericConceptId = Number(conceptId);
+  const numericScore = Math.max(0, Math.min(100, Number(score)));
   if (!normalizedPath) {
     throw new Error("Document path is required.");
   }
   if (!Number.isInteger(numericConceptId) || numericConceptId <= 0) {
     throw new Error("Concept ID is required.");
   }
-  if (!masteryLevels.includes(masteryLevel)) {
-    throw new Error("Invalid mastery level.");
+  if (!Number.isFinite(numericScore)) {
+    throw new Error("Mastery score must be a number between 0 and 100.");
   }
 
-  const result = getMasteryDatabase()
-    .prepare(
-      `
-        UPDATE mastery_concepts
-        SET mastery_level = ?,
-            mastery_rationale = ?,
-            updated_at = ?
-        WHERE id = ? AND document_path = ? AND status = 'active'
-      `,
-    )
-    .run(masteryLevel, "Set manually by you.", Date.now(), numericConceptId, normalizedPath);
-
-  if (result.changes === 0) {
+  const db = getMasteryDatabase();
+  const concept = db
+    .prepare("SELECT id FROM mastery_concepts WHERE id = ? AND document_path = ? AND status = 'active'")
+    .get(numericConceptId, normalizedPath);
+  if (!concept) {
     throw new Error("Mastery concept was not found.");
+  }
+
+  ensureMasteryStageStates([numericConceptId]);
+  const now = Date.now();
+  const stageStates = masteryStages.map((stage) => ({ attemptCount: 0, score: numericScore, stage }));
+  const masteryLevel = numericScore === 0 ? "new" : masteryLevelForStageStates(stageStates, masterySettings);
+
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db
+      .prepare(
+        `
+          UPDATE mastery_stage_states
+          SET score = ?, updated_at = ?
+          WHERE concept_id = ?
+        `,
+      )
+      .run(numericScore, now, numericConceptId);
+    db
+      .prepare(
+        `
+          UPDATE mastery_concepts
+          SET mastery_level = ?,
+              mastery_rationale = ?,
+              updated_at = ?
+          WHERE id = ? AND document_path = ? AND status = 'active'
+        `,
+      )
+      .run(masteryLevel, "Set manually by you.", now, numericConceptId, normalizedPath);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
   }
 
   return getDocumentMastery(normalizedPath, markdown);
@@ -1256,9 +1412,16 @@ function updateMasteryConceptLevel({ conceptId, documentPath, markdown = "", mas
 module.exports = {
   clearDocumentMastery,
   closeMasteryDatabase,
+  ensureMasteryStageStates,
   generateDocumentMastery,
   generateDocumentMasteryMetaphor,
+  getMasteryDatabase,
   getDocumentMastery,
+  masteryLevelForStageStates,
   masteryLevels,
+  masteryStages,
+  normalizeDocumentPath,
+  tableExists,
   updateMasteryConceptLevel,
+  updateMasteryConceptScore,
 };

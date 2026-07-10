@@ -26,7 +26,15 @@ const {
   generateDocumentMasteryMetaphor,
   getDocumentMastery,
   updateMasteryConceptLevel,
+  updateMasteryConceptScore,
 } = require("./mastery/masteryConcepts");
+const {
+  clearDocumentMasteryCards,
+  continueMasteryCardDiscussion,
+  evaluateMasteryCard,
+  generateDocumentMasteryCards,
+  getDocumentMasteryCards,
+} = require("./mastery/masteryCards");
 const {
   closeSearchDatabase,
   deleteIndexedDocument,
@@ -374,6 +382,17 @@ ipcMain.handle("mastery:updateConceptLevel", async (_event, request) => {
   });
 });
 
+ipcMain.handle("mastery:updateConceptScore", async (_event, request) => {
+  if (!request?.documentPath) {
+    throw new Error("Document path is required.");
+  }
+
+  return updateMasteryConceptScore({
+    ...request,
+    documentPath: filePathWithExtension(request.documentPath),
+  });
+});
+
 ipcMain.handle("mastery:generateMetaphor", async (_event, request) => {
   if (!request?.documentPath) {
     throw new Error("Document path is required.");
@@ -412,6 +431,67 @@ ipcMain.handle("mastery:clearDocumentMastery", async (_event, request) => {
   }
 
   return clearDocumentMastery({
+    ...request,
+    documentPath: filePathWithExtension(request.documentPath),
+  });
+});
+
+ipcMain.handle("mastery:getCards", async (_event, documentPath) => {
+  return getDocumentMasteryCards(filePathWithExtension(documentPath));
+});
+
+ipcMain.handle("mastery:generateCards", async (_event, request) => {
+  if (!request?.documentPath) {
+    throw new Error("Document path is required.");
+  }
+
+  const documentPath = filePathWithExtension(request.documentPath);
+  const sendProgress = (progress) => {
+    _event.sender.send("mastery:cardProgress", {
+      ...progress,
+      documentPath,
+    });
+  };
+
+  configureAiSettings(request?.settings);
+  try {
+    return await generateDocumentMasteryCards({
+      ...request,
+      documentPath,
+      onProgress: sendProgress,
+    });
+  } catch (error) {
+    sendProgress({
+      completed: 0,
+      label: error instanceof Error ? error.message : "Flashcard generation failed.",
+      phase: "error",
+      total: 1,
+    });
+    throw error;
+  }
+});
+
+ipcMain.handle("mastery:continueCardDiscussion", async (_event, request) => {
+  if (!request?.documentPath) throw new Error("Document path is required.");
+  configureAiSettings(request?.settings);
+  return continueMasteryCardDiscussion({
+    ...request,
+    documentPath: filePathWithExtension(request.documentPath),
+  });
+});
+
+ipcMain.handle("mastery:evaluateCard", async (_event, request) => {
+  if (!request?.documentPath) throw new Error("Document path is required.");
+  configureAiSettings(request?.settings);
+  return evaluateMasteryCard({
+    ...request,
+    documentPath: filePathWithExtension(request.documentPath),
+  });
+});
+
+ipcMain.handle("mastery:clearCards", async (_event, request) => {
+  if (!request?.documentPath) throw new Error("Document path is required.");
+  return clearDocumentMasteryCards({
     ...request,
     documentPath: filePathWithExtension(request.documentPath),
   });

@@ -13,15 +13,11 @@ import {
   XIcon,
 } from "@phosphor-icons/react";
 import { useEffect, useRef, useState } from "react";
-import rehypeHighlight from "rehype-highlight";
-import rehypeKatex from "rehype-katex";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import remarkMath from "remark-math";
 import type { ProposedDocumentPatch } from "./documentPatch";
 import type { ChangeEvent, DragEvent, FormEvent, KeyboardEvent, ClipboardEvent } from "react";
 import { runStudyAgentLoop, type AgentContextState, type AgentSource, type AgentToolCall } from "./studyAgent";
 import type { CurrentDocumentAgentTools } from "@/components/editor/TiptapEditor";
+import RichMarkdown from "@/components/markdown/RichMarkdown";
 
 const sessionsStorageKey = "learner.ai.sessions.v2";
 const currentSessionStorageKey = "learner.ai.currentSession.v2";
@@ -402,8 +398,7 @@ function MessageContent({
   }
 
   return (
-    <div className="learner-ai-markdown">
-      <ReactMarkdown
+      <RichMarkdown
         components={{
           a: ({ children, href }) => {
             const source = sourceFromHref(href, sources);
@@ -428,12 +423,9 @@ function MessageContent({
             );
           },
         }}
-        rehypePlugins={[rehypeKatex, rehypeHighlight]}
-        remarkPlugins={[remarkGfm, remarkMath]}
       >
         {contentWithSourceLinks(normalizeMathDelimiters(message.content))}
-      </ReactMarkdown>
-    </div>
+      </RichMarkdown>
   );
 }
 

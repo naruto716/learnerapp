@@ -1,495 +1,299 @@
-# Mastery Flashcard System Product Design
+# Mastery Flashcard System
 
-- Status: draft
-- Scope: product design only
-- Current slice: flashcards associated with mastery concepts
-- Out of scope for this slice: full forgetting-curve scheduler, calendar, and long-term review optimization
+- Status: active product specification
+- Scope: product behavior
+- Current slice: card generation, practice, evaluation, mastery points, and weaknesses
+- Deferred: long-term scheduling and review planning
 
-## Product Intent
+## Product Purpose
 
-Build a flashcard system that behaves more like an adaptive drill system than a normal question-answer deck.
+The mastery system turns the detailed concepts extracted from one note into adaptive practice. It is not a conventional front-and-back flashcard deck and it should not force every subject through the same sequence of exercises.
 
-The system starts from detailed mastery concepts extracted from a note. Cards are generated around those concepts, but cards do not have to belong to only one concept or one learning stage. A contrast card can target two concepts. A project scenario can target several concepts. A debugging card can target one stage for one concept and another stage for a related concept.
+The user chooses a target proficiency for each note. The system then generates additional cards from:
 
-The goal is not to maximize card count. The goal is to generate the next useful practice item based on:
+- the note's concepts
+- current mastery evidence
+- active weaknesses
+- existing cards and attempts
+- the knowledge graph when relationships are useful
+- the shared metaphor when a Feynman card is useful
+- the user's learning profile
+- the note's persistent generation prompt
 
-- the concept's current mastery
-- the user's weaknesses
-- the stage being trained
-- the user's background and target level
-- optional instructions from the user
-- the shape of the concept itself
+## Note Learning Goal
 
-## User Profile
+Each note retains:
 
-The settings page should let the user describe their current background and target level.
+- target proficiency
+- generation prompt
+
+The default target is **Proficient**. Opening card generation again shows the saved values. The user may change either value before generating more cards.
+
+Generation always adds cards. It does not replace the existing deck. Clearing the deck is a separate, explicit action.
+
+Example generation prompts:
+
+- Generate more mathematical derivation drills.
+- Focus on production failure diagnosis.
+- Avoid basic definitions; test research-level tradeoffs.
+- Work on the weaknesses exposed in my last attempts.
+
+## Learning Evidence
+
+Every concept tracks a `0-100` score for five evidence dimensions:
+
+- Stage 2: plain comprehension
+- Stage 3: connections and usable mental models
+- Stage 4: relationships and distinctions
+- Stage 5: fault finding and reliable execution
+- Stage 6: transfer to difficult new situations
+
+These stages are evidence labels, not card categories. A card type is never selected because it belongs to a particular stage. The generator chooses the interaction that fits the concept and records every concept-stage pair that a successful answer actually demonstrates.
 
 Examples:
 
-- "I am doing a PhD in machine learning."
-- "I am a senior software engineer."
-- "I want questions at research depth."
-- "I want software architecture and production tradeoff questions."
-- "I am new to distributed systems."
+- A LeetCode pattern may need many drills and transfer problems.
+- A history concept may need more relationship and contrast cards.
+- A simple definition with difficult operational consequences may need debugging cards early.
+- One card may demonstrate several stages or several concepts when the task genuinely requires all of them.
 
-The card generator and answer evaluator should use this profile to calibrate difficulty.
+The same mastery points are applied to every targeted concept-stage pair. Credit is not divided between targets.
 
-For an advanced user, avoid basic definitional prompts unless the concept is genuinely new or the user has repeatedly failed basic comprehension. Prefer questions that test mechanisms, assumptions, tradeoffs, counterexamples, implementation consequences, and transfer to unfamiliar situations.
+## Mastery Scale
 
-## Concept Tracking
+Overall concept mastery is the arithmetic mean of Stages 2 through 6:
 
-Each mastery concept should track:
+```text
+overall = round((stage2 + stage3 + stage4 + stage5 + stage6) / 5)
+```
 
-- mastery level
-- stage points for each learning stage
-- generated cards linked to the concept
-- weaknesses exposed by answers
-- last reviewed time
-- latest answer quality
-- whether the concept is active, done, or archived
+Default level thresholds are:
 
-The current stage numbers are:
+| Level | Score |
+| --- | ---: |
+| Familiar | 25 |
+| Developing | 50 |
+| Proficient | 80 |
+| Advanced | 90 |
+| Mastered | 95 |
 
-1. Acquisition
-2. Comprehension
-3. Advanced connection
-4. Structuring and modeling
-5. Debugging
-6. Application
+The thresholds are editable in Settings. The visible mastery label uses the current thresholds. A score below Familiar remains New.
 
-Stage 1 is handled by reading the note. The flashcard system starts at Stage 2.
+## Card Difficulty And Points
 
-Each concept should have numeric stage progress:
+Every generated card has a difficulty:
 
-- Stage 2 comprehension points: 0-100
-- Stage 3 connection points: 0-100
-- Stage 4 structure points: 0-100
-- Stage 5 debugging points: 0-100
-- Stage 6 application points: 0-100
+- Introductory: direct, supported use
+- Standard: independent routine use
+- Advanced: multi-step work or unfamiliar transfer
+- Expert: ambiguous, synthesis-heavy, or unusually demanding work
 
-The existing mastery level can remain the compact label shown in the UI, but card generation should use the stage points and weakness history. A concept should not be treated as high mastery just because the user can repeat a definition.
+An evaluated answer is cleared when it reaches the configurable passing score. The default passing score is `80`.
 
-## Card Model
+A cleared card adds a fixed number of mastery points based on card type and difficulty. A failed card adds no mastery points. The default values are:
 
-A flashcard is a reusable practice object.
+| Card type | Introductory | Standard | Advanced | Expert |
+| --- | ---: | ---: | ---: | ---: |
+| Feynman | 8 | 12 | 16 | 20 |
+| Relationship | 8 | 12 | 16 | 20 |
+| Contrast | 8 | 12 | 16 | 20 |
+| Debugging | 10 | 14 | 18 | 22 |
+| Diagnostic | 8 | 12 | 16 | 20 |
+| Drill | 6 | 10 | 14 | 18 |
+| Quiz | 8 | 12 | 18 | 24 |
+| Simulation | 10 | 14 | 20 | 26 |
 
-Each card should track:
+The pass score, level thresholds, and complete points table are editable in Settings and can be reset to defaults. These are product calibration values, not claims of psychometric precision.
 
-- prompt
-- expected answer or answer rubric
-- target concepts
-- target stages
-- difficulty
-- required context
-- whether concept cards are visible before answering
-- whether metaphor context is visible before answering
-- allowed answer mode
-- attempts
-- weaknesses exposed
-- card status
-- next eligible time
+## Card Selection
 
-Cards can target:
+There is no fixed number of cards per concept, stage, or type. The model chooses a useful mix and should avoid redundant cards already present in the deck.
 
-- one concept in one stage
-- one concept across multiple stages
-- multiple concepts in one stage
-- multiple concepts across multiple stages
+Selection priorities are:
 
-Example:
+1. Work on active weaknesses that block the target proficiency.
+2. Fill important gaps in concept-stage evidence.
+3. Match the interaction to the nature of the concept.
+4. Use the learner profile to set expected depth and context.
+5. Follow the note's generation prompt.
 
-- A contrast card about TCP vs UDP can target Stage 4 for both concepts.
-- A debugging card about duplicate message handling can target Stage 5 for idempotency and delivery semantics.
-- A project simulation can target Stage 6 for several concepts from the same note.
+The model must not create passive concept review, metaphor recall, memory-scene reconstruction, or generic definition cards as invented categories.
 
-## Card Status
+## Card Contracts
 
-Cards should have simple status before the full scheduling system exists:
+### Feynman
 
-- `active`: available now
-- `in_progress`: currently being answered
-- `cleared`: answered well enough and does not need to appear again by default
-- `delayed`: answered weakly and should come back later
-- `archived`: no longer relevant because concepts changed
+Purpose: make the learner teach one concept plainly enough to expose weak understanding.
 
-For the first slice:
+Before answering:
 
-- If the user clears a card well, mark it as cleared.
-- If the user answers poorly or partially, record weaknesses and delay it for about 3 days.
-- If the user explicitly wants more practice, the system can generate new related cards instead of resurrecting cleared cards.
+1. Show exactly one concept card.
+2. Show that concept's role and image from the shared metaphor.
+3. Ask: **Teach this concept in your own words. Do not copy the concept card's wording.**
 
-The full forgetting-curve scheduler comes later. For now, the app only needs enough card state to avoid losing practice history.
+After answering:
 
-## Weakness Tracking
+- identify the important weakness, if one exists
+- give feedback in plain language
+- show a detailed sample explanation
 
-When the user fails or gives a weak answer, record the weakness as a first-class learning object.
+This is not a comparison question, mechanism checklist, or disguised quiz. Do not generate a Feynman card when the note has no shared metaphor.
 
-Each weakness should track:
+### Relationship
 
-- related concepts
-- related stages
-- evidence from the user's answer
-- severity
-- short diagnosis
-- recommended next card direction
-- whether the weakness appears resolved later
+Purpose: reason about why concepts are connected and what follows from the connection.
 
-Weakness examples:
+- Show a focused set of actual knowledge-graph relationships.
+- Ask one question about those visible relationships.
+- Do not merely list concept names or claim that a graph was supplied when the learner cannot see it.
+- Do not reveal all target concept explanations before the answer.
 
-- Cannot explain the mechanism.
-- Confuses two related concepts.
-- Knows the term but not the consequence.
-- Misses an edge case.
-- Gives a correct answer only in the original note context.
-- Cannot transfer the idea to a new scenario.
-- Cannot debug a broken example.
+### Contrast
 
-Future card generation should use weaknesses directly. If the user fails because they confuse delivery reliability with ordering, later cards should ask contrast, debugging, and scenario questions around that confusion.
+Purpose: separate concepts the learner may confuse.
 
-## Shared Answer Experience
+- Focus on one consequential distinction.
+- Ask for the boundary, different prediction, or decision that follows from it.
+- Use multiple concepts only when the distinction genuinely requires them.
 
-Every card should support a shared answer flow:
+### Debugging
 
-1. Show the prompt.
-2. Optionally show concept card context before answering.
-3. Let the user answer.
-4. Let the user reveal the answer or ask for evaluation.
-5. Grade the answer with an LLM.
-6. Show feedback.
-7. Record exposed weaknesses.
-8. Update stage points and card status.
-9. Offer a concept card peek after answer reveal.
+Purpose: diagnose and repair a faulty mental model or artifact.
 
-Answer modes:
+- Provide a concrete flawed claim, proof, trace, design, code fragment, or incident.
+- Ask the learner to locate the failure and repair it.
+- Do not reveal the target concept explanation before the answer.
 
-- single-turn answer
-- multi-turn drill chat
-- project simulation chat
-- quiz answer
+### Diagnostic
 
-The user should be able to end a multi-turn session explicitly. The LLM can also decide that the drill has reached a natural stopping point and recommend ending.
+Purpose: expose a precise gap through unsupported explanation.
 
-## Shared Renderer
+- Hide the concept and metaphor before answering.
+- Ask for one focused explanation from memory.
+- Do not provide a multi-part answer checklist.
+- Evaluate where the explanation becomes vague, term-heavy, or mechanically wrong.
 
-Cards, chat feedback, revealed answers, graph questions, tables, and generated diagrams should share one renderer.
+### Drill
 
-The renderer should support:
+Purpose: build reliable procedural or reasoning skill.
 
-- Markdown
-- GitHub-style tables
-- code blocks
-- Mermaid diagrams
-- images
-- concept card embeds
-- metaphor image embeds
+- Give one focused exercise.
+- Support mathematics, proofs, algorithms, coding patterns, and other procedural subjects.
+- Require intermediate work when it helps locate the exact mistake.
+- Reveal a worked solution and targeted feedback after evaluation.
 
-Stage 4 especially needs tables and Mermaid diagrams because relationship and structure questions may naturally use matrices, flows, or dependency graphs.
+### Quiz
 
-## Stage 2: Comprehension
+Purpose: test independent reasoning on one coherent problem.
 
-Goal:
+- Prefer difficult, answerable tasks over easy conceptual checks.
+- Test transfer, edge cases, tradeoffs, or synthesis when the concept supports them.
+- Never bundle unrelated questions into one card.
 
-- Make sure the user can explain the concept in plain language and understands the mechanism.
+### Simulation
 
-Default card type:
+Purpose: apply concepts in a bounded work or project environment.
 
-- Feynman explanation drill
+- State the learner's role, constraints, and starting state.
+- Continue as a multi-turn interaction.
+- Keep the simulated environment consistent.
+- End when there is enough evidence to evaluate or the learner explicitly ends it.
 
-Prompt shape:
+## Answer Experience
 
-- Show the concept card.
-- Ask the user to explain the concept as if teaching it to someone intelligent but unfamiliar with the note.
-- Ask for mechanism, example, and why it matters.
+Cards support a single answer or a bounded multi-turn interaction. The answer field grows with its content. Answer actions stay at the lower right of the answer area.
 
-Answer modes:
+After evaluation, show:
 
-- single-turn answer
-- multi-turn drill chat
+- score and personalized feedback
+- detailed sample answer or worked solution
+- weaknesses exposed or resolved
+- the resulting card state
+- an option to peek at relevant concept cards when they were hidden before answering
 
-Multi-turn behavior:
+Peeking is available only after answer reveal and does not change the score.
 
-- The LLM asks follow-up questions when the explanation is vague, term-heavy, or missing mechanism.
-- The drill ends when the user gives a clear explanation or explicitly asks to stop.
-- The system records weaknesses from the conversation, not only from the first answer.
+All card prompts, sample answers, feedback, tables, diagrams, code, and chat messages use the shared rich Markdown presentation.
 
-Concept visibility:
+## Card Outcomes
 
-- Concept card is visible before answering.
-- After answer reveal, the user can peek at the concept card again.
+### Cleared
 
-Generation guidance:
+When the answer reaches the configured pass score:
 
-- Low mastery should prioritize these cards.
-- Do not generate many redundant definition cards.
-- If the concept is simple but application is hard, generate fewer Stage 2 cards and move practice toward later stages.
+- mark the card done
+- add its configured points to every targeted concept-stage pair
+- cap each stage score at `100`
+- resolve a targeted weakness only when the evaluator confirms that the answer no longer shows it
 
-## Stage 3: Advanced Connection
+### Not Cleared
 
-Goal:
+When the answer is below the configured pass score:
 
-- Connect the concept to a vivid metaphor, memory image, and nearby ideas.
+- award zero mastery points
+- keep the card associated with its targets
+- record material weaknesses
+- delay the card for three days in the current slice
 
-Default card types:
+Long-term forgetting-curve scheduling remains deferred.
 
-- metaphor recall card
-- concept-to-metaphor explanation card
-- memory scene reconstruction card
+## Weakness Lifecycle
 
-Prompt shape:
+A weakness is either:
 
-- Show the concept card.
-- Show the shared metaphor and image when available.
-- Ask the user to explain what the concept is inside the metaphor and why that mapping works.
+- Active: available to influence future generation
+- Resolved: retained in history but excluded from weakness-focused generation
 
-Concept visibility:
+A card intentionally generated to address a weakness is associated with it. After evaluation:
 
-- Concept card is visible.
-- Metaphor is visible.
-- Image is visible if generated.
+- a passing answer may resolve it only when the evaluator directly confirms the gap is absent
+- a failed answer keeps it active
+- several weaknesses on one card are evaluated independently
+- later contradictory evidence reopens the existing weakness instead of creating a duplicate
 
-Generation guidance:
+Future generation should converge on current weaknesses and stop focusing on weaknesses already solved.
 
-- Use the current metaphor world if one exists.
-- If the metaphor is stale, suggest regenerating it before generating many Stage 3 cards.
-- Stage 3 is useful for low-to-mid mastery, especially when the user can understand the concept but does not remember it easily.
+## Associations And Deletion
 
-## Stage 4: Structuring And Modeling
+A card may belong to one or many concepts and may record one or many stages for each concept.
 
-Goal:
+Deleting a concept removes its card targets, weakness targets, attempts, and related progress. A shared card remains when it still has another surviving concept target. A card with no surviving targets is deleted.
 
-- Make the user understand relationships, contrasts, dependencies, and external connections.
+Deleting all generated concepts for a note cascades through cards, attempts, weaknesses, progress, metaphor data, and generated mastery images.
 
-Default card types:
+## Mastery Area
 
-- contrast card
-- relationship explanation card
-- concept map question
-- graph-based question
-- matrix/table card
-- Mermaid flow card
+The Mastery header contains the Concepts/Flashcards switch next to the title and current count.
 
-Inputs:
+The Concepts area owns its own Overview/Focus switch. The Flashcards area separately owns Deck/Practice views. This keeps navigation scoped to the content it changes.
 
-- mastery concepts
-- knowledge graph concepts
-- knowledge graph relationships
-- source note
-- optionally related external concepts
+## Deferred Scheduling
 
-Prompt shape:
+The current slice stores review timestamps and uses the initial three-day failed-card delay, but it does not yet implement:
 
-- Ask questions about relationships between concepts.
-- Ask the user to compare two or more concepts.
-- Ask the user to explain why a relation exists.
-- Ask the user to complete or critique a table, flow, or diagram.
+- forgetting-curve scheduling
+- automatic review planning
+- a review calendar
+- personalized scheduling parameters
+- automatic generation when a concept-stage pair becomes due
 
-Answer rendering:
+Those behaviors should be designed after the card interactions and scoring values have been tested in real use.
 
-- Markdown tables are allowed.
-- Mermaid diagrams are allowed.
-- The shared renderer must be used.
+## Acceptance Criteria
 
-Generation guidance:
-
-- Mid mastery should receive more Stage 4 cards.
-- A card can target multiple concepts.
-- If the graph is missing, the system can still generate relationship cards from mastery concepts, but graph-backed cards should be preferred when graph data exists.
-
-## Stage 5: Debugging
-
-Goal:
-
-- Expose broken mental models, missing edge cases, and false confidence.
-
-Default card types:
-
-- boundary-condition test
-- broken-example diagnosis
-- Feynman diagnostic without visible concept card
-- misleading scenario
-- counterexample prompt
-
-Prompt shape:
-
-- Do not show the concept card before answering.
-- Ask the user to reason through a case where the concept is easy to misuse.
-- Include enough information to answer, but do not reveal the relevant concept card upfront.
-
-Answer behavior:
-
-- After the user answers, evaluate both correctness and reasoning.
-- Reveal the concept card only after answer reveal or if the user chooses to peek.
-- Record precise weaknesses.
-
-Generation guidance:
-
-- Mid-high mastery should receive more Stage 5 cards.
-- These cards should be difficult enough to catch shallow understanding.
-- If the user repeatedly fails Stage 5, future cards should generate simpler diagnostic steps before returning to harder cases.
-
-## Stage 6: Application
-
-Goal:
-
-- Make the user apply the concept in realistic or hard scenarios.
-
-Default card types:
-
-- project scenario
-- work simulation
-- research-style application question
-- architecture tradeoff prompt
-- hard quiz
-
-Prompt shape:
-
-- Give a pseudo scenario.
-- Ask the user to make decisions, justify tradeoffs, debug constraints, or design an approach.
-- For a senior software engineering or PhD ML profile, scenarios should be at that level unless the concept itself is new.
-
-Project simulation behavior:
-
-- Use a multi-turn chat.
-- The LLM plays the environment, teammate, reviewer, system, or user depending on the scenario.
-- The user must ask questions, make choices, and respond to changing constraints.
-- The session ends when the objective is solved, the LLM decides enough evidence has been collected, or the user asks to end.
-
-Hard quiz behavior:
-
-- Quizzes at this stage should not be easy conceptual checks.
-- Prefer questions requiring transfer, tradeoffs, edge cases, derivation, implementation consequences, or synthesis across concepts.
-- Multiple choice is acceptable only when distractors test real misconceptions.
-
-Generation guidance:
-
-- High mastery should receive more Stage 6 cards.
-- A straightforward concept with difficult application should move here earlier.
-- A concept that is conceptually complex but rarely applied may need more Stage 2-4 cards first.
-
-## Card Generation Algorithm
-
-When the user requests card generation, the system should ask for optional instructions.
-
-Examples:
-
-- "Generate more application cards."
-- "Focus on graph relationships."
-- "I want hard quiz questions."
-- "I keep confusing X and Y."
-- "Make this practical for backend system design."
-
-Inputs to generation:
-
-- selected concepts
-- concept explanations
-- concept mastery levels
-- stage points
-- existing cards
-- card attempt history
-- weaknesses
-- metaphor data
-- knowledge graph data
-- user profile
-- optional user instruction
-
-The generator should decide how many cards to create. Do not hard-limit stage counts. The model should justify card mix through the generated card metadata, not through UI explanation.
-
-Rough selection rule:
-
-- Low mastery: focus on Stage 2 comprehension and Stage 3 connection.
-- Mid mastery: focus on Stage 4 relationships, contrasts, and structure.
-- Mid-high mastery: focus on Stage 5 debugging and Stage 6 application.
-- High mastery: generate fewer but harder Stage 6 cards, especially scenario and synthesis cards.
-
-Override rule:
-
-- The concept itself matters more than the rough rule.
-- A simple definition with hard real-world use should receive application cards earlier.
-- A concept with many confusable neighbors should receive contrast and relationship cards earlier.
-- A concept with repeated reasoning errors should receive debugging cards even if the mastery label is not high.
-
-## Card Evaluation
-
-The evaluator should produce:
-
-- score
-- pass/fail
-- confidence
-- feedback
-- ideal answer or rubric comparison
-- weaknesses exposed
-- stage point updates
-- card status recommendation
-
-The score should not be based only on whether the final answer sounds correct. It should consider:
-
-- mechanism
-- causal reasoning
-- examples
-- edge cases
-- transfer
-- relationship to other concepts
-- ability to debug misuse
-- ability to apply under constraints
-
-For most cards:
-
-- Strong answer: mark cleared and raise relevant stage points.
-- Partially correct answer: record weaknesses and delay the card.
-- Weak answer: record weaknesses, delay the card, and generate follow-up cards if useful.
-
-## Concept Peek
-
-When answering a card, the user should be able to reveal support context.
-
-Peek options:
-
-- show concept card
-- show source excerpt
-- show metaphor
-- show graph neighbors
-
-Peeking before answering should reduce the evaluation strength because the user used support. Peeking after answer reveal should not penalize the answer.
-
-Stage behavior:
-
-- Stage 2 and Stage 3 can show concept support before answering.
-- Stage 4 can show selected graph or relationship context when the card is designed for inspection.
-- Stage 5 should hide the concept card before answering by default.
-- Stage 6 should usually hide concept cards before answering, but allow peeking if the user wants guided practice.
-
-## First Build Slice
-
-The first flashcard implementation should include:
-
-- user profile fields in settings
-- generate cards from current mastery concepts
-- optional generation instruction
-- card list grouped by concept and stage
-- card detail view
-- single-turn answer mode
-- multi-turn Feynman drill mode
-- answer reveal
-- LLM grading
-- weakness recording
-- per-stage points
-- card status: active, cleared, delayed, archived
-- concept peek after answer reveal
-- shared Markdown renderer for card prompts, answers, and feedback
-
-Stage 4-6 cards can be generated early, but the first slice should not need the full scheduling/calendar system.
-
-## Product Acceptance Criteria For First Slice
-
-1. A user can generate flashcards from extracted mastery concepts.
-2. The generator can use optional user instructions.
-3. Each generated card shows its target concepts and stage numbers.
-4. A card can target multiple concepts and multiple stages.
-5. The user can answer a card in single-turn mode.
-6. The user can do a multi-turn Feynman drill for comprehension cards.
-7. The evaluator records score, feedback, card status, and weaknesses.
-8. Weaknesses appear on the associated concepts.
-9. Cleared cards do not reappear by default.
-10. Weak cards are delayed instead of deleted.
-11. The user can peek at the concept card after revealing the answer.
-12. The renderer supports Markdown tables and Mermaid diagrams for relationship cards.
+1. Each note retains a target proficiency and generation prompt.
+2. Generating again adds cards and avoids repeating existing cards.
+3. Card type is selected independently from mastery stage.
+4. Every card records only the concept-stage pairs its answer genuinely demonstrates.
+5. Feynman cards show exactly one concept and its metaphor, then ask the learner to teach it in their own words.
+6. Relationship cards show the exact graph relationships used by the question.
+7. Contrast, debugging, diagnostic, drill, quiz, and simulation cards follow their defined interaction contracts.
+8. Mathematical and procedural concepts can receive focused drills and hard problems.
+9. Answer fields grow with their content and actions are aligned at the lower right.
+10. Evaluation reveals feedback, a detailed sample answer, and weakness outcomes.
+11. Hidden concept cards can be peeked only after answer reveal; peeking does not affect score.
+12. A failed answer adds no mastery points and delays the card for three days.
+13. A cleared answer adds the configured card-type-and-difficulty points to every target pair without dividing credit.
+14. The pass score, mastery thresholds, and points matrix are editable and independently resettable.
+15. Resolved weaknesses stop influencing generation and can be reopened by later evidence.
+16. Deleting concepts and cards cascades without deleting a shared card that still has a surviving target.

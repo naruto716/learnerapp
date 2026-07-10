@@ -49,6 +49,7 @@ declare global {
     imageQuality?: string;
     imageBackground?: string;
     imageOutputFormat?: string;
+    userProfile?: string;
   };
 
   type LearnerAiModel = {
@@ -214,10 +215,28 @@ declare global {
     masteryLevel: MasteryLevel;
     masteryRationale: string;
     name: string;
+    overallScore: number;
     sourceExcerptMarkdown: string;
+    stageStates: MasteryStageState[];
     status: string;
     type: string;
     updatedAt: number;
+  };
+
+  type MasteryStage = 2 | 3 | 4 | 5 | 6;
+
+  type MasteryStageState = {
+    attemptCount: number;
+    conceptId?: number;
+    fsrsDifficulty?: number | null;
+    fsrsRetrievability?: number | null;
+    fsrsStability?: number | null;
+    lastReviewedAt: number | null;
+    lapseCount: number;
+    nextDueAt: number | null;
+    score: number;
+    stage: MasteryStage;
+    status: string;
   };
 
   type MasteryMetaphorConceptScene = {
@@ -283,6 +302,7 @@ declare global {
     conceptId: number;
     documentPath: string;
     markdown?: string;
+    masterySettings?: MasteryScoringSettings;
     masteryLevel: MasteryLevel;
   };
 
@@ -295,6 +315,149 @@ declare global {
   type DocumentMasteryClearRequest = {
     documentPath: string;
     markdown?: string;
+  };
+
+  type MasteryCardKind =
+    | "feynman"
+    | "relationship"
+    | "contrast"
+    | "debugging"
+    | "diagnostic"
+    | "drill"
+    | "quiz"
+    | "scenario";
+  type MasteryCardDifficulty = "introductory" | "standard" | "advanced" | "expert";
+  type MasteryCardAnswerMode = "single_turn" | "multi_turn";
+  type MasteryCardStatus = "active" | "delayed" | "done";
+  type MasteryTargetProficiency = Exclude<MasteryLevel, "new">;
+
+  type MasteryScoringSettings = {
+    passingScore: number;
+    points: Record<MasteryCardKind, Record<MasteryCardDifficulty, number>>;
+    thresholds: Record<MasteryTargetProficiency, number>;
+  };
+
+  type MasteryCardPreferences = {
+    generationPrompt: string;
+    targetProficiency: MasteryTargetProficiency;
+  };
+
+  type MasteryCardTarget = {
+    conceptId: number;
+    conceptName: string;
+    stage: MasteryStage;
+  };
+
+  type MasteryCardWeaknessLink = {
+    relationship: "target" | "exposed";
+    weaknessId: number;
+  };
+
+  type MasteryCardMessage = {
+    contentMarkdown: string;
+    id: number;
+    role: "assistant" | "user";
+  };
+
+  type MasteryCardAttempt = {
+    answerMarkdown: string;
+    createdAt: number;
+    feedbackMarkdown: string;
+    id: number;
+    score: number;
+  };
+
+  type MasteryCard = {
+    answerMode: MasteryCardAnswerMode;
+    conceptContextVisible: boolean;
+    contextMarkdown: string;
+    createdAt: number;
+    difficulty: MasteryCardDifficulty;
+    expectedAnswerMarkdown: string;
+    id: number;
+    graphEdgeIds: number[];
+    kind: MasteryCardKind;
+    latestAttempt: MasteryCardAttempt | null;
+    messages: MasteryCardMessage[];
+    metaphorContextVisible: boolean;
+    promptMarkdown: string;
+    retryAt: number | null;
+    rubricMarkdown: string;
+    status: MasteryCardStatus;
+    targets: MasteryCardTarget[];
+    title: string;
+    updatedAt: number;
+    weaknessLinks: MasteryCardWeaknessLink[];
+  };
+
+  type MasteryWeakness = {
+    description: string;
+    exposedAt: number;
+    id: number;
+    reopenedCount: number;
+    resolvedAt: number | null;
+    status: "active" | "resolved";
+    targets: MasteryCardTarget[];
+    title: string;
+    updatedAt: number;
+  };
+
+  type DocumentMasteryCards = {
+    cards: MasteryCard[];
+    documentPath: string;
+    preferences: MasteryCardPreferences;
+    stageStates: MasteryStageState[];
+    weaknesses: MasteryWeakness[];
+  };
+
+  type MasteryCardProgressPhase = "graph" | "planning" | "saving" | "done" | "error";
+
+  type MasteryCardProgress = {
+    completed: number;
+    documentPath?: string;
+    label: string;
+    phase: MasteryCardProgressPhase;
+    total: number;
+  };
+
+  type DocumentMasteryCardGenerationRequest = {
+    documentPath: string;
+    generationPrompt: string;
+    markdown: string;
+    masterySettings?: MasteryScoringSettings;
+    settings?: LearnerAiSettings;
+    targetProficiency: MasteryTargetProficiency;
+  };
+
+  type MasteryCardDiscussionRequest = {
+    cardId: number;
+    documentPath: string;
+    markdown?: string;
+    message: string;
+    settings?: LearnerAiSettings;
+  };
+
+  type MasteryCardDiscussionResult = {
+    replyMarkdown: string;
+    shouldEnd: boolean;
+    state: DocumentMasteryCards;
+  };
+
+  type MasteryCardEvaluationRequest = {
+    answerMarkdown?: string;
+    cardId: number;
+    documentPath: string;
+    markdown?: string;
+    masterySettings?: MasteryScoringSettings;
+    settings?: LearnerAiSettings;
+  };
+
+  type DocumentMasteryScoreUpdateRequest = {
+    conceptId: number;
+    documentPath: string;
+    markdown?: string;
+    masterySettings?: MasteryScoringSettings;
+    score: number;
   };
 
   interface Window {
@@ -344,11 +507,26 @@ declare global {
       updateDocumentMasteryConceptLevel: (
         request: DocumentMasteryLevelUpdateRequest,
       ) => Promise<DocumentMastery>;
+      updateDocumentMasteryConceptScore: (
+        request: DocumentMasteryScoreUpdateRequest,
+      ) => Promise<DocumentMastery>;
       generateDocumentMasteryMetaphor: (
         request: DocumentMasteryMetaphorGenerationRequest,
       ) => Promise<DocumentMastery>;
       onMasteryMetaphorProgress: (callback: (progress: MasteryMetaphorProgress) => void) => () => void;
       clearDocumentMastery: (request: DocumentMasteryClearRequest) => Promise<DocumentMastery>;
+      getDocumentMasteryCards: (documentPath: string) => Promise<DocumentMasteryCards>;
+      generateDocumentMasteryCards: (
+        request: DocumentMasteryCardGenerationRequest,
+      ) => Promise<DocumentMasteryCards>;
+      onMasteryCardProgress: (callback: (progress: MasteryCardProgress) => void) => () => void;
+      continueMasteryCardDiscussion: (
+        request: MasteryCardDiscussionRequest,
+      ) => Promise<MasteryCardDiscussionResult>;
+      evaluateMasteryCard: (request: MasteryCardEvaluationRequest) => Promise<DocumentMasteryCards>;
+      clearDocumentMasteryCards: (
+        request: { documentPath: string; resetProgress?: boolean },
+      ) => Promise<DocumentMasteryCards>;
       getDocumentEmbeddingStatus: (settings?: LearnerAiSettings) => Promise<DocumentEmbeddingStatus>;
       rebuildDocumentEmbeddings: (settings?: LearnerAiSettings) => Promise<DocumentEmbeddingStatus>;
       semanticSearchDocuments: (

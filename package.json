@@ -11,7 +11,8 @@
     "electron:dist": "npm run build && electron-builder",
     "build": "cross-env NEXT_OUTPUT_EXPORT=1 next build",
     "start": "serve out",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:mastery": "node scripts/masteryCardsSmoke.js"
   },
   "build": {
     "appId": "com.learner.app",

@@ -2,95 +2,53 @@
 
 import {
   ArrowsClockwiseIcon,
-  CaretLeftIcon,
-  CaretRightIcon,
+  CardsThreeIcon,
+  CrosshairIcon,
   EyeIcon,
   EyeSlashIcon,
+  GridFourIcon,
   ImageIcon,
   SparkleIcon,
+  SquaresFourIcon,
   TrashIcon,
   WarningCircleIcon,
   XIcon,
 } from "@phosphor-icons/react";
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type CSSProperties,
-  type ReactNode,
-  type WheelEvent as ReactWheelEvent,
-} from "react";
-import type { EmblaCarouselType, EmblaOptionsType } from "embla-carousel";
-import useEmblaCarousel from "embla-carousel-react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { useCallback, useState, type ReactNode } from "react";
+import MasteryCardCarousel from "./MasteryCardCarousel";
+import MasteryCardGenerationDialog from "./MasteryCardGenerationDialog";
+import { MasteryCardFrame, MasteryCardNavigation, masteryBottomFadeStyle } from "./MasteryCardLayout";
+import { MasteryConceptContent, MasteryMetaphorContent } from "./MasteryConceptContent";
+import MasteryFlashcards, { type FlashcardView } from "./MasteryFlashcards";
+import { readMasterySettings, type MasteryScoringSettings } from "./masterySettings";
 
 type MasteryPanelProps = {
+  cardError: string | null;
+  cardProgress: MasteryCardProgress | null;
+  cardState: DocumentMasteryCards | null;
   error: string | null;
+  isCardDiscussing: boolean;
+  isCardEvaluating: boolean;
+  isCardGenerating: boolean;
   isLoading: boolean;
   isMetaphorLoading: boolean;
   isSidebarOpen: boolean;
   mastery: DocumentMastery | null;
   metaphorProgress: MasteryMetaphorProgress | null;
   onClear: () => boolean | Promise<boolean>;
+  onClearCards: () => boolean | Promise<boolean>;
   onClose: () => void;
-  onGenerate: (force?: boolean) => void;
+  onContinueCardDiscussion: (cardId: number, message: string) => boolean | Promise<boolean>;
+  onEvaluateCard: (cardId: number, answerMarkdown?: string) => boolean | Promise<boolean>;
+  onGenerate: (force?: boolean) => boolean | Promise<boolean>;
+  onGenerateCards: (preferences: MasteryCardPreferences) => boolean | Promise<boolean>;
   onGenerateMetaphor: () => boolean | Promise<boolean>;
-  onMasteryLevelChange: (conceptId: number, masteryLevel: MasteryLevel) => void | Promise<void>;
+  onMasteryScoreChange: (conceptId: number, score: number) => void | Promise<void>;
   open: boolean;
 };
 
 type MasteryViewMode = "overview" | "focus";
-
-const markdownClassName =
-  "prose prose-invert max-w-none prose-p:my-2 prose-p:leading-7 prose-li:my-1 prose-ul:my-2 prose-ol:my-2 prose-strong:text-white/94 prose-table:text-sm prose-th:border-white/[0.12] prose-td:border-white/[0.1]";
-
-const conceptViewContainerClassName = "mx-auto flex w-full max-w-[760px] items-center justify-end";
-
-const masteryLevels: MasteryLevel[] = ["new", "familiar", "developing", "proficient", "advanced", "mastered"];
-
-const masteryLevelMeta: Record<MasteryLevel, { description: string }> = {
-  new: {
-    description: "Captured from the note; no practice evidence yet.",
-  },
-  familiar: {
-    description: "Recognizable after review, but recall is not reliable yet.",
-  },
-  developing: {
-    description: "Some recall exists, with likely gaps or unstable timing.",
-  },
-  proficient: {
-    description: "Solid enough for normal explanation and use.",
-  },
-  advanced: {
-    description: "Strong enough for tradeoffs, edge cases, and connected ideas.",
-  },
-  mastered: {
-    description: "Stable under delayed review and hard application.",
-  },
-};
-
-const bottomFadeStyle: CSSProperties = {
-  WebkitMaskImage: "linear-gradient(to bottom, transparent 0%, black 18px, black calc(100% - 18px), transparent 100%)",
-  maskImage: "linear-gradient(to bottom, transparent 0%, black 18px, black calc(100% - 18px), transparent 100%)",
-};
-
-function isCarouselInteractiveTarget(target: EventTarget | null) {
-  if (!(target instanceof Element)) return false;
-  return Boolean(target.closest("button, input, textarea, select, a, [data-carousel-ignore]"));
-}
-
-function documentImageSrc(imagePath: string | null | undefined) {
-  if (!imagePath) return "";
-  if (/^(https?:|data:|blob:|learner:)/i.test(imagePath)) return imagePath;
-  return `learner://documents/${imagePath
-    .replace(/^\/+/g, "")
-    .split("/")
-    .map((part) => encodeURIComponent(part))
-    .join("/")}`;
-}
+type MasterySection = "concepts" | "flashcards";
 
 function formatGeneratedAt(value: number | null) {
   if (!value) return "Not generated yet";
@@ -132,66 +90,75 @@ function PanelIconButton({
   );
 }
 
-function ViewSwitcher({
+function SegmentedControl<T extends string>({
   disabled = false,
+  options,
   onChange,
   value,
 }: {
   disabled?: boolean;
-  onChange: (viewMode: MasteryViewMode) => void;
-  value: MasteryViewMode;
+  options: readonly { icon?: ReactNode; label: string; value: T }[];
+  onChange: (value: T) => void;
+  value: T;
 }) {
   return (
-    <div className="flex rounded-full bg-white/[0.055] p-0.5 text-xs">
-      {(["overview", "focus"] as const).map((viewMode) => (
+    <div className="flex h-8 overflow-hidden rounded-md border border-white/[0.08] bg-white/[0.025]">
+      {options.map((option) => (
         <button
-          className={`rounded-full px-3 py-1.5 ${value === viewMode ? "bg-white/[0.12] text-white/82" : "text-white/42 hover:text-white/68"
-            } disabled:pointer-events-none disabled:opacity-35`}
+          aria-label={option.label}
+          aria-pressed={value === option.value}
+          className={`flex h-8 items-center justify-center gap-1.5 text-xs transition first:border-r first:border-white/[0.08] [&>svg]:shrink-0 ${
+            option.icon ? "w-8 px-0" : "px-3"
+          } ${
+            value === option.value
+              ? "bg-white/[0.12] text-white/82"
+              : "text-white/42 hover:bg-white/[0.055] hover:text-white/68"
+          } disabled:pointer-events-none disabled:opacity-35`}
           disabled={disabled}
-          key={viewMode}
-          onClick={() => onChange(viewMode)}
+          key={option.value}
+          onClick={() => onChange(option.value)}
+          title={option.label}
           type="button"
         >
-          {viewMode === "overview" ? "Overview" : "Focus"}
+          {option.icon}
+          {!option.icon && option.label}
         </button>
       ))}
     </div>
   );
 }
 
-function levelLabel(level: MasteryLevel) {
-  return level.replace(/_/g, " ");
-}
-
-function levelIndex(level: MasteryLevel) {
-  return Math.max(0, masteryLevels.indexOf(level));
-}
-
-function levelProgress(level: MasteryLevel) {
-  return Math.round((levelIndex(level) / (masteryLevels.length - 1)) * 100);
-}
-
-function MasteryMarkdown({ children }: { children: string }) {
-  if (!children.trim()) return null;
-
-  return (
-    <div className={markdownClassName}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{children}</ReactMarkdown>
-    </div>
-  );
+function scoreLabel(score: number, thresholds: MasteryScoringSettings["thresholds"], hasEvidence = true) {
+  if (!hasEvidence && score === 0) return "New";
+  if (score >= thresholds.mastered) return "Mastered";
+  if (score >= thresholds.advanced) return "Advanced";
+  if (score >= thresholds.proficient) return "Proficient";
+  if (score >= thresholds.developing) return "Developing";
+  if (score >= thresholds.familiar) return "Familiar";
+  return "New";
 }
 
 function MasteryLevelControl({
   concept,
   onChange,
+  thresholds,
 }: {
   concept: MasteryConcept;
-  onChange: (conceptId: number, masteryLevel: MasteryLevel) => void | Promise<void>;
+  onChange: (conceptId: number, score: number) => void | Promise<void>;
+  thresholds: MasteryScoringSettings["thresholds"];
 }) {
-  const masteryMeta = masteryLevelMeta[concept.masteryLevel];
-  const masteryLabel = levelLabel(concept.masteryLevel);
-  const progress = levelProgress(concept.masteryLevel);
-  const rangeBackground = `linear-gradient(to right, rgba(255,255,255,0.72) 0%, rgba(255,255,255,0.72) ${progress}%, rgba(255,255,255,0.12) ${progress}%, rgba(255,255,255,0.12) 100%)`;
+  const [draftScore, setDraftScore] = useState(concept.overallScore);
+  const hasEvidence = concept.stageStates.some((state) => state.attemptCount > 0);
+  const masteryLabel = scoreLabel(draftScore, thresholds, hasEvidence);
+  const rangeBackground = `linear-gradient(to right, rgba(255,255,255,0.72) 0%, rgba(255,255,255,0.72) ${draftScore}%, rgba(255,255,255,0.12) ${draftScore}%, rgba(255,255,255,0.12) 100%)`;
+
+  const commitScore = (value: number) => {
+    const nextScore = Math.max(0, Math.min(100, Math.round(value)));
+    setDraftScore(nextScore);
+    if (nextScore !== concept.overallScore) {
+      void onChange(concept.id, nextScore);
+    }
+  };
 
   return (
     <div className="group relative w-full max-w-[310px] shrink-0">
@@ -202,30 +169,30 @@ function MasteryLevelControl({
           <input
             aria-label={`Set mastery level for ${concept.name}`}
             className="h-2 min-w-0 w-full cursor-pointer appearance-none rounded-full bg-white/[0.12] accent-white outline-none [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-white [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white"
-            max={masteryLevels.length - 1}
+            max={100}
             min={0}
-            onChange={(event) => {
-              const nextLevel = masteryLevels[Number(event.currentTarget.value)];
-              if (nextLevel && nextLevel !== concept.masteryLevel) {
-                void onChange(concept.id, nextLevel);
-              }
-            }}
+            onBlur={(event) => commitScore(Number(event.currentTarget.value))}
+            onChange={(event) => setDraftScore(Number(event.currentTarget.value))}
+            onPointerUp={(event) => commitScore(Number(event.currentTarget.value))}
             step={1}
             style={{ background: rangeBackground }}
             type="range"
-            value={levelIndex(concept.masteryLevel)}
+            value={draftScore}
           />
 
           <span
             className="pointer-events-none absolute top-full mt-1.5 -translate-x-1/2 whitespace-nowrap text-[10px] font-medium uppercase tracking-wide text-white/40"
-            style={{ left: `clamp(12px, ${progress}%, calc(100% - 12px))` }}
+            style={{ left: `clamp(12px, ${draftScore}%, calc(100% - 12px))` }}
           >
-            {masteryLabel}
+            {masteryLabel} · {draftScore}
           </span>
         </div>
       </div>
       <div className="pointer-events-none absolute right-0 top-full z-20 mt-2 hidden w-72 rounded-lg bg-[#101010] p-3 text-left text-xs leading-5 text-white/66 shadow-2xl ring-1 ring-white/[0.12] group-focus-within:block group-hover:block">
-        <p className="font-medium text-white/82">{masteryMeta.description}</p>
+        <p className="font-medium text-white/82">Stage evidence</p>
+        <p className="mt-1 text-white/58">
+          {concept.stageStates.map((state) => `${state.stage}: ${Math.round(state.score)}`).join(" · ")}
+        </p>
         {concept.masteryRationale && <p className="mt-2 text-white/58">{concept.masteryRationale}</p>}
       </div>
     </div>
@@ -236,10 +203,12 @@ function ConceptOverviewView({
   activeIndex,
   concepts,
   onSelect,
+  thresholds,
 }: {
   activeIndex: number;
   concepts: MasteryConcept[];
   onSelect: (index: number) => void;
+  thresholds: MasteryScoringSettings["thresholds"];
 }) {
   return (
     <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -257,12 +226,12 @@ function ConceptOverviewView({
           >
             <div className="flex items-center justify-between gap-3 text-[11px] uppercase tracking-wide text-white/38">
               <span>Concept {index + 1}</span>
-              <span className="capitalize">{levelLabel(concept.masteryLevel)}</span>
+              <span>{scoreLabel(concept.overallScore, thresholds, concept.stageStates.some((state) => state.attemptCount > 0))}</span>
             </div>
             <p className="mt-3 line-clamp-2 text-base font-semibold leading-6 text-white/88">{concept.name}</p>
             <p className="mt-3 line-clamp-2 text-sm leading-5 text-white/46">{concept.type || "Concept"}</p>
             <div className="mt-4 h-1 overflow-hidden rounded-full bg-white/[0.08]">
-              <div className="h-full rounded-full bg-white/45" style={{ width: `${levelProgress(concept.masteryLevel)}%` }} />
+              <div className="h-full rounded-full bg-white/45" style={{ width: `${concept.overallScore}%` }} />
             </div>
           </button>
         );
@@ -295,74 +264,17 @@ function MasteryProgressStatus({ progress }: { progress: MasteryMetaphorProgress
   );
 }
 
-function conceptMetaphorScene(metaphor: MasteryMetaphor | null, conceptId: number) {
-  return metaphor?.conceptScenes.find((scene) => scene.conceptId === conceptId) ?? null;
-}
-
-function MetaphorPanel({
-  concept,
-  metaphor,
-}: {
-  concept: MasteryConcept;
-  metaphor: MasteryMetaphor;
-}) {
-  const scene = conceptMetaphorScene(metaphor, concept.id);
-  const imageSrc = documentImageSrc(scene?.imagePath || metaphor.imagePath);
-
-  return (
-    <aside className="h-full min-h-0 overflow-y-auto rounded-xl bg-black/18 p-3 pr-2" style={bottomFadeStyle}>
-      <div className="py-3">
-        {imageSrc && (
-          <div className="aspect-[4/3] overflow-hidden rounded-lg bg-white/[0.04]">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              alt={scene ? `${concept.name} metaphor scene` : `${metaphor.title} metaphor scene`}
-              className="h-full w-full object-cover"
-              src={imageSrc}
-            />
-          </div>
-        )}
-
-        <p className="mt-3 text-[11px] font-semibold uppercase tracking-wide text-white/34">Metaphor</p>
-        <h3 className="mt-1 text-base font-semibold leading-6 text-white/88">{metaphor.title}</h3>
-
-        {metaphor.stale && (
-          <p className="mt-2 rounded-md bg-amber-200/[0.08] px-2 py-1 text-xs text-amber-50/66">
-            This metaphor was generated before the latest note or concept changes.
-          </p>
-        )}
-
-        {scene ? (
-          <>
-            <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-white/34">{scene.roleName}</p>
-            <div className="mt-1 text-sm leading-6 text-white/80">
-              <MasteryMarkdown>{scene.sceneMarkdown}</MasteryMarkdown>
-            </div>
-            <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-white/34">Memory cue</p>
-            <div className="mt-1 text-sm leading-6 text-white/74">
-              <MasteryMarkdown>{scene.visceralCueMarkdown}</MasteryMarkdown>
-            </div>
-          </>
-        ) : (
-          <div className="mt-2 text-sm leading-6 text-white/78">
-            <MasteryMarkdown>{metaphor.memorySceneMarkdown}</MasteryMarkdown>
-          </div>
-        )}
-      </div>
-    </aside>
-  );
-}
-
 function ConceptDeckCard({
   canNext,
   canPrevious,
   concept,
   conceptIndex,
   metaphor,
-  onMasteryLevelChange,
+  onMasteryScoreChange,
   onNext,
   onPrevious,
   showMetaphor,
+  thresholds,
   totalConcepts,
 }: {
   canNext: boolean;
@@ -370,97 +282,56 @@ function ConceptDeckCard({
   concept: MasteryConcept;
   conceptIndex: number;
   metaphor: MasteryMetaphor | null;
-  onMasteryLevelChange: (conceptId: number, masteryLevel: MasteryLevel) => void | Promise<void>;
+  onMasteryScoreChange: (conceptId: number, score: number) => void | Promise<void>;
   onNext: () => void;
   onPrevious: () => void;
   showMetaphor: boolean;
+  thresholds: MasteryScoringSettings["thresholds"];
   totalConcepts: number;
 }) {
   const shouldShowMetaphor = showMetaphor && metaphor !== null;
   const cardWidthClassName = shouldShowMetaphor ? "max-w-[1040px]" : "max-w-[760px]";
-  const topMetaRow = (
-    <div className="mb-3 flex items-start justify-between gap-4">
-      <div className="min-w-0">
-        <div className="flex h-6 flex-wrap items-center gap-2">
+
+  return (
+    <MasteryCardFrame maxWidthClassName={cardWidthClassName}>
+      <div className="mb-3 flex items-start justify-between gap-4">
+        <div className="flex h-6 min-w-0 flex-wrap items-center gap-2">
           <span className="rounded-full bg-white/[0.06] px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide text-white/38">
             {concept.type || "Concept"}
           </span>
-          <span className="text-xs text-white/34">
-            {conceptIndex + 1} / {totalConcepts}
-          </span>
         </div>
+        <MasteryLevelControl
+          concept={concept}
+          key={`${concept.id}-${concept.overallScore}`}
+          onChange={onMasteryScoreChange}
+          thresholds={thresholds}
+        />
       </div>
-
-      <MasteryLevelControl concept={concept} onChange={onMasteryLevelChange} />
-    </div>
-  );
-  const headerBlock = (
-    <header className="shrink-0">
-      <h2 className="break-words text-[26px] font-semibold leading-8 text-white/94">{concept.name}</h2>
-    </header>
-  );
-  const conceptContentBlock = (
-    <section className="mt-5 min-h-0 flex-1 overflow-y-auto py-3 pr-2" style={bottomFadeStyle}>
-      <p className="text-[11px] font-semibold uppercase tracking-wide text-white/34">Explanation</p>
-      <div className="mt-2 text-[15px] leading-7 text-white/88">
-        <MasteryMarkdown>{concept.explanationMarkdown}</MasteryMarkdown>
-      </div>
-
-      <section className="mt-6">
-        <p className="text-[11px] font-semibold uppercase tracking-wide text-white/34">Source excerpt</p>
-        <div className="mt-2 text-sm leading-6 text-white/82">
-          <MasteryMarkdown>{concept.sourceExcerptMarkdown}</MasteryMarkdown>
-        </div>
-      </section>
-    </section>
-  );
-
-  return (
-    <article
-      className={`mx-auto flex h-[min(640px,calc(100vh-190px))] min-h-[460px] w-full ${cardWidthClassName} flex-col rounded-2xl bg-[#202020]/94 p-5 shadow-[0_18px_52px_rgba(0,0,0,0.22)] ring-1 ring-white/[0.08]`}
-    >
-      {topMetaRow}
 
       {shouldShowMetaphor ? (
         <div className="min-h-0 flex-1 overflow-hidden grid grid-cols-[minmax(0,1fr)_minmax(280px,340px)] gap-5">
-          <div className="min-h-0 overflow-hidden flex flex-col">
-            {headerBlock}
-            {conceptContentBlock}
+          <div className="min-h-0 overflow-y-auto py-3 pr-2" style={masteryBottomFadeStyle}>
+            <MasteryConceptContent concept={concept} />
           </div>
-          <div className="h-full min-h-0">
-            <MetaphorPanel concept={concept} metaphor={metaphor} />
-          </div>
+          <aside className="h-full min-h-0 overflow-y-auto rounded-xl bg-black/18 p-3 pr-2" style={masteryBottomFadeStyle}>
+            <MasteryMetaphorContent concept={concept} metaphor={metaphor} />
+          </aside>
         </div>
       ) : (
-        <>
-          {headerBlock}
-          {conceptContentBlock}
-        </>
+        <div className="min-h-0 flex-1 overflow-y-auto py-3 pr-2" style={masteryBottomFadeStyle}>
+          <MasteryConceptContent concept={concept} />
+        </div>
       )}
 
-      <footer className="mt-4 shrink-0">
-        <div className="flex items-center justify-between gap-4">
-          <button
-            className="inline-flex h-9 items-center gap-2 rounded-full px-3 text-sm font-medium text-white/68 hover:bg-white/[0.07] hover:text-white/90 disabled:pointer-events-none disabled:opacity-30"
-            disabled={!canPrevious}
-            onClick={onPrevious}
-            type="button"
-          >
-            <CaretLeftIcon size={16} />
-            Back
-          </button>
-          <button
-            className="inline-flex h-9 items-center gap-2 rounded-full px-3 text-sm font-medium text-white/68 hover:bg-white/[0.07] hover:text-white/90 disabled:pointer-events-none disabled:opacity-30"
-            disabled={!canNext}
-            onClick={onNext}
-            type="button"
-          >
-            Next
-            <CaretRightIcon size={16} />
-          </button>
-        </div>
-      </footer>
-    </article>
+      <MasteryCardNavigation
+        canNext={canNext}
+        canPrevious={canPrevious}
+        current={conceptIndex + 1}
+        next={onNext}
+        previous={onPrevious}
+        total={totalConcepts}
+      />
+    </MasteryCardFrame>
   );
 }
 
@@ -469,143 +340,68 @@ function ConceptDeckCarousel({
   concepts,
   metaphor,
   onActiveIndexChange,
-  onMasteryLevelChange,
+  onMasteryScoreChange,
   showMetaphor,
+  thresholds,
 }: {
   activeIndex: number;
   concepts: MasteryConcept[];
   metaphor: MasteryMetaphor | null;
   onActiveIndexChange: (index: number) => void;
-  onMasteryLevelChange: (conceptId: number, masteryLevel: MasteryLevel) => void | Promise<void>;
+  onMasteryScoreChange: (conceptId: number, score: number) => void | Promise<void>;
   showMetaphor: boolean;
+  thresholds: MasteryScoringSettings["thresholds"];
 }) {
-  const wheelLockRef = useRef(0);
-  const emblaOptions = useMemo<EmblaOptionsType>(
-    () => ({
-      align: "center",
-      containScroll: "trimSnaps",
-      dragFree: false,
-      dragThreshold: 18,
-      duration: 28,
-      loop: false,
-      skipSnaps: false,
-      watchDrag: (_emblaApi, event) => !isCarouselInteractiveTarget(event.target),
-    }),
-    [],
-  );
-  const [emblaRef, emblaApi] = useEmblaCarousel(emblaOptions);
-  const conceptCount = concepts.length;
-  const safeActiveIndex = conceptCount > 0 ? Math.min(activeIndex, conceptCount - 1) : 0;
   const shouldShowMetaphor = showMetaphor && metaphor !== null;
-  const slideBasis = shouldShowMetaphor ? "min(100%, 1100px)" : "min(100%, 820px)";
-
-  useEffect(() => {
-    if (!emblaApi) return;
-
-    const syncSelectedIndex = (api: EmblaCarouselType) => {
-      const selectedIndex = api.selectedScrollSnap();
-      const delta = selectedIndex - safeActiveIndex;
-
-      if (Math.abs(delta) > 1) {
-        api.scrollTo(safeActiveIndex + Math.sign(delta));
-        return;
-      }
-
-      onActiveIndexChange(selectedIndex);
-    };
-
-    const handleSelect = () => syncSelectedIndex(emblaApi);
-
-    emblaApi.on("select", handleSelect);
-    emblaApi.on("reInit", handleSelect);
-
-    return () => {
-      emblaApi.off("select", handleSelect);
-      emblaApi.off("reInit", handleSelect);
-    };
-  }, [emblaApi, onActiveIndexChange, safeActiveIndex]);
-
-  useEffect(() => {
-    if (!emblaApi || conceptCount === 0) return;
-    if (emblaApi.selectedScrollSnap() !== safeActiveIndex) {
-      emblaApi.scrollTo(safeActiveIndex);
-    }
-  }, [conceptCount, emblaApi, safeActiveIndex]);
-
-  const showPrevious = () => {
-    emblaApi?.scrollPrev();
-  };
-
-  const showNext = () => {
-    emblaApi?.scrollNext();
-  };
-
-  const handleWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
-    if (!emblaApi || isCarouselInteractiveTarget(event.target)) return;
-
-    const horizontalSwipe = Math.abs(event.deltaX) > 24 && Math.abs(event.deltaX) > Math.abs(event.deltaY) * 1.2;
-    if (!horizontalSwipe) return;
-
-    event.preventDefault();
-
-    const now = Date.now();
-    if (now - wheelLockRef.current < 520) return;
-    wheelLockRef.current = now;
-
-    if (event.deltaX > 0) {
-      emblaApi.scrollNext();
-    } else {
-      emblaApi.scrollPrev();
-    }
-  };
 
   return (
-    <div className="min-h-0 w-full overflow-hidden" onWheel={handleWheel} ref={emblaRef}>
-      <div className="flex min-h-0 touch-pan-y gap-4">
-        {concepts.map((concept, index) => {
-          const active = index === safeActiveIndex;
-
-          return (
-            <div
-              aria-hidden={!active}
-              className={`min-w-0 shrink-0 grow-0 transition-[opacity,transform] duration-200 ${
-                active ? "scale-100 opacity-100" : "pointer-events-none scale-[0.96] opacity-45"
-              }`}
-              key={concept.id}
-              style={{ flexBasis: slideBasis }}
-            >
-              <ConceptDeckCard
-                canNext={index < conceptCount - 1}
-                canPrevious={index > 0}
-                concept={concept}
-                conceptIndex={index}
-                metaphor={metaphor}
-                onMasteryLevelChange={onMasteryLevelChange}
-                onNext={showNext}
-                onPrevious={showPrevious}
-                showMetaphor={showMetaphor}
-                totalConcepts={conceptCount}
-              />
-            </div>
-          );
-        })}
-      </div>
-    </div>
+    <MasteryCardCarousel
+      activeIndex={activeIndex}
+      getKey={(concept) => concept.id}
+      items={concepts}
+      onActiveIndexChange={onActiveIndexChange}
+      renderSlide={({ canNext, canPrevious, index, item, next, previous, total }) => (
+        <ConceptDeckCard
+          canNext={canNext}
+          canPrevious={canPrevious}
+          concept={item}
+          conceptIndex={index}
+          metaphor={metaphor}
+          onMasteryScoreChange={onMasteryScoreChange}
+          onNext={next}
+          onPrevious={previous}
+          showMetaphor={showMetaphor}
+          thresholds={thresholds}
+          totalConcepts={total}
+        />
+      )}
+      slideBasis={shouldShowMetaphor ? "min(100%, 1100px)" : "min(100%, 820px)"}
+    />
   );
 }
 
 export default function MasteryPanel({
+  cardError,
+  cardProgress,
+  cardState,
   error,
+  isCardDiscussing,
+  isCardEvaluating,
+  isCardGenerating,
   isLoading,
   isMetaphorLoading,
   isSidebarOpen,
   mastery,
   metaphorProgress,
   onClear,
+  onClearCards,
   onClose,
+  onContinueCardDiscussion,
+  onEvaluateCard,
   onGenerate,
+  onGenerateCards,
   onGenerateMetaphor,
-  onMasteryLevelChange,
+  onMasteryScoreChange,
   open,
 }: MasteryPanelProps) {
   const concepts = mastery?.concepts ?? [];
@@ -614,15 +410,17 @@ export default function MasteryPanel({
   const hasMetaphor = mastery?.metaphor !== null && mastery?.metaphor !== undefined;
   const metaphorIsStale = Boolean(mastery?.metaphor?.stale);
   const [activeIndex, setActiveIndex] = useState(0);
+  const [cardGenerationOpen, setCardGenerationOpen] = useState(false);
+  const [flashcardView, setFlashcardView] = useState<FlashcardView>("practice");
+  const [section, setSection] = useState<MasterySection>("concepts");
   const [showMetaphor, setShowMetaphor] = useState(false);
   const [viewMode, setViewMode] = useState<MasteryViewMode>("focus");
+  const masteryThresholds = readMasterySettings().thresholds;
   const safeActiveIndex = hasConcepts ? Math.min(activeIndex, conceptCount - 1) : 0;
-  const conceptToolbarClassName =
-    viewMode === "overview"
-      ? "mx-auto flex w-full max-w-5xl items-center justify-end"
-      : showMetaphor && hasMetaphor
-        ? "mx-auto flex w-full max-w-[1040px] items-center justify-end"
-        : conceptViewContainerClassName;
+  const cards = cardState?.cards ?? [];
+  const readyCardCount = cards.filter((card) => card.status === "active").length;
+  const laterCardCount = cards.filter((card) => card.status === "delayed").length;
+  const completedCardCount = cards.filter((card) => card.status === "done").length;
 
   const setFocusedConceptIndex = useCallback((index: number) => {
     if (!hasConcepts) return;
@@ -639,16 +437,28 @@ export default function MasteryPanel({
   const handleClear = async () => {
     if (!hasConcepts || isLoading || isMetaphorLoading) return;
     const confirmed = window.confirm(
-      "Delete generated mastery concepts for this note? This also deletes metaphor data and generated mastery images.",
+      "Delete generated mastery concepts for this note? This also deletes their flashcards, attempts, weaknesses, stage progress, metaphor data, and generated mastery images.",
     );
     if (!confirmed) return;
 
     const cleared = await onClear();
     if (cleared) {
       setActiveIndex(0);
+      setSection("concepts");
       setShowMetaphor(false);
       setViewMode("focus");
     }
+  };
+
+  const handleClose = () => {
+    setCardGenerationOpen(false);
+    onClose();
+  };
+
+  const handleClearCards = async () => {
+    if (cards.length === 0 || isCardGenerating || isCardEvaluating) return;
+    const confirmed = window.confirm("Delete all flashcards, attempts, weaknesses, and stage progress for this note?");
+    if (confirmed) await onClearCards();
   };
 
   const selectOverviewConcept = (index: number) => {
@@ -656,25 +466,39 @@ export default function MasteryPanel({
     setViewMode("focus");
   };
 
+  if (!open) return null;
+
   return (
     <section
-      aria-hidden={!open}
-      className={`app-no-drag fixed bottom-0 right-0 top-10 z-30 flex flex-col bg-[#171717]/90 text-white shadow-[0_30px_90px_rgba(0,0,0,0.5)] ring-1 ring-white/[0.08] backdrop-blur-[24px] transition-all duration-200 ${open ? "translate-y-0 opacity-100" : "pointer-events-none translate-y-2 opacity-0"
-        } ${isSidebarOpen ? "left-64" : "left-0"}`}
+      className={`app-no-drag fixed bottom-0 right-0 top-10 z-30 flex flex-col bg-[#171717]/90 text-white shadow-[0_30px_90px_rgba(0,0,0,0.5)] ring-1 ring-white/[0.08] backdrop-blur-[24px] ${isSidebarOpen ? "left-64" : "left-0"}`}
     >
       <header className="flex h-14 shrink-0 items-center justify-between gap-4 px-5">
         <div className="flex min-w-0 items-center gap-3">
           <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-white/[0.08] text-white/80">
             <SparkleIcon size={18} />
           </span>
-          <div className="min-w-0">
-            <p className="truncate text-sm font-semibold">Mastery</p>
-            <p className="truncate text-xs text-white/42">
-              {hasConcepts
-                ? `${conceptCount} concept${conceptCount === 1 ? "" : "s"} - ${formatGeneratedAt(mastery?.generatedAt ?? null)}`
-                : "Extract detailed mastery concepts"}
-            </p>
+          <p className="shrink-0 text-sm font-semibold">Mastery</p>
+          <div className="flex shrink-0 rounded-full bg-white/[0.045] p-0.5 text-xs">
+            {(["concepts", "flashcards"] as const).map((nextSection) => (
+              <button
+                className={`rounded-full px-3 py-1.5 capitalize ${
+                  section === nextSection ? "bg-white/[0.11] text-white/82" : "text-white/42 hover:text-white/70"
+                }`}
+                key={nextSection}
+                onClick={() => setSection(nextSection)}
+                type="button"
+              >
+                {nextSection}
+              </button>
+            ))}
           </div>
+          <p className="truncate text-xs text-white/42">
+            {section === "flashcards"
+              ? `${readyCardCount} ready · ${laterCardCount} later · ${completedCardCount} completed`
+              : hasConcepts
+                ? `${conceptCount} concept${conceptCount === 1 ? "" : "s"} · ${formatGeneratedAt(mastery?.generatedAt ?? null)}`
+                : "Extract detailed mastery concepts"}
+          </p>
           {mastery?.stale && (
             <span className="rounded-full bg-amber-200/10 px-2 py-1 text-[11px] font-medium text-amber-100/72">
               note changed
@@ -683,28 +507,73 @@ export default function MasteryPanel({
         </div>
 
         <div className="flex items-center gap-1">
-          <PanelIconButton
-            ariaLabel={hasConcepts ? "Regenerate concepts" : "Generate concepts"}
-            disabled={isLoading || isMetaphorLoading}
-            icon={<ArrowsClockwiseIcon size={16} className={isLoading ? "animate-spin" : ""} />}
-            onClick={() => onGenerate(hasConcepts)}
-          />
-          <PanelIconButton
-            ariaLabel={hasMetaphor ? "Regenerate metaphor images" : "Generate metaphor images"}
-            disabled={!hasConcepts || isLoading || isMetaphorLoading}
-            icon={<ImageIcon size={16} className={isMetaphorLoading ? "animate-pulse" : ""} />}
-            onClick={() => {
-              void handleGenerateMetaphor();
-            }}
-            tooltip={
-              !hasConcepts
-                ? "Extract concepts first"
-                : hasMetaphor
-                  ? "Regenerate metaphor images"
-                  : "Generate metaphor images"
-            }
-          />
-          {hasMetaphor && (
+          {section === "concepts" && hasConcepts && (
+            <SegmentedControl
+              disabled={isLoading || isMetaphorLoading}
+              onChange={setViewMode}
+              options={[
+                { icon: <SquaresFourIcon size={18} />, label: "Overview", value: "overview" },
+                { icon: <CrosshairIcon size={18} />, label: "Focus", value: "focus" },
+              ]}
+              value={viewMode}
+            />
+          )}
+          {section === "flashcards" && (
+            <SegmentedControl
+              disabled={isCardGenerating}
+              onChange={setFlashcardView}
+              options={[
+                { icon: <GridFourIcon size={18} />, label: "Deck view", value: "deck" },
+                { icon: <CardsThreeIcon size={18} />, label: "Practice view", value: "practice" },
+              ]}
+              value={flashcardView}
+            />
+          )}
+          <span className="mx-1 h-5 w-px bg-white/[0.08]" />
+          {section === "concepts" && (
+            <>
+              <PanelIconButton
+                ariaLabel={hasConcepts ? "Regenerate concepts" : "Generate concepts"}
+                disabled={isLoading || isMetaphorLoading}
+                icon={<ArrowsClockwiseIcon size={16} className={isLoading ? "animate-spin" : ""} />}
+                onClick={() => onGenerate(hasConcepts)}
+              />
+              <PanelIconButton
+                ariaLabel={hasMetaphor ? "Regenerate metaphor images" : "Generate metaphor images"}
+                disabled={!hasConcepts || isLoading || isMetaphorLoading}
+                icon={<ImageIcon size={16} className={isMetaphorLoading ? "animate-pulse" : ""} />}
+                onClick={() => {
+                  void handleGenerateMetaphor();
+                }}
+                tooltip={
+                  !hasConcepts
+                    ? "Extract concepts first"
+                    : hasMetaphor
+                      ? "Regenerate metaphor images"
+                      : "Generate metaphor images"
+                }
+              />
+            </>
+          )}
+          {section === "flashcards" && (
+            <>
+              <PanelIconButton
+                ariaLabel={cards.length > 0 ? "Generate more cards" : "Generate cards"}
+                disabled={isCardGenerating || !hasConcepts}
+                icon={<ArrowsClockwiseIcon size={16} className={isCardGenerating ? "animate-spin" : ""} />}
+                onClick={() => setCardGenerationOpen(true)}
+              />
+              <PanelIconButton
+                ariaLabel="Clear cards and practice progress"
+                disabled={cards.length === 0 || isCardGenerating || isCardEvaluating}
+                icon={<TrashIcon size={16} />}
+                onClick={() => {
+                  void handleClearCards();
+                }}
+              />
+            </>
+          )}
+          {section === "concepts" && hasMetaphor && (
             <PanelIconButton
               ariaLabel={showMetaphor ? "Hide metaphor" : "Show metaphor"}
               disabled={isMetaphorLoading}
@@ -712,24 +581,28 @@ export default function MasteryPanel({
               onClick={() => setShowMetaphor((visible) => !visible)}
             />
           )}
-          <PanelIconButton
-            ariaLabel="Delete generated concepts"
-            disabled={!hasConcepts || isLoading || isMetaphorLoading}
-            icon={<TrashIcon size={16} />}
-            onClick={() => {
-              void handleClear();
-            }}
-          />
-          <PanelIconButton ariaLabel="Close mastery" icon={<XIcon size={16} />} onClick={onClose} tooltip="Close" />
+          {section === "concepts" && (
+            <PanelIconButton
+              ariaLabel="Delete generated concepts"
+              disabled={!hasConcepts || isLoading || isMetaphorLoading}
+              icon={<TrashIcon size={16} />}
+              onClick={() => {
+                void handleClear();
+              }}
+            />
+          )}
+          <PanelIconButton ariaLabel="Close mastery" icon={<XIcon size={16} />} onClick={handleClose} tooltip="Close" />
         </div>
       </header>
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-5 pb-5">
-        {error && <div className="mb-4 rounded-xl bg-red-300/10 px-4 py-3 text-sm text-red-200">{error}</div>}
+        {(error || cardError) && (
+          <div className="mb-4 rounded-lg bg-red-300/10 px-4 py-3 text-sm text-red-200">{error || cardError}</div>
+        )}
 
-        {isMetaphorLoading && metaphorProgress && <MasteryProgressStatus progress={metaphorProgress} />}
+        {section === "concepts" && isMetaphorLoading && metaphorProgress && <MasteryProgressStatus progress={metaphorProgress} />}
 
-        {mastery?.stale && hasConcepts && (
+        {section === "concepts" && mastery?.stale && hasConcepts && (
           <div className="mb-4 flex items-start gap-3 rounded-xl bg-amber-200/[0.08] px-4 py-3 text-sm text-amber-50/74 ring-1 ring-amber-100/[0.12]">
             <WarningCircleIcon className="mt-0.5 shrink-0" size={18} />
             <div className="min-w-0">
@@ -739,20 +612,12 @@ export default function MasteryPanel({
           </div>
         )}
 
-        {metaphorIsStale && hasMetaphor && (
+        {section === "concepts" && metaphorIsStale && hasMetaphor && (
           <div className="mb-4 flex items-start gap-3 rounded-xl bg-amber-200/[0.07] px-4 py-3 text-sm text-amber-50/70 ring-1 ring-amber-100/[0.1]">
             <WarningCircleIcon className="mt-0.5 shrink-0" size={18} />
             <div className="min-w-0">
               <p className="font-medium text-amber-50/86">The metaphor is stale.</p>
               <p className="mt-1 text-amber-50/56">Regenerate metaphor images when you want them to match the current concepts.</p>
-            </div>
-          </div>
-        )}
-
-        {hasConcepts && (
-          <div className="mb-3 shrink-0">
-            <div className={conceptToolbarClassName}>
-              <ViewSwitcher disabled={isLoading || isMetaphorLoading} onChange={setViewMode} value={viewMode} />
             </div>
           </div>
         )}
@@ -773,9 +638,29 @@ export default function MasteryPanel({
               Generate mastery concepts
             </button>
           </div>
+        ) : section === "flashcards" ? (
+          <MasteryFlashcards
+            cardState={cardState}
+            concepts={concepts}
+            isDiscussing={isCardDiscussing}
+            isEvaluating={isCardEvaluating}
+            isGenerating={isCardGenerating}
+            metaphor={mastery?.metaphor ?? null}
+            onContinueDiscussion={onContinueCardDiscussion}
+            onEvaluate={onEvaluateCard}
+            onOpenGeneration={() => setCardGenerationOpen(true)}
+            onViewChange={setFlashcardView}
+            progress={cardProgress}
+            view={flashcardView}
+          />
         ) : viewMode === "overview" ? (
           <div className="mx-auto min-h-0 w-full max-w-5xl flex-1 overflow-y-auto pb-1">
-            <ConceptOverviewView activeIndex={safeActiveIndex} concepts={concepts} onSelect={selectOverviewConcept} />
+            <ConceptOverviewView
+              activeIndex={safeActiveIndex}
+              concepts={concepts}
+              onSelect={selectOverviewConcept}
+              thresholds={masteryThresholds}
+            />
           </div>
         ) : hasConcepts ? (
           <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden">
@@ -784,12 +669,23 @@ export default function MasteryPanel({
               concepts={concepts}
               metaphor={mastery?.metaphor ?? null}
               onActiveIndexChange={setFocusedConceptIndex}
-              onMasteryLevelChange={onMasteryLevelChange}
+              onMasteryScoreChange={onMasteryScoreChange}
               showMetaphor={showMetaphor}
+              thresholds={masteryThresholds}
             />
           </div>
         ) : null}
       </div>
+
+      {cardGenerationOpen && (
+        <MasteryCardGenerationDialog
+          hasCards={(cardState?.cards.length ?? 0) > 0}
+          onClose={() => setCardGenerationOpen(false)}
+          onGenerate={onGenerateCards}
+          overlayClassName={`fixed bottom-0 right-0 top-10 ${isSidebarOpen ? "left-64" : "left-0"}`}
+          preferences={cardState?.preferences ?? { generationPrompt: "", targetProficiency: "proficient" }}
+        />
+      )}
     </section>
   );
 }

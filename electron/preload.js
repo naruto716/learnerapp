@@ -64,6 +64,9 @@ contextBridge.exposeInMainWorld("learner", {
   updateDocumentMasteryConceptLevel: (request) => {
     return ipcRenderer.invoke("mastery:updateConceptLevel", request);
   },
+  updateDocumentMasteryConceptScore: (request) => {
+    return ipcRenderer.invoke("mastery:updateConceptScore", request);
+  },
   generateDocumentMasteryMetaphor: (request) => {
     return ipcRenderer.invoke("mastery:generateMetaphor", request);
   },
@@ -74,6 +77,26 @@ contextBridge.exposeInMainWorld("learner", {
   },
   clearDocumentMastery: (request) => {
     return ipcRenderer.invoke("mastery:clearDocumentMastery", request);
+  },
+  getDocumentMasteryCards: (documentPath) => {
+    return ipcRenderer.invoke("mastery:getCards", documentPath);
+  },
+  generateDocumentMasteryCards: (request) => {
+    return ipcRenderer.invoke("mastery:generateCards", request);
+  },
+  onMasteryCardProgress: (callback) => {
+    const listener = (_event, progress) => callback(progress);
+    ipcRenderer.on("mastery:cardProgress", listener);
+    return () => ipcRenderer.removeListener("mastery:cardProgress", listener);
+  },
+  continueMasteryCardDiscussion: (request) => {
+    return ipcRenderer.invoke("mastery:continueCardDiscussion", request);
+  },
+  evaluateMasteryCard: (request) => {
+    return ipcRenderer.invoke("mastery:evaluateCard", request);
+  },
+  clearDocumentMasteryCards: (request) => {
+    return ipcRenderer.invoke("mastery:clearCards", request);
   },
   getDocumentEmbeddingStatus: (settings) => {
     return ipcRenderer.invoke("document:embeddingStatus", settings);
