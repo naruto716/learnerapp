@@ -55,6 +55,9 @@ contextBridge.exposeInMainWorld("learner", {
   generateImage: (request) => {
     return ipcRenderer.invoke("ai:generateImage", request);
   },
+  transcribeSpeech: (request) => {
+    return ipcRenderer.invoke("speech:transcribe", request);
+  },
   getDocumentMastery: (filePath, markdown) => {
     return ipcRenderer.invoke("mastery:getDocumentMastery", filePath, markdown);
   },

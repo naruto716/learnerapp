@@ -9,6 +9,9 @@ const defaultAiSettings = {
   imageQuality: "low",
   imageBackground: "opaque",
   imageOutputFormat: "png",
+  speechToTextApiKey: "",
+  speechToTextLanguage: "eng",
+  speechToTextModel: "scribe_v2",
   userProfile: "",
 };
 
@@ -34,6 +37,9 @@ function normalizeAiSettings(settings = {}) {
     imageQuality: cleanSetting(settings.imageQuality, defaultAiSettings.imageQuality),
     imageBackground: cleanSetting(settings.imageBackground, defaultAiSettings.imageBackground),
     imageOutputFormat: cleanSetting(settings.imageOutputFormat, defaultAiSettings.imageOutputFormat),
+    speechToTextApiKey: cleanSetting(settings.speechToTextApiKey, defaultAiSettings.speechToTextApiKey),
+    speechToTextLanguage: cleanSetting(settings.speechToTextLanguage, defaultAiSettings.speechToTextLanguage),
+    speechToTextModel: cleanSetting(settings.speechToTextModel, defaultAiSettings.speechToTextModel),
     userProfile: cleanSetting(settings.userProfile, defaultAiSettings.userProfile),
   };
 }

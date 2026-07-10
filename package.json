@@ -24,6 +24,11 @@
     ],
     "directories": {
       "output": "dist"
+    },
+    "mac": {
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Learner uses the microphone to dictate mastery answers."
+      }
     }
   },
   "dependencies": {

@@ -19,6 +19,7 @@ const {
 const { loadLocalEnv } = require("./localEnv");
 const { configureAiSettings } = require("./aiSettings");
 const { generateImage, listAiModels } = require("./imageGeneration");
+const { transcribeSpeech } = require("./speechToText");
 const {
   clearDocumentMastery,
   closeMasteryDatabase,
@@ -117,6 +118,30 @@ function notifyFullScreenChange(win) {
   win.webContents.send("window:fullscreen-change", win.isFullScreen());
 }
 
+function isTrustedAppOrigin(origin) {
+  if (!origin) return false;
+  if (origin.startsWith(`${appProtocol}://app`)) return true;
+  if (!devServerUrl) return false;
+
+  try {
+    return new URL(origin).origin === new URL(devServerUrl).origin;
+  } catch {
+    return false;
+  }
+}
+
+function configureMediaPermissions(ses) {
+  ses.setPermissionCheckHandler((_webContents, permission, requestingOrigin) => {
+    return permission === "media" && isTrustedAppOrigin(requestingOrigin);
+  });
+  ses.setPermissionRequestHandler((_webContents, permission, callback, details) => {
+    const mediaTypes = Array.isArray(details.mediaTypes) ? details.mediaTypes : [];
+    const audioOnly = mediaTypes.length > 0 && mediaTypes.every((mediaType) => mediaType === "audio");
+    const origin = details.securityOrigin || details.requestingUrl || "";
+    callback(permission === "media" && audioOnly && isTrustedAppOrigin(origin));
+  });
+}
+
 ipcMain.handle("window:is-fullscreen", (event) => {
   return BrowserWindow.fromWebContents(event.sender)?.isFullScreen() ?? false;
 });
@@ -137,6 +162,8 @@ function createWindow() {
       nodeIntegration: false,
     },
   });
+
+  configureMediaPermissions(win.webContents.session);
 
   win.on("enter-full-screen", () => notifyFullScreenChange(win));
   win.on("leave-full-screen", () => notifyFullScreenChange(win));
@@ -353,6 +380,11 @@ ipcMain.handle("ai:listModels", async (_event, settings) => {
 ipcMain.handle("ai:generateImage", async (_event, request) => {
   configureAiSettings(request?.settings);
   return generateImage(request);
+});
+
+ipcMain.handle("speech:transcribe", async (_event, request) => {
+  configureAiSettings(request?.settings);
+  return transcribeSpeech(request);
 });
 
 ipcMain.handle("mastery:getDocumentMastery", async (_event, filePath, markdown) => {

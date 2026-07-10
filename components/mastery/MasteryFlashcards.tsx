@@ -10,6 +10,7 @@ import RichMarkdown from "@/components/markdown/RichMarkdown";
 import MasteryCardCarousel from "./MasteryCardCarousel";
 import { MasteryCardFrame, MasteryCardNavigation, masteryBottomFadeStyle } from "./MasteryCardLayout";
 import { MasteryConceptContent, MasteryMetaphorContent } from "./MasteryConceptContent";
+import SpeechToTextButton from "./SpeechToTextButton";
 
 type MasteryFlashcardsProps = {
   cardState: DocumentMasteryCards | null;
@@ -217,6 +218,12 @@ function PracticeCard({
     setDiscussionMessage("");
   };
 
+  const appendTranscript = (current: string, transcript: string) => {
+    const cleanTranscript = transcript.trim();
+    if (!cleanTranscript) return current;
+    return current.trim() ? `${current.trimEnd()} ${cleanTranscript}` : cleanTranscript;
+  };
+
   return (
     <MasteryCardFrame maxWidthClassName="max-w-[820px]">
       <div className="mb-3 flex min-h-6 items-center gap-2 text-[11px] font-medium uppercase tracking-wide text-white/38">
@@ -271,7 +278,12 @@ function PracticeCard({
                 placeholder="Explain your reasoning..."
                 value={discussionMessage}
               />
-              <div className="flex justify-end gap-2">
+              <div className="flex items-center justify-between gap-2">
+                <SpeechToTextButton
+                  disabled={isDiscussing || isEvaluating}
+                  onTranscript={(transcript) => setDiscussionMessage((current) => appendTranscript(current, transcript))}
+                />
+                <div className="flex justify-end gap-2">
                 {card.messages.length > 0 && (
                   <button
                     className="rounded-md px-3 py-2 text-sm font-medium text-white/58 transition hover:bg-white/[0.06] hover:text-white/88 disabled:opacity-30"
@@ -295,6 +307,7 @@ function PracticeCard({
                   <PaperPlaneRightIcon size={15} />
                   Send
                 </button>
+                </div>
               </div>
             </section>
           )}
@@ -307,7 +320,11 @@ function PracticeCard({
                 placeholder="Write your answer..."
                 value={answer}
               />
-              <div className="mt-3 flex justify-end">
+              <div className="mt-3 flex items-center justify-between gap-2">
+                <SpeechToTextButton
+                  disabled={isEvaluating}
+                  onTranscript={(transcript) => setAnswer((current) => appendTranscript(current, transcript))}
+                />
                 <button
                   className="inline-flex items-center gap-2 rounded-md bg-white px-3 py-2 text-sm font-semibold text-black transition hover:bg-white/88 disabled:opacity-35"
                   disabled={isEvaluating || !answer.trim()}

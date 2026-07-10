@@ -11,6 +11,9 @@ export type LearnerAiSettings = {
   imageQuality: string;
   imageBackground: string;
   imageOutputFormat: string;
+  speechToTextApiKey: string;
+  speechToTextLanguage: string;
+  speechToTextModel: string;
   userProfile: string;
 };
 
@@ -25,6 +28,9 @@ export const aiSettingsStorageKeys = {
   imageQuality: "learner.ai.imageQuality.v1",
   imageBackground: "learner.ai.imageBackground.v1",
   imageOutputFormat: "learner.ai.imageOutputFormat.v1",
+  speechToTextApiKey: "learner.ai.speechToTextApiKey.v1",
+  speechToTextLanguage: "learner.ai.speechToTextLanguage.v1",
+  speechToTextModel: "learner.ai.speechToTextModel.v1",
   userProfile: "learner.ai.userProfile.v1",
 } as const;
 
@@ -39,6 +45,9 @@ export const defaultAiSettings: LearnerAiSettings = {
   imageQuality: "low",
   imageBackground: "opaque",
   imageOutputFormat: "png",
+  speechToTextApiKey: "",
+  speechToTextLanguage: "eng",
+  speechToTextModel: "scribe_v2",
   userProfile: "",
 };
 
@@ -59,6 +68,9 @@ export function readAiSettings(): LearnerAiSettings {
     imageQuality: readSetting("imageQuality"),
     imageBackground: readSetting("imageBackground"),
     imageOutputFormat: readSetting("imageOutputFormat"),
+    speechToTextApiKey: readSetting("speechToTextApiKey"),
+    speechToTextLanguage: readSetting("speechToTextLanguage"),
+    speechToTextModel: readSetting("speechToTextModel"),
     userProfile: readSetting("userProfile"),
   };
 }

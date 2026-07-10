@@ -49,7 +49,22 @@ declare global {
     imageQuality?: string;
     imageBackground?: string;
     imageOutputFormat?: string;
+    speechToTextApiKey?: string;
+    speechToTextLanguage?: string;
+    speechToTextModel?: string;
     userProfile?: string;
+  };
+
+  type LearnerSpeechTranscriptionRequest = {
+    audio: Uint8Array;
+    mimeType: string;
+    settings?: LearnerAiSettings;
+  };
+
+  type LearnerSpeechTranscriptionResult = {
+    languageCode: string;
+    model: string;
+    text: string;
   };
 
   type LearnerAiModel = {
@@ -500,6 +515,7 @@ declare global {
       configureAi: (settings?: LearnerAiSettings) => Promise<LearnerAiSettings>;
       listAiModels: (settings?: LearnerAiSettings) => Promise<LearnerAiModel[]>;
       generateImage: (request: LearnerImageGenerationRequest) => Promise<LearnerImageGenerationResult>;
+      transcribeSpeech: (request: LearnerSpeechTranscriptionRequest) => Promise<LearnerSpeechTranscriptionResult>;
       getDocumentMastery: (filePath: string, markdown: string) => Promise<DocumentMastery>;
       generateDocumentMastery: (
         request: DocumentMasteryGenerationRequest,

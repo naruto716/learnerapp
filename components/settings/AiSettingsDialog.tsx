@@ -348,6 +348,30 @@ export default function AiSettingsDialog({
             </div>
           </Section>
 
+          <Section title="Speech to Text">
+            <p className="text-sm leading-6 text-white/48">
+              Dictate mastery answers with ElevenLabs Scribe. Use auto to detect the spoken language.
+            </p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field
+                label="ElevenLabs API key"
+                onChange={(value) => updateSetting("speechToTextApiKey", value)}
+                type="password"
+                value={settings.speechToTextApiKey}
+              />
+              <Field
+                label="STT model"
+                onChange={(value) => updateSetting("speechToTextModel", value)}
+                value={settings.speechToTextModel}
+              />
+              <Field
+                label="Language code"
+                onChange={(value) => updateSetting("speechToTextLanguage", value)}
+                value={settings.speechToTextLanguage}
+              />
+            </div>
+          </Section>
+
           <Section title="Image Generation">
             <div className="grid gap-3 sm:grid-cols-2">
               <SelectField
