@@ -29,7 +29,7 @@ export const aiSettingsStorageKeys = {
 export const defaultAiSettings: LearnerAiSettings = {
   apiKey: "sk-cliproxy-michael-2026",
   baseUrl: "http://127.0.0.1:8317/v1",
-  chatModel: "gpt-5.5",
+  chatModel: "gpt-5.6-sol",
   graphModel: "gpt-5.3-codex-spark",
   embeddingModel: "text-embedding-3-small",
   imageModel: "gpt-image-2",

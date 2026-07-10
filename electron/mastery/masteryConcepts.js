@@ -726,12 +726,14 @@ async function requestMasteryMetaphor({ concepts, documentPath, settings, onProg
           "Return only valid JSON.",
           "The metaphor must be one shared concrete scene, not separate unrelated metaphors.",
           "Every concept must appear as a distinct object, action, place, or force inside the same scene.",
-          "Prefer physical cause and effect, motion, weight, sound, texture, sequence, and spatial layout.",
+          "Make the scene vivid enough to work as a memory image: exaggerated scale, force, motion, texture, sound, weight, sequence, and clear spatial layout.",
+          "Use concrete physical objects and events. Avoid weak generic symbols such as floating icons, glowing networks, puzzle pieces, light bulbs, or vague abstract shapes.",
           "Avoid text labels, diagrams, UI screens, abstract icons, and generic symbolism.",
           "Avoid slogans and buzzwords. Use plain concrete language.",
-          "imagePrompt is for the whole scene.",
+          "imagePrompt is for the whole scene and must be a direct image-generation prompt, not a summary.",
+          "The whole-scene imagePrompt must describe the setting, main objects, dramatic action, composition, material details, lighting, and mood.",
           "Each conceptScenes item must use the supplied conceptId and describe that concept's role in the shared scene.",
-          "Each concept imagePrompt must keep the same visual world as the whole-scene prompt and focus on that one concept's role.",
+          "Each concept imagePrompt must keep the same visual world as the whole-scene prompt, focus on that one concept's role, and still be vivid enough to generate as a standalone image.",
           "Return exactly one conceptScenes item for every supplied concept ID.",
         ].join("\n"),
       },
@@ -787,6 +789,24 @@ function cleanImageNamePart(value) {
     .slice(0, 48) || "mastery";
 }
 
+function vividMetaphorImagePrompt(prompt, scope) {
+  const cleanPrompt = String(prompt || "").trim();
+  const scopeInstruction =
+    scope === "overview"
+      ? "Show the whole shared metaphor world with all major objects readable in one coherent scene."
+      : "Focus the composition on this concept's object, action, or force while preserving the same shared metaphor world.";
+
+  return [
+    cleanPrompt,
+    "",
+    "Image generation requirements:",
+    scopeInstruction,
+    "Make it a visceral memory image: exaggerated physical scale, clear motion, visible cause and effect, tactile materials, strong silhouettes, dramatic lighting, and readable foreground/midground/background.",
+    "Use concrete objects and events instead of abstract symbolism.",
+    "No text, captions, labels, UI, diagrams, charts, icons, logos, or generic stock-illustration style.",
+  ].join("\n");
+}
+
 async function mapWithConcurrency(items, limit, mapper) {
   const results = new Array(items.length);
   let nextIndex = 0;
@@ -823,7 +843,7 @@ async function generateMetaphorImages({ concepts, documentPath, metaphor, settin
     {
       kind: "overview",
       label: "overview image",
-      prompt: metaphor.imagePrompt,
+      prompt: vividMetaphorImagePrompt(metaphor.imagePrompt, "overview"),
       suffix: "overview",
     },
     ...metaphor.conceptScenes.map((scene) => {
@@ -832,7 +852,7 @@ async function generateMetaphorImages({ concepts, documentPath, metaphor, settin
         concept,
         kind: "scene",
         label: concept?.name || `concept ${scene.conceptId}`,
-        prompt: scene.imagePrompt,
+        prompt: vividMetaphorImagePrompt(scene.imagePrompt, "concept"),
         scene,
         suffix: cleanImageNamePart(concept?.name || `concept-${scene.conceptId}`),
       };
@@ -894,12 +914,14 @@ async function generateMetaphorImages({ concepts, documentPath, metaphor, settin
       ...scene,
       conceptName: concept?.name || "",
       imagePath: imageResult.generated.imagePath,
+      imagePrompt: imageResult.prompt,
     };
   });
 
   return {
     imageModel: overviewImage.image.model,
     imagePath: overviewImage.imagePath,
+    imagePrompt: imageResults[0].prompt,
     scenes,
   };
 }
@@ -1180,7 +1202,10 @@ async function generateDocumentMasteryMetaphor({ documentPath, markdown = "", se
     documentPath: normalizedPath,
     imageModel: images.imageModel,
     imagePath: images.imagePath,
-    metaphor,
+    metaphor: {
+      ...metaphor,
+      imagePrompt: images.imagePrompt,
+    },
     model: metaphor.model,
     scenes: images.scenes,
   });
