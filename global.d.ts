@@ -441,6 +441,7 @@ declare global {
     generationPrompt: string;
     markdown: string;
     masterySettings?: MasteryScoringSettings;
+    minimumReadyCards?: number;
     settings?: LearnerAiSettings;
     targetProficiency: MasteryTargetProficiency;
   };
@@ -490,6 +491,7 @@ declare global {
     concepts: MasteryConcept[];
     grading: MasteryPracticeGrading | null;
     id: number;
+    manualOutcome: "passed" | "review" | null;
     metaphor: MasteryMetaphor | null;
     sortOrder: number;
     sourceCardId: number | null;
@@ -517,6 +519,33 @@ declare global {
     status: MasteryPracticeSessionStatus;
   };
 
+  type MasteryPracticeEvidenceRequest = {
+    cardId?: number;
+    conceptId?: number;
+    documentPath: string;
+  };
+
+  type MasteryPracticeSessionDeleteRequest = {
+    documentPath: string;
+    sessionId: number;
+  };
+
+  type MasteryPracticeEvidence = {
+    answerMarkdown: string;
+    card: MasteryCard;
+    concepts: MasteryConcept[];
+    grading: MasteryPracticeGrading | null;
+    id: number;
+    manualOutcome: "passed" | "review" | null;
+    passingScore: number;
+    sessionCompletedAt: number | null;
+    sessionCreatedAt: number;
+    sessionId: number;
+    sessionStatus: MasteryPracticeSessionStatus;
+    sourceCardId: number | null;
+    submittedAt: number | null;
+  };
+
   type MasteryPracticeSessionCreateRequest = {
     cardIds?: number[];
     desiredCount?: number;
@@ -534,6 +563,11 @@ declare global {
   type MasteryPracticeRetryRequest = {
     sessionCardId: number;
     settings?: LearnerAiSettings;
+  };
+
+  type MasteryPracticeCardOutcomeRequest = {
+    outcome: "passed" | "review";
+    sessionCardId: number;
   };
 
   type DocumentMasteryScoreUpdateRequest = {
@@ -617,11 +651,20 @@ declare global {
         settings?: LearnerAiSettings,
       ) => Promise<MasteryPracticeSession>;
       listMasteryPracticeSessions: (documentPath: string) => Promise<MasteryPracticeSessionSummary[]>;
+      deleteMasteryPracticeSession: (
+        request: MasteryPracticeSessionDeleteRequest,
+      ) => Promise<MasteryPracticeSessionSummary[]>;
+      listMasteryPracticeEvidence: (
+        request: MasteryPracticeEvidenceRequest,
+      ) => Promise<MasteryPracticeEvidence[]>;
       submitMasteryPracticeAnswer: (
         request: MasteryPracticeAnswerRequest,
       ) => Promise<MasteryPracticeSession>;
       retryMasteryPracticeGrading: (
         request: MasteryPracticeRetryRequest,
+      ) => Promise<MasteryPracticeSession>;
+      setMasteryPracticeCardOutcome: (
+        request: MasteryPracticeCardOutcomeRequest,
       ) => Promise<MasteryPracticeSession>;
       clearDocumentMasteryCards: (
         request: { documentPath: string; resetProgress?: boolean },

@@ -100,6 +100,35 @@ export function useMasteryCards({
     }
   }, [activeDocumentPath, getCurrentDocumentTools]);
 
+  const ensureReadyCards = useCallback(async (minimumReadyCards: number) => {
+    setError(null);
+    setIsGenerating(true);
+    setProgress({ completed: 0, label: "Preparing practice cards", phase: "planning", total: 1 });
+
+    try {
+      const snapshot = getCurrentDocumentTools()?.read();
+      if (!snapshot || !activeDocumentPath) throw new Error("Open a document before generating flashcards.");
+      const preferences = cardState?.preferences ?? { generationPrompt: "", targetProficiency: "proficient" };
+      const state = await window.learner?.generateDocumentMasteryCards({
+        documentPath: snapshot.path,
+        generationPrompt: preferences.generationPrompt,
+        markdown: snapshot.markdown,
+        masterySettings: readMasterySettings(),
+        minimumReadyCards,
+        settings: readAiSettings(),
+        targetProficiency: preferences.targetProficiency,
+      });
+      if (!state) throw new Error("Flashcard generation is not available in this renderer.");
+      setCardState(state);
+      return state;
+    } catch (generationError) {
+      setError(generationError instanceof Error ? generationError.message : "Flashcard generation failed.");
+      return null;
+    } finally {
+      setIsGenerating(false);
+    }
+  }, [activeDocumentPath, cardState?.preferences, getCurrentDocumentTools]);
+
   const evaluateCard = useCallback(async (cardId: number, answerMarkdown = "") => {
     setError(null);
     setIsEvaluating(true);
@@ -181,6 +210,7 @@ export function useMasteryCards({
     clearCards,
     continueDiscussion,
     error,
+    ensureReadyCards,
     evaluateCard,
     generateCards,
     isDiscussing,

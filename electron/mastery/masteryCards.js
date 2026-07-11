@@ -33,6 +33,7 @@ async function generateDocumentMasteryCards({
   instruction,
   markdown = "",
   masterySettings = {},
+  minimumReadyCards,
   onProgress,
   settings = {},
   targetProficiency,
@@ -58,6 +59,11 @@ async function generateDocumentMasteryCards({
   reportProgress(onProgress, { completed: 0, label: "Preparing card context", phase: "planning", total: 1 });
   const graph = await ensureGraphForCards({ documentPath: normalizedPath, markdown, onProgress, settings });
   const state = getDocumentMasteryCards(normalizedPath);
+  const readyCardCount = state.cards.filter((card) => card.status === "active").length;
+  const minimumNewCards = minimumReadyCards === undefined
+    ? null
+    : Math.max(0, Math.ceil(Number(minimumReadyCards) || 0) - readyCardCount);
+  if (minimumNewCards === 0) return state;
   reportProgress(onProgress, {
     completed: 0,
     label: "Generating adaptive flashcards",
@@ -70,10 +76,14 @@ async function generateDocumentMasteryCards({
     graph,
     mastery,
     masterySettings: normalizedMasterySettings,
+    minimumNewCards,
     settings,
     state,
     targetProficiency: preferences.targetProficiency,
   });
+  if (minimumNewCards !== null && generated.cards.length < minimumNewCards) {
+    throw new Error(`Card generation returned ${generated.cards.length}; ${minimumNewCards} are required for practice.`);
+  }
 
   reportProgress(onProgress, {
     completed: 0,

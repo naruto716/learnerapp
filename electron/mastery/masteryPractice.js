@@ -145,6 +145,7 @@ function practiceSessionResult(sessionId) {
             }
           : null,
         id: row.id,
+        manualOutcome: row.manual_outcome || null,
         metaphor: snapshot.metaphor || null,
         sortOrder: row.sort_order,
         sourceCardId: row.source_card_id ?? null,
@@ -166,6 +167,9 @@ function createPracticeSession({ cardIds = [], desiredCount = 5, documentPath, m
     : state.cards.filter((card) => card.status === "active").slice(0, Math.max(1, Number(desiredCount) || 5));
   if (requestedIds.length > 0 && cards.length !== requestedIds.length) {
     throw new Error("One or more selected cards are no longer available.");
+  }
+  if (requestedIds.length > 0 && cards.some((card) => card.status !== "active")) {
+    throw new Error("Only ready cards can be selected for practice.");
   }
   if (cards.length === 0) throw new Error("No ready cards are available for practice.");
   if (requestedIds.length === 0 && cards.length < Math.max(1, Number(desiredCount) || 5)) {
@@ -278,6 +282,7 @@ async function gradeRun(run) {
   });
 
   const db = getMasteryDatabase();
+  if (!db.prepare("SELECT id FROM mastery_practice_grading_runs WHERE id = ?").get(run.id)) return;
   const effectsAlreadyApplied = Boolean(
     db.prepare(
       `SELECT 1 FROM mastery_practice_grading_runs
@@ -427,6 +432,41 @@ function retryPracticeGrading({ sessionCardId }) {
   return practiceSessionResult(submission.session_id);
 }
 
+function setPracticeCardOutcome({ outcome, sessionCardId }) {
+  ensurePracticeSchema();
+  if (outcome !== "passed" && outcome !== "review") {
+    throw new Error("Practice card outcome must be passed or review.");
+  }
+  const db = getMasteryDatabase();
+  const sessionCard = db
+    .prepare("SELECT id, session_id, source_card_id FROM mastery_practice_session_cards WHERE id = ?")
+    .get(Number(sessionCardId));
+  if (!sessionCard) throw new Error("Practice card was not found.");
+
+  const now = Date.now();
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.prepare("UPDATE mastery_practice_session_cards SET manual_outcome = ? WHERE id = ?")
+      .run(outcome, sessionCard.id);
+    if (sessionCard.source_card_id) {
+      db.prepare("UPDATE mastery_cards SET status = ?, retry_at = ?, updated_at = ? WHERE id = ?")
+        .run(
+          outcome === "passed" ? "done" : "delayed",
+          outcome === "passed" ? null : now + 3 * 24 * 60 * 60 * 1000,
+          now,
+          sessionCard.source_card_id,
+        );
+    }
+    db.prepare("UPDATE mastery_practice_sessions SET updated_at = ? WHERE id = ?")
+      .run(now, sessionCard.session_id);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+  return practiceSessionResult(sessionCard.session_id);
+}
+
 function getPracticeSession(sessionId) {
   kickPracticeGrading();
   return practiceSessionResult(sessionId);
@@ -463,12 +503,95 @@ function listPracticeSessions(documentPath) {
     }));
 }
 
+function deletePracticeSession({ documentPath, sessionId }) {
+  ensurePracticeSchema();
+  const normalizedPath = normalizeDocumentPath(documentPath);
+  if (!normalizedPath) throw new Error("Document path is required.");
+  const result = getMasteryDatabase()
+    .prepare("DELETE FROM mastery_practice_sessions WHERE id = ? AND document_path = ?")
+    .run(Number(sessionId), normalizedPath);
+  if (result.changes === 0) throw new Error("Practice session was not found.");
+  return listPracticeSessions(normalizedPath);
+}
+
+function listPracticeEvidence({ cardId, conceptId, documentPath }) {
+  ensurePracticeSchema();
+  const normalizedPath = normalizeDocumentPath(documentPath);
+  if (!normalizedPath) throw new Error("Document path is required.");
+  const requestedCardId = Number(cardId) || null;
+  const requestedConceptId = Number(conceptId) || null;
+  if (!requestedCardId && !requestedConceptId) {
+    throw new Error("A concept or flashcard is required.");
+  }
+
+  return getMasteryDatabase()
+    .prepare(
+      `SELECT sessions.id AS session_id, sessions.status AS session_status,
+              sessions.mastery_settings_json, sessions.created_at AS session_created_at,
+              sessions.completed_at AS session_completed_at,
+              cards.*, submissions.answer_markdown, submissions.submitted_at,
+              runs.id AS run_id, runs.kind AS run_kind, runs.status AS grading_status,
+              runs.score, runs.feedback_markdown, runs.model, runs.error,
+              runs.effects_applied, runs.started_at, runs.completed_at AS graded_at
+       FROM mastery_practice_session_cards cards
+       JOIN mastery_practice_sessions sessions ON sessions.id = cards.session_id
+       LEFT JOIN mastery_practice_submissions submissions ON submissions.session_card_id = cards.id
+       LEFT JOIN mastery_practice_grading_runs runs ON runs.id = (
+         SELECT MAX(candidate.id) FROM mastery_practice_grading_runs candidate
+         WHERE candidate.submission_id = submissions.id
+       )
+       WHERE sessions.document_path = ?
+       ORDER BY sessions.created_at DESC, sessions.id DESC, cards.sort_order, cards.id`,
+    )
+    .all(normalizedPath)
+    .map((row) => {
+      const snapshot = parseJson(row.card_json, {});
+      const card = snapshot.card || snapshot;
+      return {
+        answerMarkdown: row.answer_markdown || "",
+        card,
+        concepts: snapshot.concepts || [],
+        grading: row.run_id
+          ? {
+              effectsApplied: Boolean(row.effects_applied),
+              error: row.error || "",
+              feedbackMarkdown: row.feedback_markdown || "",
+              gradedAt: row.graded_at ?? null,
+              id: row.run_id,
+              kind: row.run_kind,
+              model: row.model || "",
+              score: row.score ?? null,
+              startedAt: row.started_at ?? null,
+              status: row.grading_status,
+            }
+          : null,
+        id: row.id,
+        manualOutcome: row.manual_outcome || null,
+        passingScore: normalizeMasteryScoringSettings(parseJson(row.mastery_settings_json, {})).passingScore,
+        sessionCompletedAt: row.session_completed_at ?? null,
+        sessionCreatedAt: row.session_created_at,
+        sessionId: row.session_id,
+        sessionStatus: row.session_status,
+        sourceCardId: row.source_card_id ?? null,
+        submittedAt: row.submitted_at ?? null,
+      };
+    })
+    .filter((entry) => {
+      if (requestedCardId) return entry.sourceCardId === requestedCardId;
+      return entry.card.targets?.some((target) => target.conceptId === requestedConceptId)
+        || entry.concepts.some((concept) => concept.id === requestedConceptId);
+    });
+}
+
 module.exports = {
   createPracticeSession,
+  deletePracticeSession,
   ensurePracticeSchema,
   getPracticeSession,
   kickPracticeGrading,
+  listPracticeEvidence,
   listPracticeSessions,
   retryPracticeGrading,
+  setPracticeCardOutcome,
   submitPracticeAnswer,
 };

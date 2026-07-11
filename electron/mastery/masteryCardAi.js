@@ -171,7 +171,7 @@ async function ensureGraphForCards({ documentPath, markdown, onProgress, setting
   return graph;
 }
 
-function prepareGeneratedCards(cards, mastery, graph, weaknesses) {
+function prepareGeneratedCards(cards, mastery, graph, weaknesses, { skipInvalid = false } = {}) {
   const concepts = mastery.concepts;
   const conceptIds = new Set(concepts.map((concept) => concept.id));
   const conceptsById = new Map(concepts.map((concept) => [concept.id, concept]));
@@ -180,24 +180,26 @@ function prepareGeneratedCards(cards, mastery, graph, weaknesses) {
     weaknesses.filter((weakness) => weakness.status === "active").map((weakness) => weakness.id),
   );
 
-  return cards.map((card, cardIndex) => {
-    const targetKeys = new Set();
-    card.targets.forEach((target) => {
-      if (!conceptIds.has(target.conceptId)) {
-        throw new Error(`Generated card ${cardIndex + 1} references unknown concept ${target.conceptId}.`);
-      }
-      const key = `${target.conceptId}:${target.stage}`;
-      if (targetKeys.has(key)) throw new Error(`Generated card ${cardIndex + 1} repeats target ${key}.`);
-      targetKeys.add(key);
-    });
+  const prepared = [];
+  cards.forEach((card, cardIndex) => {
+    try {
+      const targetKeys = new Set();
+      card.targets.forEach((target) => {
+        if (!conceptIds.has(target.conceptId)) {
+          throw new Error(`Generated card ${cardIndex + 1} references unknown concept ${target.conceptId}.`);
+        }
+        const key = `${target.conceptId}:${target.stage}`;
+        if (targetKeys.has(key)) throw new Error(`Generated card ${cardIndex + 1} repeats target ${key}.`);
+        targetKeys.add(key);
+      });
 
-    const uniqueConceptIds = [...new Set(card.targets.map((target) => target.conceptId))];
-    const assertConceptCount = (minimum, maximum) => {
-      if (uniqueConceptIds.length < minimum || uniqueConceptIds.length > maximum) {
-        const expected = minimum === maximum ? `${minimum}` : `${minimum}-${maximum}`;
-        throw new Error(`Generated ${card.kind} card ${cardIndex + 1} must cover ${expected} concept${maximum === 1 ? "" : "s"}.`);
-      }
-    };
+      const uniqueConceptIds = [...new Set(card.targets.map((target) => target.conceptId))];
+      const assertConceptCount = (minimum, maximum) => {
+        if (uniqueConceptIds.length < minimum || uniqueConceptIds.length > maximum) {
+          const expected = minimum === maximum ? `${minimum}` : `${minimum}-${maximum}`;
+          throw new Error(`Generated ${card.kind} card ${cardIndex + 1} must cover ${expected} concept${maximum === 1 ? "" : "s"}.`);
+        }
+      };
 
     if (card.answerMode !== expectedAnswerModes[card.kind]) {
       throw new Error(`Generated ${card.kind} card ${cardIndex + 1} has the wrong interaction mode.`);
@@ -241,26 +243,31 @@ function prepareGeneratedCards(cards, mastery, graph, weaknesses) {
       }
     });
 
-    const hasAuthoredContext = ["contrast", "debugging", "drill", "quiz", "scenario"].includes(card.kind);
-    const primaryConcept = conceptsById.get(uniqueConceptIds[0]);
-    return {
-      ...card,
-      conceptContextVisible: card.kind === "feynman",
-      contextMarkdown:
-        card.kind === "relationship"
-          ? selectedGraphContext(graph, uniqueGraphEdgeIds)
-          : hasAuthoredContext
-            ? card.contextMarkdown.trim()
-            : "",
-      graphEdgeIds: uniqueGraphEdgeIds,
-      metaphorContextVisible: card.kind === "feynman",
-      promptMarkdown:
-        card.kind === "feynman"
-          ? "Teach this concept in your own words. Do not copy the concept card's wording."
-          : card.promptMarkdown,
-      title: card.kind === "feynman" && primaryConcept ? primaryConcept.name : card.title,
-    };
+      const hasAuthoredContext = ["contrast", "debugging", "drill", "quiz", "scenario"].includes(card.kind);
+      const primaryConcept = conceptsById.get(uniqueConceptIds[0]);
+      prepared.push({
+        ...card,
+        conceptContextVisible: card.kind === "feynman",
+        contextMarkdown:
+          card.kind === "relationship"
+            ? selectedGraphContext(graph, uniqueGraphEdgeIds)
+            : hasAuthoredContext
+              ? card.contextMarkdown.trim()
+              : "",
+        graphEdgeIds: uniqueGraphEdgeIds,
+        metaphorContextVisible: card.kind === "feynman",
+        promptMarkdown:
+          card.kind === "feynman"
+            ? "Teach this concept in your own words. Do not copy the concept card's wording."
+            : card.promptMarkdown,
+        title: card.kind === "feynman" && primaryConcept ? primaryConcept.name : card.title,
+      });
+    } catch (error) {
+      if (!skipInvalid) throw error;
+      console.warn("Skipping invalid generated mastery card:", error instanceof Error ? error.message : error);
+    }
   });
+  return prepared;
 }
 
 const networkFewShotRequest = [
@@ -383,6 +390,7 @@ async function requestGeneratedCards({
   graph,
   mastery,
   masterySettings,
+  minimumNewCards,
   settings,
   state,
   targetProficiency,
@@ -404,6 +412,15 @@ async function requestGeneratedCards({
           "Card kind and mastery stage are independent. Never select a kind because of a stage number.",
           "Stages are evidence tags only: 2=plain comprehension, 3=connections and usable mental models, 4=relationships and distinctions, 5=fault finding and reliable execution, 6=transfer to difficult new situations.",
           "A card may target several concept-stage pairs only when a successful answer directly demonstrates every pair. Do not attach unrelated targets to gain credit.",
+          "Concept-count rules use unique concept IDs, not the number of concept-stage target pairs:",
+          "- feynman: exactly 1 concept.",
+          "- diagnostic: exactly 1 concept.",
+          "- relationship: 2-5 concepts.",
+          "- contrast: 2-4 concepts.",
+          "- debugging: 1-4 concepts.",
+          "- drill: 1-4 concepts.",
+          "- quiz: 1-5 concepts.",
+          "- scenario: 1-5 concepts.",
           "Select card kinds by the learning operation the material needs:",
           "- feynman: show exactly one concept card and its metaphor, then ask the learner to teach it in their own words. The app supplies the prompt. This is not a quiz or checklist.",
           "- relationship: show one to five actual supplied graph edges and ask one focused question about why the relationship matters or how effects propagate.",
@@ -425,6 +442,7 @@ async function requestGeneratedCards({
           "rubricMarkdown must state observable evidence for the configured pass score without requiring the sample answer's exact wording.",
           "When a card directly works on an active weakness, include that weakness ID. Do not keep targeting resolved weaknesses.",
           "The note-level generation prompt is a learner preference. Follow it unless it conflicts with these card contracts.",
+          "Before returning JSON, verify every card against its interaction mode, unique concept-count rule, graph-edge rule, and required context rule. Remove or repair any card that violates a rule.",
           "The examples that follow demonstrate card shape, not card-type-to-stage mappings.",
         ].join("\n"),
       },
@@ -440,6 +458,9 @@ async function requestGeneratedCards({
           `Target proficiency: ${targetProficiency} (${targetScore}/100 overall).`,
           `Persistent generation prompt: ${String(generationPrompt || "").trim() || "No additional preference."}`,
           `Evaluation pass score: ${masterySettings.passingScore}/100.`,
+          minimumNewCards === null
+            ? "Choose the number of useful new cards based on the learning needs."
+            : `Generate at least ${minimumNewCards + 2} useful new cards. At least ${minimumNewCards} must remain valid after contract checks so the learner can start the requested practice set.`,
           "Points awarded to every targeted concept-stage pair after a pass:",
           formatScoring(masterySettings),
           "",
@@ -473,8 +494,12 @@ async function requestGeneratedCards({
   if (!parsed.success) {
     throw new Error(`Flashcard generation failed validation: ${parsed.error.issues.map((issue) => issue.message).join("; ")}`);
   }
+  const cards = prepareGeneratedCards(parsed.data.cards, mastery, graph, state.weaknesses, { skipInvalid: true });
+  if (cards.length === 0) {
+    throw new Error("Generated cards did not satisfy the mastery card contracts. Try generating again.");
+  }
   return {
-    cards: prepareGeneratedCards(parsed.data.cards, mastery, graph, state.weaknesses),
+    cards,
     model: response.model,
   };
 }

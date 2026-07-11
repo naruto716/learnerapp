@@ -219,6 +219,13 @@ function ensureMasteryCardSchema() {
      ON mastery_card_attempts(practice_submission_id) WHERE practice_submission_id IS NOT NULL`,
   );
 
+  const practiceCardColumns = new Set(
+    db.prepare("PRAGMA table_info(mastery_practice_session_cards)").all().map((column) => column.name),
+  );
+  if (!practiceCardColumns.has("manual_outcome")) {
+    db.exec("ALTER TABLE mastery_practice_session_cards ADD COLUMN manual_outcome TEXT");
+  }
+
   // Old cards were generated without an explicit interaction contract or visible context.
   db
     .prepare(

@@ -99,8 +99,11 @@ const { prepareGeneratedCards } = require("../electron/mastery/masteryCardAi");
 const { defaultMasteryScoringSettings } = require("../electron/mastery/masteryScoring");
 const {
   createPracticeSession,
+  deletePracticeSession,
   getPracticeSession,
+  listPracticeEvidence,
   listPracticeSessions,
+  setPracticeCardOutcome,
 } = require("../electron/mastery/masteryPractice");
 Module._load = originalLoad;
 
@@ -216,6 +219,24 @@ try {
       ),
     /must cover 1 concept/,
   );
+  const validBatchCards = prepareGeneratedCards(
+    [
+      baseCard({ title: "Valid diagnostic" }),
+      baseCard({
+        targets: [{ conceptId: 1, stage: 2 }, { conceptId: 2, stage: 3 }],
+        title: "Invalid diagnostic",
+      }),
+    ],
+    masteryWithMetaphor,
+    graph,
+    [],
+    { skipInvalid: true },
+  );
+  assert.deepEqual(
+    validBatchCards.map((card) => card.title),
+    ["Valid diagnostic"],
+    "AI batches should keep valid cards when a sibling card violates its contract",
+  );
   assert.throws(
     () => prepareGeneratedCards([relationshipCard({ graphEdgeIds: [999] })], masteryWithMetaphor, graph, []),
     /unknown graph edge/,
@@ -251,6 +272,62 @@ try {
     "practice must preserve the learner's selected card order",
   );
   assert.equal(listPracticeSessions(documentPath)[0].cardCount, 2);
+  assert.deepEqual(
+    listPracticeEvidence({ cardId: practiceSession.cards[0].sourceCardId, documentPath }).map((entry) => entry.id),
+    [practiceSession.cards[0].id],
+    "flashcard history must match the persisted source card",
+  );
+  assert.equal(
+    listPracticeEvidence({ conceptId: 1, documentPath }).length,
+    2,
+    "concept history must include every practiced card targeting the concept",
+  );
+  const disposableSession = createPracticeSession({
+    cardIds: [state.cards[0].id],
+    documentPath,
+    markdown: "# Alpha and Beta",
+    masterySettings: defaultMasteryScoringSettings,
+  });
+  assert.equal(
+    db.prepare("SELECT COUNT(*) AS count FROM mastery_practice_session_cards WHERE session_id = ?")
+      .get(disposableSession.id).count,
+    1,
+  );
+  deletePracticeSession({ documentPath, sessionId: disposableSession.id });
+  assert.equal(
+    db.prepare("SELECT COUNT(*) AS count FROM mastery_practice_sessions WHERE id = ?")
+      .get(disposableSession.id).count,
+    0,
+  );
+  assert.equal(
+    db.prepare("SELECT COUNT(*) AS count FROM mastery_practice_session_cards WHERE session_id = ?")
+      .get(disposableSession.id).count,
+    0,
+    "deleting practice must cascade through its immutable session cards",
+  );
+  assert.equal(getDocumentMasteryCards(documentPath).cards.length, state.cards.length);
+
+  const overriddenSessionCard = practiceSession.cards[0];
+  let overriddenSession = setPracticeCardOutcome({ outcome: "passed", sessionCardId: overriddenSessionCard.id });
+  assert.equal(overriddenSession.cards[0].manualOutcome, "passed");
+  state = getDocumentMasteryCards(documentPath);
+  assert.equal(state.cards.find((card) => card.id === overriddenSessionCard.sourceCardId).status, "done");
+  overriddenSession = setPracticeCardOutcome({ outcome: "review", sessionCardId: overriddenSessionCard.id });
+  assert.equal(overriddenSession.cards[0].manualOutcome, "review");
+  state = getDocumentMasteryCards(documentPath);
+  const overriddenSharedCard = state.cards.find((card) => card.id === overriddenSessionCard.sourceCardId);
+  assert.equal(overriddenSharedCard.status, "delayed");
+  assert.ok(overriddenSharedCard.retryAt > Date.now());
+  assert.throws(
+    () => createPracticeSession({
+      cardIds: [overriddenSharedCard.id],
+      documentPath,
+      markdown: "# Alpha and Beta",
+      masterySettings: defaultMasteryScoringSettings,
+    }),
+    /Only ready cards/,
+    "review cards must remain unavailable until their cooldown expires",
+  );
 
   const customScoring = structuredClone(defaultMasteryScoringSettings);
   customScoring.passingScore = 85;

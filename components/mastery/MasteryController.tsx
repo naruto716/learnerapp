@@ -102,6 +102,7 @@ export default function MasteryController({
         onClear={clearAndSyncCards}
         onClearCards={cardsController.clearCards}
         onClose={closeMastery}
+        onEnsureReadyCards={cardsController.ensureReadyCards}
         onGenerateCards={cardsController.generateCards}
         onGenerateMetaphor={generateMetaphor}
         onPracticeChanged={syncAfterPractice}

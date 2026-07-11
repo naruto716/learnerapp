@@ -3,12 +3,14 @@
 import {
   ArrowsClockwiseIcon,
   CardsThreeIcon,
+  CheckIcon,
   ClockCounterClockwiseIcon,
   CrosshairIcon,
   EyeIcon,
   EyeSlashIcon,
   GridFourIcon,
   ImageIcon,
+  PauseIcon,
   PlayIcon,
   PlusIcon,
   SparkleIcon,
@@ -17,11 +19,12 @@ import {
   WarningCircleIcon,
   XIcon,
 } from "@phosphor-icons/react";
-import { useCallback, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import MasteryCardCarousel from "./MasteryCardCarousel";
 import MasteryCardGenerationDialog from "./MasteryCardGenerationDialog";
 import { MasteryCardFrame, MasteryCardNavigation, masteryBottomFadeStyle } from "./MasteryCardLayout";
 import { MasteryConceptContent, MasteryMetaphorContent } from "./MasteryConceptContent";
+import PracticeHistoryDialog from "./PracticeHistoryDialog";
 import MasteryPracticeWorkspace, {
   type FlashcardView,
   type MasteryPracticeWorkspaceHandle,
@@ -43,6 +46,7 @@ type MasteryPanelProps = {
   onClear: () => boolean | Promise<boolean>;
   onClearCards: () => boolean | Promise<boolean>;
   onClose: () => void;
+  onEnsureReadyCards: (minimumReadyCards: number) => Promise<DocumentMasteryCards | null>;
   onGenerate: (force?: boolean) => boolean | Promise<boolean>;
   onGenerateCards: (preferences: MasteryCardPreferences) => boolean | Promise<boolean>;
   onGenerateMetaphor: () => boolean | Promise<boolean>;
@@ -283,6 +287,7 @@ function ConceptDeckCard({
   conceptIndex,
   metaphor,
   onMasteryScoreChange,
+  onOpenHistory,
   onNext,
   onPrevious,
   showMetaphor,
@@ -295,6 +300,7 @@ function ConceptDeckCard({
   conceptIndex: number;
   metaphor: MasteryMetaphor | null;
   onMasteryScoreChange: (conceptId: number, score: number) => void | Promise<void>;
+  onOpenHistory: (concept: MasteryConcept) => void;
   onNext: () => void;
   onPrevious: () => void;
   showMetaphor: boolean;
@@ -311,6 +317,15 @@ function ConceptDeckCard({
           <span className="rounded-full bg-white/[0.06] px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide text-white/38">
             {concept.type || "Concept"}
           </span>
+          <button
+            aria-label={`Show practice history for ${concept.name}`}
+            className="flex h-6 w-6 items-center justify-center rounded-md text-white/34 transition hover:bg-white/[0.07] hover:text-white/72"
+            onClick={() => onOpenHistory(concept)}
+            title="Practice history"
+            type="button"
+          >
+            <ClockCounterClockwiseIcon size={14} />
+          </button>
         </div>
         <MasteryLevelControl
           concept={concept}
@@ -353,6 +368,7 @@ function ConceptDeckCarousel({
   metaphor,
   onActiveIndexChange,
   onMasteryScoreChange,
+  onOpenHistory,
   showMetaphor,
   thresholds,
 }: {
@@ -361,6 +377,7 @@ function ConceptDeckCarousel({
   metaphor: MasteryMetaphor | null;
   onActiveIndexChange: (index: number) => void;
   onMasteryScoreChange: (conceptId: number, score: number) => void | Promise<void>;
+  onOpenHistory: (concept: MasteryConcept) => void;
   showMetaphor: boolean;
   thresholds: MasteryScoringSettings["thresholds"];
 }) {
@@ -381,6 +398,7 @@ function ConceptDeckCarousel({
           metaphor={metaphor}
           onMasteryScoreChange={onMasteryScoreChange}
           onNext={next}
+          onOpenHistory={onOpenHistory}
           onPrevious={previous}
           showMetaphor={showMetaphor}
           thresholds={thresholds}
@@ -406,6 +424,7 @@ export default function MasteryPanel({
   onClear,
   onClearCards,
   onClose,
+  onEnsureReadyCards,
   onGenerate,
   onGenerateCards,
   onGenerateMetaphor,
@@ -423,10 +442,13 @@ export default function MasteryPanel({
   const [cardGenerationOpen, setCardGenerationOpen] = useState(false);
   const [flashcardView, setFlashcardView] = useState<FlashcardView>("deck");
   const [historyError, setHistoryError] = useState("");
+  const [historyDeletingId, setHistoryDeletingId] = useState<number | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyMenuOpen, setHistoryMenuOpen] = useState(false);
   const [practiceHistory, setPracticeHistory] = useState<MasteryPracticeSessionSummary[]>([]);
+  const [historyConcept, setHistoryConcept] = useState<MasteryConcept | null>(null);
   const [hasResumablePractice, setHasResumablePractice] = useState(false);
+  const [practiceResultsOpen, setPracticeResultsOpen] = useState(false);
   const [practiceStarting, setPracticeStarting] = useState(false);
   const [section, setSection] = useState<MasterySection>("concepts");
   const [showMetaphor, setShowMetaphor] = useState(false);
@@ -438,11 +460,21 @@ export default function MasteryPanel({
   const laterCardCount = cards.filter((card) => card.status === "delayed").length;
   const completedCardCount = cards.filter((card) => card.status === "done").length;
   const practiceWorkspaceRef = useRef<MasteryPracticeWorkspaceHandle>(null);
+  const practiceOpen = flashcardView === "practice";
+
+  useEffect(() => {
+    setShowMetaphor(hasMetaphor);
+  }, [activeDocumentPath, hasMetaphor, mastery?.metaphor?.id]);
 
   const setFocusedConceptIndex = useCallback((index: number) => {
     if (!hasConcepts) return;
     setActiveIndex(Math.max(0, Math.min(conceptCount - 1, index)));
   }, [conceptCount, hasConcepts]);
+
+  const selectSection = (nextSection: MasterySection) => {
+    setSection(nextSection);
+    if (nextSection === "flashcards") setFlashcardView("deck");
+  };
 
   const handleGenerateMetaphor = async () => {
     const generated = await onGenerateMetaphor();
@@ -492,6 +524,29 @@ export default function MasteryPanel({
     }
   };
 
+  const deleteHistorySession = async (practice: MasteryPracticeSessionSummary) => {
+    if (!activeDocumentPath || historyDeletingId !== null) return;
+    const confirmed = window.confirm(
+      `Delete the ${formatPracticeDate(practice.createdAt)} practice session and its saved answers and grading history?`,
+    );
+    if (!confirmed) return;
+    setHistoryError("");
+    setHistoryDeletingId(practice.id);
+    try {
+      const sessions = await window.learner?.deleteMasteryPracticeSession({
+        documentPath: activeDocumentPath,
+        sessionId: practice.id,
+      });
+      setPracticeHistory(sessions ?? []);
+      practiceWorkspaceRef.current?.removePracticeSession(practice.id);
+      setHasResumablePractice(Boolean(sessions?.some((candidate) => candidate.status === "active")));
+    } catch (deleteError) {
+      setHistoryError(deleteError instanceof Error ? deleteError.message : "Could not delete this practice session.");
+    } finally {
+      setHistoryDeletingId(null);
+    }
+  };
+
   const handleClearCards = async () => {
     if (cards.length === 0 || isCardGenerating) return;
     const confirmed = window.confirm(
@@ -524,7 +579,7 @@ export default function MasteryPanel({
                   section === nextSection ? "bg-white/[0.11] text-white/82" : "text-white/42 hover:text-white/70"
                 }`}
                 key={nextSection}
-                onClick={() => setSection(nextSection)}
+                onClick={() => selectSection(nextSection)}
                 type="button"
               >
                 {nextSection}
@@ -548,17 +603,39 @@ export default function MasteryPanel({
         {section === "flashcards" ? (
           <div className="flex items-center gap-2">
             <button
-              aria-label={hasResumablePractice ? "Resume practice" : "Practice"}
-              className="flex h-8 w-8 items-center justify-center gap-2 rounded-md bg-white text-sm font-semibold text-black transition hover:bg-white/88 disabled:opacity-35 md:w-auto md:px-3"
-              disabled={isCardGenerating || practiceStarting}
+              aria-label={practiceOpen
+                ? practiceResultsOpen ? "Finish practice" : "Pause practice"
+                : hasResumablePractice ? "Resume practice" : "Practice"}
+              className={`flex h-8 w-8 items-center justify-center gap-2 rounded-md text-sm font-semibold transition disabled:opacity-35 md:w-auto md:px-3 ${
+                practiceOpen
+                  ? "bg-white/[0.07] text-white/68 hover:bg-white/[0.11] hover:text-white/86"
+                  : "bg-white text-black hover:bg-white/88"
+              }`}
+              disabled={!practiceOpen && (isCardGenerating || practiceStarting)}
               onClick={() => {
+                if (practiceOpen) {
+                  setFlashcardView("deck");
+                  return;
+                }
                 void practiceWorkspaceRef.current?.startPractice();
               }}
-              title={hasResumablePractice ? "Resume" : "Practice"}
+              title={practiceOpen
+                ? practiceResultsOpen ? "Finish" : "Pause"
+                : hasResumablePractice ? "Resume" : "Practice"}
               type="button"
             >
-              {practiceStarting ? <ArrowsClockwiseIcon className="animate-spin" size={15} /> : <PlayIcon size={15} weight="fill" />}
-              <span className="hidden md:inline">{hasResumablePractice ? "Resume" : "Practice"}</span>
+              {practiceOpen
+                ? practiceResultsOpen
+                  ? <CheckIcon size={15} weight="bold" />
+                  : <PauseIcon size={15} weight="fill" />
+                : practiceStarting
+                  ? <ArrowsClockwiseIcon className="animate-spin" size={15} />
+                  : <PlayIcon size={15} weight="fill" />}
+              <span className="hidden md:inline">
+                {practiceOpen
+                  ? practiceResultsOpen ? "Finish" : "Pause"
+                  : hasResumablePractice ? "Resume" : "Practice"}
+              </span>
             </button>
 
             <div className="flex items-center gap-2">
@@ -606,29 +683,46 @@ export default function MasteryPanel({
                           <p className="px-2.5 py-4 text-sm text-white/42">No practice history.</p>
                         ) : (
                           practiceHistory.map((practice) => (
-                            <button
-                              className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-md px-2.5 py-2.5 text-left transition hover:bg-white/[0.07]"
+                            <div
+                              className="grid grid-cols-[minmax(0,1fr)_32px] items-center rounded-md transition hover:bg-white/[0.07]"
                               key={practice.id}
-                              onClick={() => {
-                                setHistoryMenuOpen(false);
-                                setFlashcardView("practice");
-                                void practiceWorkspaceRef.current?.openHistorySession(practice.id);
-                              }}
-                              role="menuitem"
-                              type="button"
+                              role="none"
                             >
-                              <span className="min-w-0">
-                                <span className="block truncate text-xs font-medium text-white/76">
-                                  {formatPracticeDate(practice.createdAt)}
+                              <button
+                                className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-2.5 py-2.5 text-left"
+                                onClick={() => {
+                                  setHistoryMenuOpen(false);
+                                  setFlashcardView("practice");
+                                  void practiceWorkspaceRef.current?.openHistorySession(practice.id);
+                                }}
+                                role="menuitem"
+                                type="button"
+                              >
+                                <span className="min-w-0">
+                                  <span className="block truncate text-xs font-medium text-white/76">
+                                    {formatPracticeDate(practice.createdAt)}
+                                  </span>
+                                  <span className="mt-0.5 block text-[11px] capitalize text-white/36">
+                                    {practice.cardCount} cards · {practice.status.replace("_", " ")}
+                                  </span>
                                 </span>
-                                <span className="mt-0.5 block text-[11px] capitalize text-white/36">
-                                  {practice.cardCount} cards · {practice.status.replace("_", " ")}
+                                <span className="text-xs font-semibold text-white/58">
+                                  {practice.averageScore === null ? "—" : practice.averageScore}
                                 </span>
-                              </span>
-                              <span className="text-xs font-semibold text-white/58">
-                                {practice.averageScore === null ? "—" : practice.averageScore}
-                              </span>
-                            </button>
+                              </button>
+                              <button
+                                aria-label={`Delete practice from ${formatPracticeDate(practice.createdAt)}`}
+                                className="flex h-8 w-8 items-center justify-center rounded-md text-white/30 transition hover:bg-red-300/10 hover:text-red-100/72 disabled:opacity-30"
+                                disabled={historyDeletingId !== null}
+                                onClick={() => void deleteHistorySession(practice)}
+                                title="Delete practice"
+                                type="button"
+                              >
+                                {historyDeletingId === practice.id
+                                  ? <ArrowsClockwiseIcon className="animate-spin" size={14} />
+                                  : <TrashIcon size={14} />}
+                              </button>
+                            </div>
                           ))
                         )}
                       </div>
@@ -754,7 +848,9 @@ export default function MasteryPanel({
             isGenerating={isCardGenerating}
             key={activeDocumentPath}
             onOpenGeneration={() => setCardGenerationOpen(true)}
+            onEnsureReadyCards={onEnsureReadyCards}
             onPracticeChanged={onPracticeChanged}
+            onResultsChange={setPracticeResultsOpen}
             onResumableChange={setHasResumablePractice}
             onStartingChange={setPracticeStarting}
             onViewChange={setFlashcardView}
@@ -779,6 +875,7 @@ export default function MasteryPanel({
               metaphor={mastery?.metaphor ?? null}
               onActiveIndexChange={setFocusedConceptIndex}
               onMasteryScoreChange={onMasteryScoreChange}
+              onOpenHistory={setHistoryConcept}
               showMetaphor={showMetaphor}
               thresholds={masteryThresholds}
             />
@@ -795,6 +892,14 @@ export default function MasteryPanel({
           preferences={cardState?.preferences ?? { generationPrompt: "", targetProficiency: "proficient" }}
         />
       )}
+      <PracticeHistoryDialog
+        onClose={() => setHistoryConcept(null)}
+        open={historyConcept !== null}
+        request={historyConcept && activeDocumentPath
+          ? { conceptId: historyConcept.id, documentPath: activeDocumentPath }
+          : null}
+        title={historyConcept ? `${historyConcept.name} practice history` : "Concept practice history"}
+      />
     </section>
   );
 }

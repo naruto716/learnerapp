@@ -3,6 +3,7 @@
 import {
   ArrowsClockwiseIcon,
   CheckIcon,
+  ClockCounterClockwiseIcon,
   EyeIcon,
   PaperPlaneRightIcon,
   PlusIcon,
@@ -20,16 +21,19 @@ import {
   useState,
 } from "react";
 import { readAiSettings } from "@/components/ai/aiSettings";
+import Dialog from "@/components/Dialog";
 import RichMarkdown from "@/components/markdown/RichMarkdown";
 import MasteryCardCarousel from "./MasteryCardCarousel";
 import { MasteryCardFrame, MasteryCardNavigation, masteryBottomFadeStyle } from "./MasteryCardLayout";
 import { MasteryConceptContent, MasteryMetaphorContent } from "./MasteryConceptContent";
 import { readMasterySettings } from "./masterySettings";
+import PracticeHistoryDialog from "./PracticeHistoryDialog";
 import SpeechToTextButton from "./SpeechToTextButton";
 
 export type FlashcardView = "deck" | "practice";
 
 export type MasteryPracticeWorkspaceHandle = {
+  removePracticeSession: (sessionId: number) => void;
   openHistorySession: (sessionId: number) => Promise<void>;
   startPractice: () => Promise<void>;
 };
@@ -39,8 +43,10 @@ type MasteryPracticeWorkspaceProps = {
   documentPath: string | null;
   getCurrentDocumentMarkdown: () => string;
   isGenerating: boolean;
+  onEnsureReadyCards: (minimumReadyCards: number) => Promise<DocumentMasteryCards | null>;
   onOpenGeneration: () => void;
   onPracticeChanged: () => Promise<unknown>;
+  onResultsChange: (showingResults: boolean) => void;
   onResumableChange: (hasResumablePractice: boolean) => void;
   onStartingChange: (isStarting: boolean) => void;
   onViewChange: (view: FlashcardView) => void;
@@ -50,6 +56,10 @@ type MasteryPracticeWorkspaceProps = {
 
 type PracticeMode = "answering" | "results";
 type ResultFilter = "all" | "pending" | "passed" | "review";
+
+function isResumablePractice(session: MasteryPracticeSession) {
+  return session.cards.some((entry) => !entry.submittedAt);
+}
 
 const kindLabels: Record<MasteryCardKind, string> = {
   debugging: "Fault diagnosis",
@@ -159,17 +169,20 @@ function ProgressStatus({ progress }: { progress: MasteryCardProgress }) {
 function DeckView({
   cards,
   detailCardId,
+  documentPath,
   onDetailChange,
   onToggleSelection,
   selectedCardIds,
 }: {
   cards: MasteryCard[];
   detailCardId: number | null;
+  documentPath: string | null;
   onDetailChange: (cardId: number) => void;
   onToggleSelection: (cardId: number) => void;
   selectedCardIds: number[];
 }) {
   const detailCard = cards.find((card) => card.id === detailCardId) ?? cards[0] ?? null;
+  const [historyCard, setHistoryCard] = useState<MasteryCard | null>(null);
   const selectedIds = new Set(selectedCardIds);
   const readyCount = cards.filter((card) => card.status === "active").length;
   const laterCount = cards.filter((card) => card.status === "delayed").length;
@@ -179,7 +192,7 @@ function DeckView({
     <div className="flex h-full min-h-0 flex-1 flex-col">
       <div className="grid h-full min-h-0 flex-1 gap-8 py-3 lg:grid-cols-[minmax(300px,0.82fr)_minmax(0,1.18fr)]">
         <div className="relative min-h-0 overflow-hidden">
-          <header className="pointer-events-none absolute inset-x-0 top-0 z-10 flex h-12 items-start justify-between gap-4 px-1 pt-4">
+          <header className="pointer-events-none absolute inset-x-0 top-0 z-10 flex h-12 items-start justify-between gap-4 px-1 pt-0">
             <p className="text-[10px] font-semibold uppercase tracking-wide text-white/34">Cards</p>
             <p className="text-[10px] font-medium uppercase tracking-wide text-white/30">
               {readyCount} ready · {laterCount} later · {completedCount} completed
@@ -198,6 +211,7 @@ function DeckView({
             {cards.map((card) => {
               const selected = selectedIds.has(card.id);
               const active = detailCard?.id === card.id;
+              const selectable = card.status === "active";
               return (
                 <div
                   className={`grid grid-cols-[minmax(0,1fr)_44px] overflow-hidden rounded-lg ring-1 ring-inset transition ${
@@ -221,10 +235,13 @@ function DeckView({
                     className={`m-auto flex h-8 w-8 items-center justify-center rounded-md transition ${
                       selected
                         ? "bg-white/[0.12] text-white/86"
-                        : "text-white/34 hover:bg-white/[0.07] hover:text-white/72"
+                        : selectable
+                          ? "text-white/34 hover:bg-white/[0.07] hover:text-white/72"
+                          : "cursor-not-allowed text-white/16"
                     }`}
+                    disabled={!selectable}
                     onClick={() => onToggleSelection(card.id)}
-                    title={selected ? "Remove from practice" : "Add to practice"}
+                    title={selected ? "Remove from practice" : selectable ? "Add to practice" : cardStateLabel(card)}
                     type="button"
                   >
                     {selected ? <CheckIcon size={15} weight="bold" /> : <PlusIcon size={16} />}
@@ -239,10 +256,22 @@ function DeckView({
           <aside className="flex min-h-0 flex-col overflow-hidden rounded-lg bg-white/[0.028] ring-1 ring-inset ring-white/[0.055]">
             <header className="flex shrink-0 items-center justify-between gap-4 px-5 pb-2 pt-4">
               <p className="text-[10px] font-semibold uppercase tracking-wide text-white/30">Preview</p>
-              <div className="flex min-w-0 items-center gap-2 text-[10px] font-medium uppercase tracking-wide text-white/34">
-                <span className="truncate">{kindLabels[detailCard.kind]}</span>
-                <span>· {detailCard.difficulty}</span>
-                <span>· {cardStateLabel(detailCard)}</span>
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="flex min-w-0 items-center gap-2 text-[10px] font-medium uppercase tracking-wide text-white/34">
+                  <span className="truncate">{kindLabels[detailCard.kind]}</span>
+                  <span>· {detailCard.difficulty}</span>
+                  <span>· {cardStateLabel(detailCard)}</span>
+                </div>
+                <button
+                  aria-label={`Show practice history for ${detailCard.title}`}
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-white/38 transition hover:bg-white/[0.07] hover:text-white/76"
+                  disabled={!documentPath}
+                  onClick={() => setHistoryCard(detailCard)}
+                  title="Practice history"
+                  type="button"
+                >
+                  <ClockCounterClockwiseIcon size={15} />
+                </button>
               </div>
             </header>
 
@@ -277,6 +306,12 @@ function DeckView({
           </aside>
         )}
       </div>
+      <PracticeHistoryDialog
+        onClose={() => setHistoryCard(null)}
+        open={historyCard !== null}
+        request={historyCard && documentPath ? { cardId: historyCard.id, documentPath } : null}
+        title={historyCard ? `${historyCard.title} history` : "Flashcard history"}
+      />
     </div>
   );
 }
@@ -366,15 +401,27 @@ function PracticeCard({
           ) : (
             <section>
               <AutoGrowingTextarea
-                className="min-h-40 w-full resize-none rounded-md bg-black/20 px-3 py-2 text-sm leading-6 text-white outline-none ring-1 ring-white/[0.08] placeholder:text-white/24 focus:ring-white/[0.2]"
+                className="min-h-40 w-full resize-none rounded-md bg-black/20 px-3 py-2 text-sm leading-6 text-white outline-none placeholder:text-white/24 focus:bg-black/25 border border-white/[0.08] focus:border-white/[0.12] transition"
                 onChange={onAnswerChange}
                 placeholder={card.answerMode === "multi_turn" ? "Respond to the scenario with your full reasoning..." : "Write your answer..."}
                 value={answer}
               />
               <div className="mt-3 flex items-center justify-between gap-2">
-                <SpeechToTextButton
-                  onTranscript={(transcript) => onAnswerChange(appendTranscript(answer, transcript))}
-                />
+                <div className="flex items-center gap-3">
+                  <SpeechToTextButton
+                    onTranscript={(transcript) => onAnswerChange(appendTranscript(answer, transcript))}
+                  />
+                  {!card.conceptContextVisible && concepts.length > 0 && (
+                    <button
+                      className="inline-flex items-center gap-2 text-sm font-medium text-white/48 transition hover:text-white/84"
+                      onClick={() => setShowConceptPeek(true)}
+                      type="button"
+                    >
+                      <EyeIcon size={16} />
+                      Peek at concepts
+                    </button>
+                  )}
+                </div>
                 <button
                   className="inline-flex items-center gap-2 rounded-md bg-white px-3 py-2 text-sm font-semibold text-black transition hover:bg-white/88 disabled:opacity-35"
                   disabled={!answer.trim()}
@@ -388,19 +435,6 @@ function PracticeCard({
             </section>
           )}
 
-          {!card.conceptContextVisible && concepts.length > 0 && (
-            <section>
-              <button
-                className="inline-flex items-center gap-2 text-sm font-medium text-white/48 transition hover:text-white/84"
-                onClick={() => setShowConceptPeek((visible) => !visible)}
-                type="button"
-              >
-                <EyeIcon size={16} />
-                {showConceptPeek ? "Hide concepts" : "Peek at concepts"}
-              </button>
-              {showConceptPeek && <div className="mt-6"><ConceptPeek concepts={concepts} /></div>}
-            </section>
-          )}
         </div>
       </div>
 
@@ -411,6 +445,18 @@ function PracticeCard({
         next={next}
         previous={previous}
         total={total}
+      />
+
+      <Dialog
+        display={
+          <div className="max-h-[min(70vh,680px)] overflow-y-auto pr-2 py-4" style={masteryBottomFadeStyle}>
+            <ConceptPeek concepts={concepts} />
+          </div>
+        }
+        onClose={() => setShowConceptPeek(false)}
+        open={showConceptPeek}
+        panelClassName="max-w-3xl"
+        title="Concepts for this card"
       />
     </MasteryCardFrame>
   );
@@ -451,15 +497,25 @@ function mergePracticeSession(
 function ResultsView({
   filter,
   onFilterChange,
+  onOutcomeChange,
   onRetry,
+  outcomeChangingId,
   session,
 }: {
   filter: ResultFilter;
   onFilterChange: (filter: ResultFilter) => void;
+  onOutcomeChange: (sessionCard: MasteryPracticeSessionCard, outcome: "passed" | "review") => void;
   onRetry: (sessionCard: MasteryPracticeSessionCard) => void;
+  outcomeChangingId: number | null;
   session: MasteryPracticeSession;
 }) {
   const passingScore = session.masterySettings.passingScore;
+  const outcomeFor = (entry: MasteryPracticeSessionCard) => {
+    if (entry.manualOutcome) return entry.manualOutcome;
+    return entry.grading?.status === "succeeded" && (entry.grading.score ?? 0) >= passingScore
+      ? "passed"
+      : "review";
+  };
   const succeeded = session.cards.filter((entry) => entry.grading?.status === "succeeded" && entry.grading.score !== null);
   const average = succeeded.length > 0
     ? Math.round(succeeded.reduce((total, entry) => total + (entry.grading?.score ?? 0), 0) / succeeded.length)
@@ -468,8 +524,8 @@ function ResultsView({
     const grading = entry.grading;
     if (filter === "all") return true;
     if (filter === "pending") return !grading || grading.status === "queued" || grading.status === "running";
-    if (filter === "passed") return grading?.status === "succeeded" && (grading.score ?? 0) >= passingScore;
-    return grading?.status === "failed" || (grading?.status === "succeeded" && (grading.score ?? 0) < passingScore);
+    if (!grading || grading.status === "queued" || grading.status === "running") return false;
+    return outcomeFor(entry) === filter;
   });
 
   return (
@@ -482,7 +538,7 @@ function ResultsView({
               {average === null ? "Grading in progress" : `${average}/100 average`}
             </h2>
             <p className="mt-1 text-sm text-white/42">
-              {succeeded.length} of {session.cards.length} graded · {formatDate(session.createdAt)}
+              {succeeded.length} of {session.cards.length} graded · Passing score {passingScore}/100 · {formatDate(session.createdAt)}
             </p>
           </div>
           <div className="flex h-8 overflow-hidden rounded-md border border-white/[0.08] bg-white/[0.025]">
@@ -509,6 +565,9 @@ function ResultsView({
         )}
         {filteredCards.map((entry, index) => {
           const grading = entry.grading;
+          const outcome = outcomeFor(entry);
+          const canSetOutcome = grading?.status === "succeeded" || grading?.status === "failed";
+          const changingOutcome = outcomeChangingId === entry.id;
           return (
             <article className="rounded-md border border-white/[0.07] bg-white/[0.025] p-4" key={entry.id}>
               <div className="flex items-start justify-between gap-4">
@@ -518,21 +577,43 @@ function ResultsView({
                   </p>
                   <h3 className="mt-1 text-base font-semibold leading-6 text-white/88">{entry.card.title}</h3>
                 </div>
-                <span className={`shrink-0 text-sm font-semibold ${
-                  grading?.status === "failed" ? "text-red-200/80" : "text-white/68"
-                }`}>
-                  {gradingLabel(grading)}
-                </span>
+                <div className="flex shrink-0 flex-col items-end gap-2">
+                  <span className={`text-sm font-semibold ${
+                    grading?.status === "failed" ? "text-red-200/80" : "text-white/68"
+                  }`}>
+                    {gradingLabel(grading)}
+                  </span>
+                  {canSetOutcome && (
+                    <div className="flex h-8 overflow-hidden rounded-md bg-white/[0.035]">
+                      {(["passed", "review"] as const).map((value) => (
+                        <button
+                          aria-pressed={outcome === value}
+                          className={`px-3 text-xs capitalize transition disabled:opacity-40 ${
+                            outcome === value
+                              ? "bg-white/[0.12] text-white/84"
+                              : "text-white/42 hover:bg-white/[0.06] hover:text-white/72"
+                          }`}
+                          disabled={changingOutcome}
+                          key={value}
+                          onClick={() => onOutcomeChange(entry, value)}
+                          type="button"
+                        >
+                          {value}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
 
-              <div className="mt-5 grid gap-5 lg:grid-cols-2">
+              <div className="mt-5 space-y-5">
                 <section>
                   <p className="text-[10px] font-semibold uppercase tracking-wide text-white/32">Your answer</p>
                   <RichMarkdown className="mt-2 text-sm leading-6 text-white/72">
                     {entry.answerMarkdown || "No answer recorded."}
                   </RichMarkdown>
                 </section>
-                <section>
+                <section className="border-t border-white/[0.07] pt-5">
                   <p className="text-[10px] font-semibold uppercase tracking-wide text-white/32">Feedback</p>
                   {grading?.status === "succeeded" ? (
                     <RichMarkdown className="mt-2 text-sm leading-6 text-white/76">
@@ -560,7 +641,7 @@ function ResultsView({
               </div>
 
               {grading?.status === "succeeded" && (
-                <div className="mt-5 flex items-start justify-between gap-4 border-t border-white/[0.07] pt-4">
+                <div className="mt-5 flex items-start justify-between gap-4 border-t border-white/[0.07] pt-5">
                   <div className="min-w-0 flex-1">
                     <p className="text-[10px] font-semibold uppercase tracking-wide text-white/32">Sample answer</p>
                     <RichMarkdown className="mt-2 text-sm leading-6 text-white/58">
@@ -590,8 +671,10 @@ function MasteryPracticeWorkspace({
   documentPath,
   getCurrentDocumentMarkdown,
   isGenerating,
+  onEnsureReadyCards,
   onOpenGeneration,
   onPracticeChanged,
+  onResultsChange,
   onResumableChange,
   onStartingChange,
   onViewChange,
@@ -604,6 +687,7 @@ function MasteryPracticeWorkspace({
   const [detailCardId, setDetailCardId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isStarting, setIsStarting] = useState(false);
+  const [outcomeChangingId, setOutcomeChangingId] = useState<number | null>(null);
   const [practiceMode, setPracticeMode] = useState<PracticeMode>("answering");
   const [resultFilter, setResultFilter] = useState<ResultFilter>("all");
   const [resumableSessionId, setResumableSessionId] = useState<number | null>(null);
@@ -612,12 +696,16 @@ function MasteryPracticeWorkspace({
   const refreshedSessionsRef = useRef(new Set<number>());
 
   useEffect(() => {
+    onResultsChange(view === "practice" && practiceMode === "results");
+  }, [onResultsChange, practiceMode, view]);
+
+  useEffect(() => {
     if (!documentPath) return;
     let cancelled = false;
     window.learner?.listMasteryPracticeSessions(documentPath)
       .then((sessions) => {
         if (cancelled) return;
-        const resumable = sessions.find((candidate) => candidate.status === "active" || candidate.status === "grading");
+        const resumable = sessions.find((candidate) => candidate.status === "active");
         setResumableSessionId(resumable?.id ?? null);
         onResumableChange(Boolean(resumable));
       })
@@ -643,7 +731,7 @@ function MasteryPracticeWorkspace({
         const nextSession = await window.learner?.getMasteryPracticeSession(sessionId, readAiSettings());
         if (cancelled || !nextSession) return;
         setSession((current) => mergePracticeSession(current, nextSession));
-        const resumable = nextSession.status === "active" || nextSession.status === "grading";
+        const resumable = isResumablePractice(nextSession);
         setResumableSessionId(resumable ? nextSession.id : null);
         onResumableChange(resumable);
         const hasPending = nextSession.cards.some(
@@ -697,17 +785,25 @@ function MasteryPracticeWorkspace({
       return;
     }
     const masterySettings = readMasterySettings();
-    const readyCardCount = cards.filter((card) => card.status === "active").length;
-    if (selectedCardIds.length === 0 && readyCardCount < masterySettings.practiceCardCount) {
-      onOpenGeneration();
-      return;
-    }
     setError(null);
     setIsStarting(true);
     onStartingChange(true);
     try {
+      let practiceCardIds = selectedCardIds;
+      const readyCardCount = cards.filter((card) => card.status === "active").length;
+      if (practiceCardIds.length === 0 && readyCardCount < masterySettings.practiceCardCount) {
+        const generatedState = await onEnsureReadyCards(masterySettings.practiceCardCount);
+        if (!generatedState) throw new Error("Could not prepare enough ready cards for practice.");
+        practiceCardIds = generatedState.cards
+          .filter((card) => card.status === "active")
+          .slice(0, masterySettings.practiceCardCount)
+          .map((card) => card.id);
+        if (practiceCardIds.length < masterySettings.practiceCardCount) {
+          throw new Error("Could not prepare enough ready cards for practice.");
+        }
+      }
       const nextSession = await window.learner?.createMasteryPracticeSession({
-        cardIds: selectedCardIds,
+        cardIds: practiceCardIds,
         desiredCount: masterySettings.practiceCardCount,
         documentPath,
         markdown: getCurrentDocumentMarkdown(),
@@ -720,8 +816,9 @@ function MasteryPracticeWorkspace({
       setResultFilter("all");
       setSelectedCardIds([]);
       setSession(nextSession);
-      setResumableSessionId(nextSession.id);
-      onResumableChange(true);
+      const resumable = isResumablePractice(nextSession);
+      setResumableSessionId(resumable ? nextSession.id : null);
+      onResumableChange(resumable);
       onViewChange("practice");
     } catch (startError) {
       setError(startError instanceof Error ? startError.message : "Could not start practice.");
@@ -765,6 +862,8 @@ function MasteryPracticeWorkspace({
     if (allSubmitted) {
       setPracticeMode("results");
       setResultFilter("all");
+      setResumableSessionId(null);
+      onResumableChange(false);
     } else {
       const nextUnanswered = optimisticSession.cards.findIndex(
         (entry, index) => index > activeIndex && !entry.submittedAt,
@@ -778,7 +877,11 @@ function MasteryPracticeWorkspace({
       settings: readAiSettings(),
     })
       .then((nextSession) => {
-        if (nextSession) setSession((current) => mergePracticeSession(current, nextSession));
+        if (!nextSession) return;
+        setSession((current) => mergePracticeSession(current, nextSession));
+        const resumable = isResumablePractice(nextSession);
+        setResumableSessionId(resumable ? nextSession.id : null);
+        onResumableChange(resumable);
       })
       .catch(async (submitError: unknown) => {
         setError(submitError instanceof Error ? submitError.message : "Could not submit this answer.");
@@ -787,6 +890,9 @@ function MasteryPracticeWorkspace({
           setSession((current) => mergePracticeSession(current, restored, sessionCard.id));
           setActiveIndex(session.cards.findIndex((entry) => entry.id === sessionCard.id));
           setPracticeMode("answering");
+          const resumable = isResumablePractice(restored);
+          setResumableSessionId(resumable ? restored.id : null);
+          onResumableChange(resumable);
         }
       });
   };
@@ -829,6 +935,21 @@ function MasteryPracticeWorkspace({
       });
   };
 
+  const setCardOutcome = (sessionCard: MasteryPracticeSessionCard, outcome: "passed" | "review") => {
+    if (!session || outcomeChangingId !== null || sessionCard.manualOutcome === outcome) return;
+    setError(null);
+    setOutcomeChangingId(sessionCard.id);
+    window.learner?.setMasteryPracticeCardOutcome({ outcome, sessionCardId: sessionCard.id })
+      .then(async (nextSession) => {
+        if (nextSession) setSession((current) => mergePracticeSession(current, nextSession));
+        await onPracticeChanged();
+      })
+      .catch((outcomeError: unknown) => {
+        setError(outcomeError instanceof Error ? outcomeError.message : "Could not update this card outcome.");
+      })
+      .finally(() => setOutcomeChangingId(null));
+  };
+
   const openHistorySession = async (sessionId: number) => {
     setError(null);
     try {
@@ -845,7 +966,20 @@ function MasteryPracticeWorkspace({
     }
   };
 
+  const removePracticeSession = (sessionId: number) => {
+    if (resumableSessionId === sessionId) {
+      setResumableSessionId(null);
+      onResumableChange(false);
+    }
+    if (session?.id === sessionId) {
+      setSession(null);
+      onResultsChange(false);
+      onViewChange("deck");
+    }
+  };
+
   useImperativeHandle(ref, () => ({
+    removePracticeSession,
     openHistorySession,
     startPractice,
   }));
@@ -884,6 +1018,7 @@ function MasteryPracticeWorkspace({
         <DeckView
           cards={cards}
           detailCardId={detailCardId}
+          documentPath={documentPath}
           onDetailChange={setDetailCardId}
           onToggleSelection={toggleSelection}
           selectedCardIds={selectedCardIds}
@@ -904,7 +1039,9 @@ function MasteryPracticeWorkspace({
         <ResultsView
           filter={resultFilter}
           onFilterChange={setResultFilter}
+          onOutcomeChange={setCardOutcome}
           onRetry={retryGrading}
+          outcomeChangingId={outcomeChangingId}
           session={session}
         />
       ) : (
