@@ -97,6 +97,11 @@ const { saveCardEvaluation } = require("../electron/mastery/masteryCardProgress"
 const { currentCardContractVersion, ensureMasteryCardSchema } = require("../electron/mastery/masteryCardSchema");
 const { prepareGeneratedCards } = require("../electron/mastery/masteryCardAi");
 const { defaultMasteryScoringSettings } = require("../electron/mastery/masteryScoring");
+const {
+  createPracticeSession,
+  getPracticeSession,
+  listPracticeSessions,
+} = require("../electron/mastery/masteryPractice");
 Module._load = originalLoad;
 
 function baseCard(overrides = {}) {
@@ -233,6 +238,20 @@ try {
   assert.deepEqual(state.preferences, preferences);
   assert.equal(state.cards.find((card) => card.kind === "feynman").difficulty, "standard");
 
+  const practiceSession = createPracticeSession({
+    cardIds: state.cards.map((card) => card.id).reverse(),
+    desiredCount: 5,
+    documentPath,
+    markdown: "# Alpha and Beta",
+    masterySettings: defaultMasteryScoringSettings,
+  });
+  assert.deepEqual(
+    practiceSession.cards.map((entry) => entry.sourceCardId),
+    state.cards.map((card) => card.id).reverse(),
+    "practice must preserve the learner's selected card order",
+  );
+  assert.equal(listPracticeSessions(documentPath)[0].cardCount, 2);
+
   const customScoring = structuredClone(defaultMasteryScoringSettings);
   customScoring.passingScore = 85;
   customScoring.points.feynman.standard = 17;
@@ -293,27 +312,30 @@ try {
   const targetedCard = state.cards.find((card) => card.id !== firstCard.id && card.kind === "feynman");
   assert.ok(targetedCard.weaknessLinks.some((link) => link.weaknessId === weaknessId && link.relationship === "target"));
 
-  saveCardEvaluation({
+  const resolvedEvaluation = {
+    feedbackMarkdown: "The mechanism is now explicit.",
+    model: "test",
+    score: 90,
+    weaknessOutcomes: [
+      {
+        conceptIds: [1],
+        description: "Alpha's mechanism is now understood.",
+        stages: [2],
+        state: "resolved",
+        title: "Missing mechanism",
+        weaknessId,
+      },
+    ],
+  };
+  const resolvedAttemptId = saveCardEvaluation({
     answerMarkdown: "Complete answer",
     card: targetedCard,
     documentPath,
-    evaluation: {
-      feedbackMarkdown: "The mechanism is now explicit.",
-      model: "test",
-      score: 90,
-      weaknessOutcomes: [
-        {
-          conceptIds: [1],
-          description: "Alpha's mechanism is now understood.",
-          stages: [2],
-          state: "resolved",
-          title: "Missing mechanism",
-          weaknessId,
-        },
-      ],
-    },
+    evaluation: resolvedEvaluation,
     mastery: conceptsApi.getDocumentMastery(documentPath, "note"),
     masterySettings: customScoring,
+    practiceRunId: 7001,
+    practiceSubmissionId: 8001,
     state,
   });
   state = getDocumentMasteryCards(documentPath);
@@ -321,6 +343,22 @@ try {
   assert.equal(state.weaknesses.find((weakness) => weakness.id === weaknessId).status, "resolved");
   assert.equal(state.stageStates.find((entry) => entry.conceptId === 1 && entry.stage === 2).score, 17);
   assert.equal(state.stageStates.find((entry) => entry.conceptId === 1 && entry.stage === 3).score, 17);
+  const duplicateAttemptId = saveCardEvaluation({
+    answerMarkdown: "Complete answer",
+    card: targetedCard,
+    documentPath,
+    evaluation: resolvedEvaluation,
+    mastery: conceptsApi.getDocumentMastery(documentPath, "note"),
+    masterySettings: customScoring,
+    practiceRunId: 7002,
+    practiceSubmissionId: 8001,
+    state,
+  });
+  assert.equal(duplicateAttemptId, resolvedAttemptId, "a new retry run must reuse the submission's original attempt");
+  assert.equal(
+    db.prepare("SELECT COUNT(*) AS count FROM mastery_card_attempts WHERE practice_submission_id = 8001").get().count,
+    1,
+  );
 
   const relationship = state.cards.find((card) => card.kind === "relationship");
   saveCardEvaluation({
@@ -356,6 +394,13 @@ try {
   assert.equal(state.weaknesses.length, 0);
   assert.ok(state.stageStates.every((stage) => stage.score === 0 && stage.attemptCount === 0));
   assert.deepEqual(state.preferences, preferences, "note generation preferences should survive deck clearing");
+  const persistedPractice = getPracticeSession(practiceSession.id);
+  assert.equal(persistedPractice.cards.length, 2, "practice snapshots must survive shared deck clearing");
+  assert.deepEqual(
+    persistedPractice.cards.map((entry) => entry.card.title),
+    practiceSession.cards.map((entry) => entry.card.title),
+  );
+  assert.ok(persistedPractice.cards.every((entry) => entry.sourceCardId === null));
 
   console.log("Mastery card smoke test passed.");
 } finally {

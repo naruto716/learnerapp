@@ -13,6 +13,7 @@ const thresholdLevels = ["familiar", "developing", "proficient", "advanced", "ma
 
 const defaultMasteryScoringSettings = {
   passingScore: 80,
+  practiceCardCount: 5,
   points: {
     feynman: { introductory: 8, standard: 12, advanced: 16, expert: 20 },
     relationship: { introductory: 8, standard: 12, advanced: 16, expert: 20 },
@@ -31,6 +32,11 @@ function boundedInteger(value, fallback) {
   return Number.isFinite(numeric) ? Math.max(0, Math.min(100, Math.round(numeric))) : fallback;
 }
 
+function boundedPracticeCount(value, fallback) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? Math.max(1, Math.min(50, Math.round(numeric))) : fallback;
+}
+
 function normalizeMasteryScoringSettings(value = {}) {
   const source = value && typeof value === "object" ? value : {};
   const thresholds = Object.fromEntries(
@@ -46,6 +52,10 @@ function normalizeMasteryScoringSettings(value = {}) {
 
   return {
     passingScore: Math.max(1, boundedInteger(source.passingScore, defaultMasteryScoringSettings.passingScore)),
+    practiceCardCount: boundedPracticeCount(
+      source.practiceCardCount,
+      defaultMasteryScoringSettings.practiceCardCount,
+    ),
     points: Object.fromEntries(
       cardKinds.map((kind) => [
         kind,

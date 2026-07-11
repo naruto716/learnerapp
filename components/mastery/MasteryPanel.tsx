@@ -3,32 +3,37 @@
 import {
   ArrowsClockwiseIcon,
   CardsThreeIcon,
+  ClockCounterClockwiseIcon,
   CrosshairIcon,
   EyeIcon,
   EyeSlashIcon,
   GridFourIcon,
   ImageIcon,
+  PlayIcon,
+  PlusIcon,
   SparkleIcon,
   SquaresFourIcon,
   TrashIcon,
   WarningCircleIcon,
   XIcon,
 } from "@phosphor-icons/react";
-import { useCallback, useState, type ReactNode } from "react";
+import { useCallback, useRef, useState, type ReactNode } from "react";
 import MasteryCardCarousel from "./MasteryCardCarousel";
 import MasteryCardGenerationDialog from "./MasteryCardGenerationDialog";
 import { MasteryCardFrame, MasteryCardNavigation, masteryBottomFadeStyle } from "./MasteryCardLayout";
 import { MasteryConceptContent, MasteryMetaphorContent } from "./MasteryConceptContent";
-import MasteryFlashcards, { type FlashcardView } from "./MasteryFlashcards";
+import MasteryPracticeWorkspace, {
+  type FlashcardView,
+  type MasteryPracticeWorkspaceHandle,
+} from "./MasteryPracticeWorkspace";
 import { readMasterySettings, type MasteryScoringSettings } from "./masterySettings";
 
 type MasteryPanelProps = {
+  activeDocumentPath: string | null;
   cardError: string | null;
   cardProgress: MasteryCardProgress | null;
   cardState: DocumentMasteryCards | null;
   error: string | null;
-  isCardDiscussing: boolean;
-  isCardEvaluating: boolean;
   isCardGenerating: boolean;
   isLoading: boolean;
   isMetaphorLoading: boolean;
@@ -38,12 +43,12 @@ type MasteryPanelProps = {
   onClear: () => boolean | Promise<boolean>;
   onClearCards: () => boolean | Promise<boolean>;
   onClose: () => void;
-  onContinueCardDiscussion: (cardId: number, message: string) => boolean | Promise<boolean>;
-  onEvaluateCard: (cardId: number, answerMarkdown?: string) => boolean | Promise<boolean>;
   onGenerate: (force?: boolean) => boolean | Promise<boolean>;
   onGenerateCards: (preferences: MasteryCardPreferences) => boolean | Promise<boolean>;
   onGenerateMetaphor: () => boolean | Promise<boolean>;
+  onPracticeChanged: () => Promise<unknown>;
   onMasteryScoreChange: (conceptId: number, score: number) => void | Promise<void>;
+  readCurrentDocumentMarkdown: () => string;
   open: boolean;
 };
 
@@ -52,6 +57,13 @@ type MasterySection = "concepts" | "flashcards";
 
 function formatGeneratedAt(value: number | null) {
   if (!value) return "Not generated yet";
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(value);
+}
+
+function formatPracticeDate(value: number) {
   return new Intl.DateTimeFormat(undefined, {
     dateStyle: "medium",
     timeStyle: "short",
@@ -375,18 +387,16 @@ function ConceptDeckCarousel({
           totalConcepts={total}
         />
       )}
-      slideBasis={shouldShowMetaphor ? "min(100%, 1100px)" : "min(100%, 820px)"}
     />
   );
 }
 
 export default function MasteryPanel({
+  activeDocumentPath,
   cardError,
   cardProgress,
   cardState,
   error,
-  isCardDiscussing,
-  isCardEvaluating,
   isCardGenerating,
   isLoading,
   isMetaphorLoading,
@@ -396,12 +406,12 @@ export default function MasteryPanel({
   onClear,
   onClearCards,
   onClose,
-  onContinueCardDiscussion,
-  onEvaluateCard,
   onGenerate,
   onGenerateCards,
   onGenerateMetaphor,
+  onPracticeChanged,
   onMasteryScoreChange,
+  readCurrentDocumentMarkdown,
   open,
 }: MasteryPanelProps) {
   const concepts = mastery?.concepts ?? [];
@@ -411,7 +421,13 @@ export default function MasteryPanel({
   const metaphorIsStale = Boolean(mastery?.metaphor?.stale);
   const [activeIndex, setActiveIndex] = useState(0);
   const [cardGenerationOpen, setCardGenerationOpen] = useState(false);
-  const [flashcardView, setFlashcardView] = useState<FlashcardView>("practice");
+  const [flashcardView, setFlashcardView] = useState<FlashcardView>("deck");
+  const [historyError, setHistoryError] = useState("");
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyMenuOpen, setHistoryMenuOpen] = useState(false);
+  const [practiceHistory, setPracticeHistory] = useState<MasteryPracticeSessionSummary[]>([]);
+  const [hasResumablePractice, setHasResumablePractice] = useState(false);
+  const [practiceStarting, setPracticeStarting] = useState(false);
   const [section, setSection] = useState<MasterySection>("concepts");
   const [showMetaphor, setShowMetaphor] = useState(false);
   const [viewMode, setViewMode] = useState<MasteryViewMode>("focus");
@@ -421,6 +437,7 @@ export default function MasteryPanel({
   const readyCardCount = cards.filter((card) => card.status === "active").length;
   const laterCardCount = cards.filter((card) => card.status === "delayed").length;
   const completedCardCount = cards.filter((card) => card.status === "done").length;
+  const practiceWorkspaceRef = useRef<MasteryPracticeWorkspaceHandle>(null);
 
   const setFocusedConceptIndex = useCallback((index: number) => {
     if (!hasConcepts) return;
@@ -452,12 +469,34 @@ export default function MasteryPanel({
 
   const handleClose = () => {
     setCardGenerationOpen(false);
+    setHistoryMenuOpen(false);
     onClose();
   };
 
+  const toggleHistoryMenu = async () => {
+    if (historyMenuOpen) {
+      setHistoryMenuOpen(false);
+      return;
+    }
+    setHistoryMenuOpen(true);
+    setHistoryError("");
+    if (!activeDocumentPath) return;
+    setHistoryLoading(true);
+    try {
+      const sessions = await window.learner?.listMasteryPracticeSessions(activeDocumentPath);
+      setPracticeHistory(sessions ?? []);
+    } catch (loadError) {
+      setHistoryError(loadError instanceof Error ? loadError.message : "Could not load practice history.");
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
   const handleClearCards = async () => {
-    if (cards.length === 0 || isCardGenerating || isCardEvaluating) return;
-    const confirmed = window.confirm("Delete all flashcards, attempts, weaknesses, and stage progress for this note?");
+    if (cards.length === 0 || isCardGenerating) return;
+    const confirmed = window.confirm(
+      "Delete the shared flashcard deck, attempts, weaknesses, and stage progress for this note? Saved practice history will remain available.",
+    );
     if (confirmed) await onClearCards();
   };
 
@@ -477,7 +516,7 @@ export default function MasteryPanel({
           <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-white/[0.08] text-white/80">
             <SparkleIcon size={18} />
           </span>
-          <p className="shrink-0 text-sm font-semibold">Mastery</p>
+          <p className="hidden shrink-0 text-sm font-semibold md:block">Mastery</p>
           <div className="flex shrink-0 rounded-full bg-white/[0.045] p-0.5 text-xs">
             {(["concepts", "flashcards"] as const).map((nextSection) => (
               <button
@@ -492,7 +531,7 @@ export default function MasteryPanel({
               </button>
             ))}
           </div>
-          <p className="truncate text-xs text-white/42">
+          <p className="hidden truncate text-xs text-white/42 2xl:block">
             {section === "flashcards"
               ? `${readyCardCount} ready · ${laterCardCount} later · ${completedCardCount} completed`
               : hasConcepts
@@ -506,82 +545,151 @@ export default function MasteryPanel({
           )}
         </div>
 
-        <div className="flex items-center gap-1">
-          {section === "concepts" && hasConcepts && (
-            <SegmentedControl
-              disabled={isLoading || isMetaphorLoading}
-              onChange={setViewMode}
-              options={[
-                { icon: <SquaresFourIcon size={18} />, label: "Overview", value: "overview" },
-                { icon: <CrosshairIcon size={18} />, label: "Focus", value: "focus" },
-              ]}
-              value={viewMode}
-            />
-          )}
-          {section === "flashcards" && (
-            <SegmentedControl
-              disabled={isCardGenerating}
-              onChange={setFlashcardView}
-              options={[
-                { icon: <GridFourIcon size={18} />, label: "Deck view", value: "deck" },
-                { icon: <CardsThreeIcon size={18} />, label: "Practice view", value: "practice" },
-              ]}
-              value={flashcardView}
-            />
-          )}
-          <span className="mx-1 h-5 w-px bg-white/[0.08]" />
-          {section === "concepts" && (
-            <>
-              <PanelIconButton
-                ariaLabel={hasConcepts ? "Regenerate concepts" : "Generate concepts"}
-                disabled={isLoading || isMetaphorLoading}
-                icon={<ArrowsClockwiseIcon size={16} className={isLoading ? "animate-spin" : ""} />}
-                onClick={() => onGenerate(hasConcepts)}
-              />
-              <PanelIconButton
-                ariaLabel={hasMetaphor ? "Regenerate metaphor images" : "Generate metaphor images"}
-                disabled={!hasConcepts || isLoading || isMetaphorLoading}
-                icon={<ImageIcon size={16} className={isMetaphorLoading ? "animate-pulse" : ""} />}
-                onClick={() => {
-                  void handleGenerateMetaphor();
-                }}
-                tooltip={
-                  !hasConcepts
-                    ? "Extract concepts first"
-                    : hasMetaphor
-                      ? "Regenerate metaphor images"
-                      : "Generate metaphor images"
-                }
-              />
-            </>
-          )}
-          {section === "flashcards" && (
-            <>
+        {section === "flashcards" ? (
+          <div className="flex items-center gap-2">
+            <button
+              aria-label={hasResumablePractice ? "Resume practice" : "Practice"}
+              className="flex h-8 w-8 items-center justify-center gap-2 rounded-md bg-white text-sm font-semibold text-black transition hover:bg-white/88 disabled:opacity-35 md:w-auto md:px-3"
+              disabled={isCardGenerating || practiceStarting}
+              onClick={() => {
+                void practiceWorkspaceRef.current?.startPractice();
+              }}
+              title={hasResumablePractice ? "Resume" : "Practice"}
+              type="button"
+            >
+              {practiceStarting ? <ArrowsClockwiseIcon className="animate-spin" size={15} /> : <PlayIcon size={15} weight="fill" />}
+              <span className="hidden md:inline">{hasResumablePractice ? "Resume" : "Practice"}</span>
+            </button>
+
+            <div className="flex items-center gap-2">
               <PanelIconButton
                 ariaLabel={cards.length > 0 ? "Generate more cards" : "Generate cards"}
                 disabled={isCardGenerating || !hasConcepts}
-                icon={<ArrowsClockwiseIcon size={16} className={isCardGenerating ? "animate-spin" : ""} />}
+                icon={<PlusIcon size={17} weight="bold" />}
                 onClick={() => setCardGenerationOpen(true)}
               />
+              <div className="relative">
+                <button
+                  aria-expanded={historyMenuOpen}
+                  aria-haspopup="menu"
+                  aria-label="Practice history"
+                  className="flex h-8 w-8 items-center justify-center rounded-full text-white/54 transition hover:bg-white/[0.08] hover:text-white/86"
+                  onClick={() => {
+                    void toggleHistoryMenu();
+                  }}
+                  title="Practice history"
+                  type="button"
+                >
+                  <ClockCounterClockwiseIcon size={17} />
+                </button>
+                {historyMenuOpen && (
+                  <>
+                    <button
+                      aria-label="Close practice history"
+                      className="fixed inset-0 z-40 cursor-default"
+                      onClick={() => setHistoryMenuOpen(false)}
+                      type="button"
+                    />
+                    <div
+                      className="absolute right-0 top-full z-50 mt-2 w-72 overflow-hidden rounded-lg bg-[#202020]/98 p-1.5 shadow-2xl ring-1 ring-white/[0.1] backdrop-blur-xl"
+                      role="menu"
+                    >
+                      <p className="px-2.5 py-2 text-[10px] font-semibold uppercase tracking-wide text-white/34">
+                        Recent practice
+                      </p>
+                      <div className="max-h-72 overflow-y-auto">
+                        {historyLoading ? (
+                          <p className="px-2.5 py-4 text-sm text-white/42">Loading...</p>
+                        ) : historyError ? (
+                          <p className="px-2.5 py-4 text-sm leading-5 text-red-100/68">{historyError}</p>
+                        ) : practiceHistory.length === 0 ? (
+                          <p className="px-2.5 py-4 text-sm text-white/42">No practice history.</p>
+                        ) : (
+                          practiceHistory.map((practice) => (
+                            <button
+                              className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-md px-2.5 py-2.5 text-left transition hover:bg-white/[0.07]"
+                              key={practice.id}
+                              onClick={() => {
+                                setHistoryMenuOpen(false);
+                                setFlashcardView("practice");
+                                void practiceWorkspaceRef.current?.openHistorySession(practice.id);
+                              }}
+                              role="menuitem"
+                              type="button"
+                            >
+                              <span className="min-w-0">
+                                <span className="block truncate text-xs font-medium text-white/76">
+                                  {formatPracticeDate(practice.createdAt)}
+                                </span>
+                                <span className="mt-0.5 block text-[11px] capitalize text-white/36">
+                                  {practice.cardCount} cards · {practice.status.replace("_", " ")}
+                                </span>
+                              </span>
+                              <span className="text-xs font-semibold text-white/58">
+                                {practice.averageScore === null ? "—" : practice.averageScore}
+                              </span>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
               <PanelIconButton
                 ariaLabel="Clear cards and practice progress"
-                disabled={cards.length === 0 || isCardGenerating || isCardEvaluating}
+                disabled={cards.length === 0 || isCardGenerating}
                 icon={<TrashIcon size={16} />}
                 onClick={() => {
                   void handleClearCards();
                 }}
               />
-            </>
-          )}
-          {section === "concepts" && hasMetaphor && (
+              <PanelIconButton ariaLabel="Close mastery" icon={<XIcon size={16} />} onClick={handleClose} tooltip="Close" />
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center gap-1">
+            {hasConcepts && (
+              <SegmentedControl
+                disabled={isLoading || isMetaphorLoading}
+                onChange={setViewMode}
+                options={[
+                  { icon: <SquaresFourIcon size={18} />, label: "Overview", value: "overview" },
+                  { icon: <CrosshairIcon size={18} />, label: "Focus", value: "focus" },
+                ]}
+                value={viewMode}
+              />
+            )}
+            <span className="mx-1 h-5 w-px bg-white/[0.08]" />
             <PanelIconButton
-              ariaLabel={showMetaphor ? "Hide metaphor" : "Show metaphor"}
-              disabled={isMetaphorLoading}
-              icon={showMetaphor ? <EyeSlashIcon size={16} /> : <EyeIcon size={16} />}
-              onClick={() => setShowMetaphor((visible) => !visible)}
+              ariaLabel={hasConcepts ? "Regenerate concepts" : "Generate concepts"}
+              disabled={isLoading || isMetaphorLoading}
+              icon={<ArrowsClockwiseIcon size={16} className={isLoading ? "animate-spin" : ""} />}
+              onClick={() => onGenerate(hasConcepts)}
             />
-          )}
-          {section === "concepts" && (
+            <PanelIconButton
+              ariaLabel={hasMetaphor ? "Regenerate metaphor images" : "Generate metaphor images"}
+              disabled={!hasConcepts || isLoading || isMetaphorLoading}
+              icon={<ImageIcon size={16} className={isMetaphorLoading ? "animate-pulse" : ""} />}
+              onClick={() => {
+                void handleGenerateMetaphor();
+              }}
+              tooltip={
+                !hasConcepts
+                  ? "Extract concepts first"
+                  : hasMetaphor
+                    ? "Regenerate metaphor images"
+                    : "Generate metaphor images"
+              }
+            />
+            {hasMetaphor && (
+              <PanelIconButton
+                ariaLabel={showMetaphor ? "Hide metaphor" : "Show metaphor"}
+                disabled={isMetaphorLoading}
+                icon={showMetaphor ? <EyeSlashIcon size={16} /> : <EyeIcon size={16} />}
+                onClick={() => setShowMetaphor((visible) => !visible)}
+              />
+            )}
             <PanelIconButton
               ariaLabel="Delete generated concepts"
               disabled={!hasConcepts || isLoading || isMetaphorLoading}
@@ -590,12 +698,12 @@ export default function MasteryPanel({
                 void handleClear();
               }}
             />
-          )}
-          <PanelIconButton ariaLabel="Close mastery" icon={<XIcon size={16} />} onClick={handleClose} tooltip="Close" />
-        </div>
+            <PanelIconButton ariaLabel="Close mastery" icon={<XIcon size={16} />} onClick={handleClose} tooltip="Close" />
+          </div>
+        )}
       </header>
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-5 pb-5">
+      <div className={`flex min-h-0 flex-1 flex-col overflow-hidden px-5 ${section === "concepts" ? "pb-5" : ""}`}>
         {(error || cardError) && (
           <div className="mb-4 rounded-lg bg-red-300/10 px-4 py-3 text-sm text-red-200">{error || cardError}</div>
         )}
@@ -639,18 +747,19 @@ export default function MasteryPanel({
             </button>
           </div>
         ) : section === "flashcards" ? (
-          <MasteryFlashcards
+          <MasteryPracticeWorkspace
             cardState={cardState}
-            concepts={concepts}
-            isDiscussing={isCardDiscussing}
-            isEvaluating={isCardEvaluating}
+            documentPath={activeDocumentPath}
+            getCurrentDocumentMarkdown={readCurrentDocumentMarkdown}
             isGenerating={isCardGenerating}
-            metaphor={mastery?.metaphor ?? null}
-            onContinueDiscussion={onContinueCardDiscussion}
-            onEvaluate={onEvaluateCard}
+            key={activeDocumentPath}
             onOpenGeneration={() => setCardGenerationOpen(true)}
+            onPracticeChanged={onPracticeChanged}
+            onResumableChange={setHasResumablePractice}
+            onStartingChange={setPracticeStarting}
             onViewChange={setFlashcardView}
             progress={cardProgress}
+            ref={practiceWorkspaceRef}
             view={flashcardView}
           />
         ) : viewMode === "overview" ? (

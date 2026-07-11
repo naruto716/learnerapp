@@ -132,6 +132,63 @@ function ensureMasteryCardSchema() {
         CHECK(target_proficiency IN ('familiar', 'developing', 'proficient', 'advanced', 'mastered')),
       updated_at INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS mastery_practice_sessions (
+      id INTEGER PRIMARY KEY,
+      document_path TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active'
+        CHECK(status IN ('active', 'grading', 'complete', 'needs_attention')),
+      document_markdown TEXT NOT NULL DEFAULT '',
+      mastery_settings_json TEXT NOT NULL DEFAULT '{}',
+      created_at INTEGER NOT NULL,
+      submitted_at INTEGER,
+      completed_at INTEGER,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS mastery_practice_sessions_document_index
+      ON mastery_practice_sessions(document_path, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS mastery_practice_session_cards (
+      id INTEGER PRIMARY KEY,
+      session_id INTEGER NOT NULL,
+      source_card_id INTEGER,
+      sort_order INTEGER NOT NULL,
+      card_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      UNIQUE(session_id, sort_order),
+      FOREIGN KEY(session_id) REFERENCES mastery_practice_sessions(id) ON DELETE CASCADE,
+      FOREIGN KEY(source_card_id) REFERENCES mastery_cards(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS mastery_practice_submissions (
+      id INTEGER PRIMARY KEY,
+      session_card_id INTEGER NOT NULL UNIQUE,
+      answer_markdown TEXT NOT NULL,
+      submitted_at INTEGER NOT NULL,
+      FOREIGN KEY(session_card_id) REFERENCES mastery_practice_session_cards(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS mastery_practice_grading_runs (
+      id INTEGER PRIMARY KEY,
+      submission_id INTEGER NOT NULL,
+      kind TEXT NOT NULL DEFAULT 'initial' CHECK(kind IN ('initial', 'retry', 'regrade')),
+      status TEXT NOT NULL DEFAULT 'queued' CHECK(status IN ('queued', 'running', 'succeeded', 'failed')),
+      score INTEGER CHECK(score BETWEEN 0 AND 100),
+      feedback_markdown TEXT,
+      evaluation_json TEXT,
+      model TEXT,
+      error TEXT,
+      effects_applied INTEGER NOT NULL DEFAULT 0,
+      queued_at INTEGER NOT NULL,
+      started_at INTEGER,
+      completed_at INTEGER,
+      updated_at INTEGER NOT NULL,
+      FOREIGN KEY(submission_id) REFERENCES mastery_practice_submissions(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS mastery_practice_grading_queue_index
+      ON mastery_practice_grading_runs(status, queued_at, id);
   `);
 
   const columns = new Set(db.prepare("PRAGMA table_info(mastery_cards)").all().map((column) => column.name));
@@ -143,6 +200,24 @@ function ensureMasteryCardSchema() {
   ensureColumn("graph_edge_ids_json", "TEXT NOT NULL DEFAULT '[]'");
   ensureColumn("contract_version", "INTEGER NOT NULL DEFAULT 1");
   ensureColumn("difficulty", "TEXT NOT NULL DEFAULT 'standard'");
+
+  const attemptColumns = new Set(
+    db.prepare("PRAGMA table_info(mastery_card_attempts)").all().map((column) => column.name),
+  );
+  if (!attemptColumns.has("practice_run_id")) {
+    db.exec("ALTER TABLE mastery_card_attempts ADD COLUMN practice_run_id INTEGER");
+  }
+  if (!attemptColumns.has("practice_submission_id")) {
+    db.exec("ALTER TABLE mastery_card_attempts ADD COLUMN practice_submission_id INTEGER");
+  }
+  db.exec(
+    `CREATE UNIQUE INDEX IF NOT EXISTS mastery_card_attempts_practice_run_index
+     ON mastery_card_attempts(practice_run_id) WHERE practice_run_id IS NOT NULL`,
+  );
+  db.exec(
+    `CREATE UNIQUE INDEX IF NOT EXISTS mastery_card_attempts_practice_submission_index
+     ON mastery_card_attempts(practice_submission_id) WHERE practice_submission_id IS NOT NULL`,
+  );
 
   // Old cards were generated without an explicit interaction contract or visible context.
   db

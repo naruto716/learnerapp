@@ -1,6 +1,7 @@
 "use client";
 
 import { SparkleIcon } from "@phosphor-icons/react";
+import { useCallback } from "react";
 import FloatingIconButton from "@/components/FloatingIconButton";
 import type { CurrentDocumentAgentTools } from "@/components/editor/TiptapEditor";
 import MasteryPanel from "./MasteryPanel";
@@ -61,6 +62,16 @@ export default function MasteryController({
     return cleared;
   };
 
+  const readCurrentDocumentMarkdown = useCallback(
+    () => getCurrentDocumentTools()?.read().markdown ?? "",
+    [getCurrentDocumentTools],
+  );
+  const loadCards = cardsController.loadCards;
+
+  const syncAfterPractice = useCallback(async () => {
+    await Promise.all([loadCards(), refreshMastery()]);
+  }, [loadCards, refreshMastery]);
+
   return (
     <>
       {activeDocumentPath && !hidden && !isOpen && (
@@ -77,12 +88,11 @@ export default function MasteryController({
         />
       )}
       <MasteryPanel
+        activeDocumentPath={activeDocumentPath}
         cardError={cardsController.error}
         cardProgress={cardsController.progress}
         cardState={cardsController.cardState}
         error={error}
-        isCardDiscussing={cardsController.isDiscussing}
-        isCardEvaluating={cardsController.isEvaluating}
         isCardGenerating={cardsController.isGenerating}
         isMetaphorLoading={isMetaphorLoading}
         isLoading={isLoading}
@@ -92,12 +102,12 @@ export default function MasteryController({
         onClear={clearAndSyncCards}
         onClearCards={cardsController.clearCards}
         onClose={closeMastery}
-        onContinueCardDiscussion={cardsController.continueDiscussion}
-        onEvaluateCard={cardsController.evaluateCard}
         onGenerateCards={cardsController.generateCards}
         onGenerateMetaphor={generateMetaphor}
+        onPracticeChanged={syncAfterPractice}
         onMasteryScoreChange={updateConceptMasteryScore}
         onGenerate={generateAndSyncCards}
+        readCurrentDocumentMarkdown={readCurrentDocumentMarkdown}
         open={isOpen}
       />
     </>

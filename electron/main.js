@@ -37,6 +37,13 @@ const {
   getDocumentMasteryCards,
 } = require("./mastery/masteryCards");
 const {
+  createPracticeSession,
+  getPracticeSession,
+  listPracticeSessions,
+  retryPracticeGrading,
+  submitPracticeAnswer,
+} = require("./mastery/masteryPractice");
+const {
   closeSearchDatabase,
   deleteIndexedDocument,
   deleteIndexedDocumentTree,
@@ -519,6 +526,33 @@ ipcMain.handle("mastery:evaluateCard", async (_event, request) => {
     ...request,
     documentPath: filePathWithExtension(request.documentPath),
   });
+});
+
+ipcMain.handle("mastery:createPracticeSession", async (_event, request) => {
+  if (!request?.documentPath) throw new Error("Document path is required.");
+  return createPracticeSession({
+    ...request,
+    documentPath: filePathWithExtension(request.documentPath),
+  });
+});
+
+ipcMain.handle("mastery:getPracticeSession", async (_event, sessionId, settings) => {
+  configureAiSettings(settings);
+  return getPracticeSession(sessionId);
+});
+
+ipcMain.handle("mastery:listPracticeSessions", async (_event, documentPath) => {
+  return listPracticeSessions(filePathWithExtension(documentPath));
+});
+
+ipcMain.handle("mastery:submitPracticeAnswer", async (_event, request) => {
+  configureAiSettings(request?.settings);
+  return submitPracticeAnswer(request);
+});
+
+ipcMain.handle("mastery:retryPracticeGrading", async (_event, request) => {
+  configureAiSettings(request?.settings);
+  return retryPracticeGrading(request);
 });
 
 ipcMain.handle("mastery:clearCards", async (_event, request) => {

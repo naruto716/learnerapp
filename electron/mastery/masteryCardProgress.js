@@ -153,10 +153,31 @@ function includeMissingTargetedOutcomes(evaluation, card, state) {
   });
 }
 
-function saveCardEvaluation({ answerMarkdown, card, documentPath, evaluation, mastery, masterySettings = {}, state }) {
+function saveCardEvaluation({
+  answerMarkdown,
+  card,
+  documentPath,
+  evaluation,
+  mastery,
+  masterySettings = {},
+  practiceRunId = null,
+  practiceSubmissionId = null,
+  state,
+}) {
   const normalizedSettings = normalizeMasteryScoringSettings(masterySettings);
   includeMissingTargetedOutcomes(evaluation, card, state);
   const db = getMasteryDatabase();
+  if (practiceSubmissionId || practiceRunId) {
+    const existing = db
+      .prepare(
+        `SELECT id FROM mastery_card_attempts
+         WHERE (? IS NOT NULL AND practice_submission_id = ?)
+            OR (? IS NOT NULL AND practice_run_id = ?)
+         LIMIT 1`,
+      )
+      .get(practiceSubmissionId, practiceSubmissionId, practiceRunId, practiceRunId);
+    if (existing) return Number(existing.id);
+  }
   const now = Date.now();
   const targetedIds = new Set(
     card.weaknessLinks.filter((link) => link.relationship === "target").map((link) => link.weaknessId),
@@ -166,10 +187,21 @@ function saveCardEvaluation({ answerMarkdown, card, documentPath, evaluation, ma
   try {
     const attemptResult = db
       .prepare(
-        `INSERT INTO mastery_card_attempts(card_id, answer_markdown, score, feedback_markdown, model, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO mastery_card_attempts(
+           card_id, answer_markdown, score, feedback_markdown, model,
+           practice_run_id, practice_submission_id, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(card.id, answerMarkdown, evaluation.score, evaluation.feedbackMarkdown, evaluation.model, now);
+      .run(
+        card.id,
+        answerMarkdown,
+        evaluation.score,
+        evaluation.feedbackMarkdown,
+        evaluation.model,
+        practiceRunId,
+        practiceSubmissionId,
+        now,
+      );
     const attemptId = Number(attemptResult.lastInsertRowid);
     const insertAttemptWeakness = db.prepare(
       "INSERT OR REPLACE INTO mastery_attempt_weaknesses(attempt_id, weakness_id, outcome) VALUES (?, ?, ?)",
@@ -211,6 +243,7 @@ function saveCardEvaluation({ answerMarkdown, card, documentPath, evaluation, ma
     // The graded attempt retains the complete transcript. A future retry must start a new drill.
     db.prepare("DELETE FROM mastery_card_messages WHERE card_id = ?").run(card.id);
     db.exec("COMMIT");
+    return attemptId;
   } catch (error) {
     db.exec("ROLLBACK");
     throw error;

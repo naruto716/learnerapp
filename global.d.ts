@@ -349,6 +349,7 @@ declare global {
   type MasteryScoringSettings = {
     passingScore: number;
     points: Record<MasteryCardKind, Record<MasteryCardDifficulty, number>>;
+    practiceCardCount: number;
     thresholds: Record<MasteryTargetProficiency, number>;
   };
 
@@ -467,6 +468,74 @@ declare global {
     settings?: LearnerAiSettings;
   };
 
+  type MasteryPracticeSessionStatus = "active" | "grading" | "complete" | "needs_attention";
+  type MasteryPracticeGradingStatus = "queued" | "running" | "succeeded" | "failed";
+
+  type MasteryPracticeGrading = {
+    effectsApplied: boolean;
+    error: string;
+    feedbackMarkdown: string;
+    gradedAt: number | null;
+    id: number;
+    kind: "initial" | "retry" | "regrade";
+    model: string;
+    score: number | null;
+    startedAt: number | null;
+    status: MasteryPracticeGradingStatus;
+  };
+
+  type MasteryPracticeSessionCard = {
+    answerMarkdown: string;
+    card: MasteryCard;
+    concepts: MasteryConcept[];
+    grading: MasteryPracticeGrading | null;
+    id: number;
+    metaphor: MasteryMetaphor | null;
+    sortOrder: number;
+    sourceCardId: number | null;
+    submittedAt: number | null;
+    weaknesses: MasteryWeakness[];
+  };
+
+  type MasteryPracticeSession = {
+    cards: MasteryPracticeSessionCard[];
+    completedAt: number | null;
+    createdAt: number;
+    documentPath: string;
+    id: number;
+    masterySettings: MasteryScoringSettings;
+    status: MasteryPracticeSessionStatus;
+    submittedAt: number | null;
+  };
+
+  type MasteryPracticeSessionSummary = {
+    averageScore: number | null;
+    cardCount: number;
+    completedAt: number | null;
+    createdAt: number;
+    id: number;
+    status: MasteryPracticeSessionStatus;
+  };
+
+  type MasteryPracticeSessionCreateRequest = {
+    cardIds?: number[];
+    desiredCount?: number;
+    documentPath: string;
+    markdown?: string;
+    masterySettings?: MasteryScoringSettings;
+  };
+
+  type MasteryPracticeAnswerRequest = {
+    answerMarkdown: string;
+    sessionCardId: number;
+    settings?: LearnerAiSettings;
+  };
+
+  type MasteryPracticeRetryRequest = {
+    sessionCardId: number;
+    settings?: LearnerAiSettings;
+  };
+
   type DocumentMasteryScoreUpdateRequest = {
     conceptId: number;
     documentPath: string;
@@ -540,6 +609,20 @@ declare global {
         request: MasteryCardDiscussionRequest,
       ) => Promise<MasteryCardDiscussionResult>;
       evaluateMasteryCard: (request: MasteryCardEvaluationRequest) => Promise<DocumentMasteryCards>;
+      createMasteryPracticeSession: (
+        request: MasteryPracticeSessionCreateRequest,
+      ) => Promise<MasteryPracticeSession>;
+      getMasteryPracticeSession: (
+        sessionId: number,
+        settings?: LearnerAiSettings,
+      ) => Promise<MasteryPracticeSession>;
+      listMasteryPracticeSessions: (documentPath: string) => Promise<MasteryPracticeSessionSummary[]>;
+      submitMasteryPracticeAnswer: (
+        request: MasteryPracticeAnswerRequest,
+      ) => Promise<MasteryPracticeSession>;
+      retryMasteryPracticeGrading: (
+        request: MasteryPracticeRetryRequest,
+      ) => Promise<MasteryPracticeSession>;
       clearDocumentMasteryCards: (
         request: { documentPath: string; resetProgress?: boolean },
       ) => Promise<DocumentMasteryCards>;

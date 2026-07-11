@@ -17,6 +17,7 @@ export const masteryThresholdLevels = ["familiar", "developing", "proficient", "
 export type MasteryScoringSettings = {
   passingScore: number;
   points: Record<(typeof masteryCardKinds)[number], Record<(typeof masteryCardDifficulties)[number], number>>;
+  practiceCardCount: number;
   thresholds: Record<(typeof masteryThresholdLevels)[number], number>;
 };
 
@@ -24,6 +25,7 @@ const storageKey = "learner.mastery.scoring.v1";
 
 export const defaultMasteryScoringSettings: MasteryScoringSettings = {
   passingScore: 80,
+  practiceCardCount: 5,
   points: {
     feynman: { introductory: 8, standard: 12, advanced: 16, expert: 20 },
     relationship: { introductory: 8, standard: 12, advanced: 16, expert: 20 },
@@ -48,9 +50,15 @@ function boundedInteger(value: unknown, fallback: number) {
   return Number.isFinite(numeric) ? Math.max(0, Math.min(100, Math.round(numeric))) : fallback;
 }
 
+function boundedPracticeCount(value: unknown, fallback: number) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? Math.max(1, Math.min(50, Math.round(numeric))) : fallback;
+}
+
 function cloneDefaults(): MasteryScoringSettings {
   return {
     passingScore: defaultMasteryScoringSettings.passingScore,
+    practiceCardCount: defaultMasteryScoringSettings.practiceCardCount,
     points: Object.fromEntries(
       masteryCardKinds.map((kind) => [kind, { ...defaultMasteryScoringSettings.points[kind] }]),
     ) as MasteryScoringSettings["points"],
@@ -74,6 +82,7 @@ export function normalizeMasterySettings(value: unknown): MasteryScoringSettings
 
   return {
     passingScore: Math.max(1, boundedInteger(source.passingScore, defaults.passingScore)),
+    practiceCardCount: boundedPracticeCount(source.practiceCardCount, defaults.practiceCardCount),
     points: Object.fromEntries(
       masteryCardKinds.map((kind) => [
         kind,

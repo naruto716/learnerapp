@@ -98,6 +98,21 @@ contextBridge.exposeInMainWorld("learner", {
   evaluateMasteryCard: (request) => {
     return ipcRenderer.invoke("mastery:evaluateCard", request);
   },
+  createMasteryPracticeSession: (request) => {
+    return ipcRenderer.invoke("mastery:createPracticeSession", request);
+  },
+  getMasteryPracticeSession: (sessionId, settings) => {
+    return ipcRenderer.invoke("mastery:getPracticeSession", sessionId, settings);
+  },
+  listMasteryPracticeSessions: (documentPath) => {
+    return ipcRenderer.invoke("mastery:listPracticeSessions", documentPath);
+  },
+  submitMasteryPracticeAnswer: (request) => {
+    return ipcRenderer.invoke("mastery:submitPracticeAnswer", request);
+  },
+  retryMasteryPracticeGrading: (request) => {
+    return ipcRenderer.invoke("mastery:retryPracticeGrading", request);
+  },
   clearDocumentMasteryCards: (request) => {
     return ipcRenderer.invoke("mastery:clearCards", request);
   },

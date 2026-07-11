@@ -249,11 +249,16 @@ export default function AiSettingsDialog({
 
           <Section title="Mastery Scoring">
             <div className="flex items-end justify-between gap-4">
-              <div className="w-40">
+              <div className="grid flex-1 gap-3 sm:max-w-sm sm:grid-cols-2">
                 <NumberField
                   label="Passing score"
                   onChange={(value) => setMasterySettings((current) => ({ ...current, passingScore: value }))}
                   value={masterySettings.passingScore}
+                />
+                <NumberField
+                  label="Cards per practice"
+                  onChange={(value) => setMasterySettings((current) => ({ ...current, practiceCardCount: value }))}
+                  value={masterySettings.practiceCardCount}
                 />
               </div>
               <button
