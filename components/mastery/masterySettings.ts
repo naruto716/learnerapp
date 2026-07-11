@@ -18,14 +18,17 @@ export type MasteryScoringSettings = {
   passingScore: number;
   points: Record<(typeof masteryCardKinds)[number], Record<(typeof masteryCardDifficulties)[number], number>>;
   practiceCardCount: number;
+  reviewCooldownDays: number;
   thresholds: Record<(typeof masteryThresholdLevels)[number], number>;
 };
 
 const storageKey = "learner.mastery.scoring.v1";
+const settingsVersion = 2;
 
 export const defaultMasteryScoringSettings: MasteryScoringSettings = {
-  passingScore: 80,
+  passingScore: 60,
   practiceCardCount: 5,
+  reviewCooldownDays: 3,
   points: {
     feynman: { introductory: 8, standard: 12, advanced: 16, expert: 20 },
     relationship: { introductory: 8, standard: 12, advanced: 16, expert: 20 },
@@ -55,10 +58,16 @@ function boundedPracticeCount(value: unknown, fallback: number) {
   return Number.isFinite(numeric) ? Math.max(1, Math.min(50, Math.round(numeric))) : fallback;
 }
 
+function boundedCooldownDays(value: unknown, fallback: number) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? Math.max(1, Math.min(365, Math.round(numeric))) : fallback;
+}
+
 function cloneDefaults(): MasteryScoringSettings {
   return {
     passingScore: defaultMasteryScoringSettings.passingScore,
     practiceCardCount: defaultMasteryScoringSettings.practiceCardCount,
+    reviewCooldownDays: defaultMasteryScoringSettings.reviewCooldownDays,
     points: Object.fromEntries(
       masteryCardKinds.map((kind) => [kind, { ...defaultMasteryScoringSettings.points[kind] }]),
     ) as MasteryScoringSettings["points"],
@@ -83,6 +92,7 @@ export function normalizeMasterySettings(value: unknown): MasteryScoringSettings
   return {
     passingScore: Math.max(1, boundedInteger(source.passingScore, defaults.passingScore)),
     practiceCardCount: boundedPracticeCount(source.practiceCardCount, defaults.practiceCardCount),
+    reviewCooldownDays: boundedCooldownDays(source.reviewCooldownDays, defaults.reviewCooldownDays),
     points: Object.fromEntries(
       masteryCardKinds.map((kind) => [
         kind,
@@ -101,7 +111,15 @@ export function normalizeMasterySettings(value: unknown): MasteryScoringSettings
 export function readMasterySettings(): MasteryScoringSettings {
   if (typeof window === "undefined") return cloneDefaults();
   try {
-    return normalizeMasterySettings(JSON.parse(localStorage.getItem(storageKey) || "null"));
+    const stored = JSON.parse(localStorage.getItem(storageKey) || "null") as
+      | (Partial<MasteryScoringSettings> & { version?: number })
+      | null;
+    if (stored && stored.version !== settingsVersion && stored.passingScore === 80) {
+      stored.passingScore = 60;
+    }
+    const normalized = normalizeMasterySettings(stored);
+    localStorage.setItem(storageKey, JSON.stringify({ ...normalized, version: settingsVersion }));
+    return normalized;
   } catch {
     return cloneDefaults();
   }
@@ -109,7 +127,9 @@ export function readMasterySettings(): MasteryScoringSettings {
 
 export function writeMasterySettings(settings: MasteryScoringSettings) {
   const normalized = normalizeMasterySettings(settings);
-  if (typeof window !== "undefined") localStorage.setItem(storageKey, JSON.stringify(normalized));
+  if (typeof window !== "undefined") {
+    localStorage.setItem(storageKey, JSON.stringify({ ...normalized, version: settingsVersion }));
+  }
   return normalized;
 }
 

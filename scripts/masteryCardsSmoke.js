@@ -107,6 +107,9 @@ const {
 } = require("../electron/mastery/masteryPractice");
 Module._load = originalLoad;
 
+assert.equal(defaultMasteryScoringSettings.passingScore, 60);
+assert.equal(defaultMasteryScoringSettings.reviewCooldownDays, 3);
+
 function baseCard(overrides = {}) {
   return {
     answerMode: "single_turn",
@@ -332,6 +335,7 @@ try {
   const customScoring = structuredClone(defaultMasteryScoringSettings);
   customScoring.passingScore = 85;
   customScoring.points.feynman.standard = 17;
+  customScoring.reviewCooldownDays = 7;
   const firstCard = state.cards.find((card) => card.kind === "feynman");
   assert.ok(firstCard);
 
@@ -361,7 +365,7 @@ try {
   state = getDocumentMasteryCards(documentPath);
   const delayedCard = state.cards.find((card) => card.id === firstCard.id);
   assert.equal(delayedCard.status, "delayed", "the configured pass threshold must be used");
-  assert.ok(delayedCard.retryAt >= now + 3 * 24 * 60 * 60 * 1000);
+  assert.ok(delayedCard.retryAt >= now + 7 * 24 * 60 * 60 * 1000);
   assert.equal(state.stageStates.find((entry) => entry.conceptId === 1 && entry.stage === 2).score, 0);
   assert.equal(state.stageStates.find((entry) => entry.conceptId === 1 && entry.stage === 3).score, 0);
   assert.equal(state.weaknesses[0].status, "active");

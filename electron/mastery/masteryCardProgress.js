@@ -5,8 +5,9 @@ const {
   masteryLevelForStageStates,
   masteryStages,
 } = require("./masteryConcepts");
-const { threeDaysMs } = require("./masteryCardSchema");
 const { normalizeMasteryScoringSettings } = require("./masteryScoring");
+
+const dayMs = 24 * 60 * 60 * 1000;
 
 function targetedWeaknesses(card, state) {
   const ids = new Set(
@@ -106,7 +107,7 @@ function updateStageEvidence(db, card, score, now, masterySettings) {
     update.run(
       nextScore,
       now,
-      cleared ? null : now + threeDaysMs,
+      cleared ? null : now + masterySettings.reviewCooldownDays * dayMs,
       cleared ? 0 : 1,
       now,
       target.conceptId,
@@ -236,7 +237,9 @@ function saveCardEvaluation({
       .prepare("UPDATE mastery_cards SET status = ?, retry_at = ?, updated_at = ? WHERE id = ?")
       .run(
         evaluation.score >= normalizedSettings.passingScore ? "done" : "delayed",
-        evaluation.score >= normalizedSettings.passingScore ? null : now + threeDaysMs,
+        evaluation.score >= normalizedSettings.passingScore
+          ? null
+          : now + normalizedSettings.reviewCooldownDays * dayMs,
         now,
         card.id,
       );

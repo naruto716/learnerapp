@@ -350,6 +350,7 @@ declare global {
     passingScore: number;
     points: Record<MasteryCardKind, Record<MasteryCardDifficulty, number>>;
     practiceCardCount: number;
+    reviewCooldownDays: number;
     thresholds: Record<MasteryTargetProficiency, number>;
   };
 

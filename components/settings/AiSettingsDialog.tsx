@@ -23,6 +23,7 @@ const imageSizes = ["1024x1024", "1024x1536", "1536x1024", "auto"];
 const imageQualities = ["low", "medium", "high", "auto"];
 const imageBackgrounds = ["opaque", "transparent", "auto"];
 const imageFormats = ["png", "jpeg", "webp"];
+type SettingsTab = "ai" | "mastery";
 const masteryKindLabels: Record<MasteryCardKind, string> = {
   feynman: "Feynman",
   relationship: "Relationship",
@@ -113,10 +114,14 @@ function TextAreaField({
 
 function NumberField({
   label,
+  max = 100,
+  min = 0,
   onChange,
   value,
 }: {
   label: string;
+  max?: number;
+  min?: number;
   onChange: (value: number) => void;
   value: number;
 }) {
@@ -125,8 +130,8 @@ function NumberField({
       <span className="text-xs font-medium capitalize text-white/48">{label}</span>
       <input
         className="h-9 w-full rounded-md border border-white/10 bg-white/[0.04] px-3 text-sm text-white outline-none transition focus:border-white/24 focus:bg-white/[0.07]"
-        max={100}
-        min={0}
+        max={max}
+        min={min}
         onChange={(event) => onChange(Number(event.target.value))}
         type="number"
         value={value}
@@ -153,6 +158,7 @@ export default function AiSettingsDialog({
 }) {
   const [settings, setSettings] = useState<LearnerAiSettings>(() => readAiSettings());
   const [masterySettings, setMasterySettings] = useState<MasteryScoringSettings>(() => readMasterySettings());
+  const [activeTab, setActiveTab] = useState<SettingsTab>("ai");
   const [status, setStatus] = useState("");
   const [isTesting, setIsTesting] = useState(false);
 
@@ -212,7 +218,26 @@ export default function AiSettingsDialog({
         className="flex max-h-[86vh] w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-white/10 bg-[#202020] text-white shadow-2xl"
       >
         <div className="flex h-12 shrink-0 items-center justify-between border-b border-white/[0.08] px-4">
-          <h2 className="text-sm font-medium">Settings</h2>
+          <div className="flex items-center gap-4">
+            <h2 className="text-sm font-medium">Settings</h2>
+            <div className="flex h-8 overflow-hidden rounded-md border border-white/[0.08] bg-white/[0.025]">
+              {(["ai", "mastery"] as const).map((tab) => (
+                <button
+                  aria-pressed={activeTab === tab}
+                  className={`px-3 text-xs transition ${
+                    activeTab === tab
+                      ? "bg-white/[0.12] text-white/82"
+                      : "text-white/42 hover:bg-white/[0.055] hover:text-white/68"
+                  }`}
+                  key={tab}
+                  onClick={() => setActiveTab(tab)}
+                  type="button"
+                >
+                  {tab === "ai" ? "AI" : "Mastery rewards"}
+                </button>
+              ))}
+            </div>
+          </div>
           <button
             className="rounded-md px-2 py-1 text-sm text-white/52 transition hover:bg-white/10 hover:text-white"
             onClick={onClose}
@@ -223,6 +248,8 @@ export default function AiSettingsDialog({
         </div>
 
         <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4">
+          {activeTab === "ai" ? (
+            <>
           <Section title="Connection">
             <p className="text-sm leading-6 text-white/48">
               Shared endpoint and API key for chat, graph extraction, embeddings, and image generation.
@@ -246,97 +273,6 @@ export default function AiSettingsDialog({
               value={settings.userProfile}
             />
           </Section>
-
-          <Section title="Mastery Scoring">
-            <div className="flex items-end justify-between gap-4">
-              <div className="grid flex-1 gap-3 sm:max-w-sm sm:grid-cols-2">
-                <NumberField
-                  label="Passing score"
-                  onChange={(value) => setMasterySettings((current) => ({ ...current, passingScore: value }))}
-                  value={masterySettings.passingScore}
-                />
-                <NumberField
-                  label="Cards per practice"
-                  onChange={(value) => setMasterySettings((current) => ({ ...current, practiceCardCount: value }))}
-                  value={masterySettings.practiceCardCount}
-                />
-              </div>
-              <button
-                className="rounded-md px-3 py-1.5 text-xs text-white/52 transition hover:bg-white/[0.07] hover:text-white/82"
-                onClick={resetScoringDefaults}
-                type="button"
-              >
-                Reset scoring defaults
-              </button>
-            </div>
-
-            <div>
-              <p className="mb-2 text-xs font-medium text-white/48">Mastery thresholds</p>
-              <div className="grid gap-2 sm:grid-cols-5">
-                {masteryThresholdLevels.map((level) => (
-                  <NumberField
-                    key={level}
-                    label={level}
-                    onChange={(value) =>
-                      setMasterySettings((current) => ({
-                        ...current,
-                        thresholds: { ...current.thresholds, [level]: value },
-                      }))
-                    }
-                    value={masterySettings.thresholds[level]}
-                  />
-                ))}
-              </div>
-            </div>
-
-            <div>
-              <p className="mb-2 text-xs font-medium text-white/48">Points awarded when cleared</p>
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[590px] border-separate border-spacing-x-2 border-spacing-y-1 text-left text-xs">
-                  <thead className="text-white/36">
-                    <tr>
-                      <th className="px-1 font-medium">Card type</th>
-                      {masteryCardDifficulties.map((difficulty) => (
-                        <th className="px-1 font-medium capitalize" key={difficulty}>{difficulty}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {masteryCardKinds.map((kind) => (
-                      <tr key={kind}>
-                        <th className="whitespace-nowrap px-1 font-medium text-white/62">{masteryKindLabels[kind]}</th>
-                        {masteryCardDifficulties.map((difficulty) => (
-                          <td key={difficulty}>
-                            <input
-                              aria-label={`${masteryKindLabels[kind]} ${difficulty} points`}
-                              className="h-8 w-full rounded-md border border-white/10 bg-white/[0.04] px-2 text-sm text-white outline-none focus:border-white/24 focus:bg-white/[0.07]"
-                              max={100}
-                              min={0}
-                              onChange={(event) =>
-                                setMasterySettings((current) => ({
-                                  ...current,
-                                  points: {
-                                    ...current.points,
-                                    [kind]: {
-                                      ...current.points[kind],
-                                      [difficulty]: Number(event.target.value),
-                                    },
-                                  },
-                                }))
-                              }
-                              type="number"
-                              value={masterySettings.points[kind][difficulty]}
-                            />
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </Section>
-
           <Section title="Models">
             <p className="text-sm leading-6 text-white/48">
               Each capability can use a different model on the same configured endpoint.
@@ -405,27 +341,137 @@ export default function AiSettingsDialog({
               />
             </div>
           </Section>
+            </>
+          ) : (
+          <Section title="Reward parameters">
+            <p className="text-sm leading-6 text-white/48">
+              Passing awards the configured points to every concept-stage pair targeted by a card. Review answers award no points and return after the cooldown.
+            </p>
+            <div className="flex items-end justify-between gap-4">
+              <div className="grid flex-1 gap-3 sm:grid-cols-3">
+                <NumberField
+                  label="Passing score"
+                  min={1}
+                  onChange={(value) => setMasterySettings((current) => ({ ...current, passingScore: value }))}
+                  value={masterySettings.passingScore}
+                />
+                <NumberField
+                  label="Cards per practice"
+                  max={50}
+                  min={1}
+                  onChange={(value) => setMasterySettings((current) => ({ ...current, practiceCardCount: value }))}
+                  value={masterySettings.practiceCardCount}
+                />
+                <NumberField
+                  label="Review cooldown days"
+                  max={365}
+                  min={1}
+                  onChange={(value) => setMasterySettings((current) => ({ ...current, reviewCooldownDays: value }))}
+                  value={masterySettings.reviewCooldownDays}
+                />
+              </div>
+            </div>
+
+            <div>
+              <p className="mb-2 text-xs font-medium text-white/48">Mastery thresholds</p>
+              <div className="grid gap-2 sm:grid-cols-5">
+                {masteryThresholdLevels.map((level) => (
+                  <NumberField
+                    key={level}
+                    label={level}
+                    onChange={(value) =>
+                      setMasterySettings((current) => ({
+                        ...current,
+                        thresholds: { ...current.thresholds, [level]: value },
+                      }))
+                    }
+                    value={masterySettings.thresholds[level]}
+                  />
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <p className="mb-2 text-xs font-medium text-white/48">Points awarded when cleared</p>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[590px] border-separate border-spacing-x-2 border-spacing-y-1 text-left text-xs">
+                  <thead className="text-white/36">
+                    <tr>
+                      <th className="px-1 font-medium">Card type</th>
+                      {masteryCardDifficulties.map((difficulty) => (
+                        <th className="px-1 font-medium capitalize" key={difficulty}>{difficulty}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {masteryCardKinds.map((kind) => (
+                      <tr key={kind}>
+                        <th className="whitespace-nowrap px-1 font-medium text-white/62">{masteryKindLabels[kind]}</th>
+                        {masteryCardDifficulties.map((difficulty) => (
+                          <td key={difficulty}>
+                            <input
+                              aria-label={`${masteryKindLabels[kind]} ${difficulty} points`}
+                              className="h-8 w-full rounded-md border border-white/10 bg-white/[0.04] px-2 text-sm text-white outline-none focus:border-white/24 focus:bg-white/[0.07]"
+                              max={100}
+                              min={0}
+                              onChange={(event) =>
+                                setMasterySettings((current) => ({
+                                  ...current,
+                                  points: {
+                                    ...current.points,
+                                    [kind]: {
+                                      ...current.points[kind],
+                                      [difficulty]: Number(event.target.value),
+                                    },
+                                  },
+                                }))
+                              }
+                              type="number"
+                              value={masterySettings.points[kind][difficulty]}
+                            />
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </Section>
+          )}
         </div>
 
         <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-white/[0.08] px-4 py-3">
           <p className="min-h-5 text-sm text-white/52">{status}</p>
           <div className="flex flex-wrap justify-end gap-2">
-            <button
-              className="rounded-md px-3 py-1.5 text-sm text-white/58 transition hover:bg-white/10 hover:text-white"
-              onClick={resetAiDefaults}
-              type="button"
-            >
-              Reset AI defaults
-            </button>
-            <button
-              className="inline-flex items-center gap-2 rounded-md border border-white/10 px-3 py-1.5 text-sm text-white/76 transition hover:bg-white/10 hover:text-white disabled:opacity-45"
-              disabled={isTesting}
-              onClick={testConnection}
-              type="button"
-            >
-              <PlugIcon size={15} />
-              {isTesting ? "Testing" : "Test"}
-            </button>
+            {activeTab === "ai" ? (
+              <>
+                <button
+                  className="rounded-md px-3 py-1.5 text-sm text-white/58 transition hover:bg-white/10 hover:text-white"
+                  onClick={resetAiDefaults}
+                  type="button"
+                >
+                  Reset AI defaults
+                </button>
+                <button
+                  className="inline-flex items-center gap-2 rounded-md border border-white/10 px-3 py-1.5 text-sm text-white/76 transition hover:bg-white/10 hover:text-white disabled:opacity-45"
+                  disabled={isTesting}
+                  onClick={testConnection}
+                  type="button"
+                >
+                  <PlugIcon size={15} />
+                  {isTesting ? "Testing" : "Test"}
+                </button>
+              </>
+            ) : (
+              <button
+                className="rounded-md px-3 py-1.5 text-sm text-white/58 transition hover:bg-white/10 hover:text-white"
+                onClick={resetScoringDefaults}
+                type="button"
+              >
+                Reset reward defaults
+              </button>
+            )}
             <button
               className="inline-flex items-center gap-2 rounded-md bg-white px-3 py-1.5 text-sm font-medium text-black transition hover:bg-white/90"
               type="submit"

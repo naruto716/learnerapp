@@ -439,11 +439,17 @@ function setPracticeCardOutcome({ outcome, sessionCardId }) {
   }
   const db = getMasteryDatabase();
   const sessionCard = db
-    .prepare("SELECT id, session_id, source_card_id FROM mastery_practice_session_cards WHERE id = ?")
+    .prepare(
+      `SELECT cards.id, cards.session_id, cards.source_card_id, sessions.mastery_settings_json
+       FROM mastery_practice_session_cards cards
+       JOIN mastery_practice_sessions sessions ON sessions.id = cards.session_id
+       WHERE cards.id = ?`,
+    )
     .get(Number(sessionCardId));
   if (!sessionCard) throw new Error("Practice card was not found.");
 
   const now = Date.now();
+  const masterySettings = normalizeMasteryScoringSettings(parseJson(sessionCard.mastery_settings_json, {}));
   db.exec("BEGIN IMMEDIATE");
   try {
     db.prepare("UPDATE mastery_practice_session_cards SET manual_outcome = ? WHERE id = ?")
@@ -452,7 +458,7 @@ function setPracticeCardOutcome({ outcome, sessionCardId }) {
       db.prepare("UPDATE mastery_cards SET status = ?, retry_at = ?, updated_at = ? WHERE id = ?")
         .run(
           outcome === "passed" ? "done" : "delayed",
-          outcome === "passed" ? null : now + 3 * 24 * 60 * 60 * 1000,
+          outcome === "passed" ? null : now + masterySettings.reviewCooldownDays * 24 * 60 * 60 * 1000,
           now,
           sessionCard.source_card_id,
         );
