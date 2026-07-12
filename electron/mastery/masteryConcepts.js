@@ -111,6 +111,9 @@ function getMasteryDatabase() {
       fsrs_difficulty REAL,
       fsrs_stability REAL,
       fsrs_retrievability REAL,
+      fsrs_state INTEGER NOT NULL DEFAULT 0,
+      fsrs_scheduled_days INTEGER NOT NULL DEFAULT 0,
+      fsrs_learning_steps INTEGER NOT NULL DEFAULT 0,
       lapse_count INTEGER NOT NULL DEFAULT 0,
       status TEXT NOT NULL DEFAULT 'active',
       updated_at INTEGER NOT NULL,
@@ -1027,6 +1030,7 @@ async function generateMetaphorImages({ concepts, documentPath, metaphor, settin
 function saveMasteryRun({ concepts, documentHash, documentPath, model }) {
   const db = getMasteryDatabase();
   const now = Date.now();
+  const initialRevisionDueAt = now + 24 * 60 * 60 * 1000;
   const existingConcepts = getActiveConceptRows(documentPath).map(rowToConcept);
   const maps = existingConceptMaps(existingConcepts);
   const activeStableKeys = new Set();
@@ -1082,6 +1086,15 @@ function saveMasteryRun({ concepts, documentHash, documentPath, model }) {
         sort_order = excluded.sort_order,
         updated_at = excluded.updated_at
     `);
+    const findConcept = db.prepare(
+      "SELECT id FROM mastery_concepts WHERE document_path = ? AND stable_key = ?",
+    );
+    const enrollConcept = db.prepare(`
+      INSERT OR IGNORE INTO mastery_stage_states(
+        concept_id, stage, score, attempt_count, last_reviewed_at, next_due_at,
+        lapse_count, status, updated_at
+      ) VALUES (?, 2, 0, 0, NULL, ?, 0, 'active', ?)
+    `);
 
     concepts.forEach((concept, index) => {
       const stableKey = resolveStableKey(concept, maps);
@@ -1104,6 +1117,8 @@ function saveMasteryRun({ concepts, documentHash, documentPath, model }) {
         now,
         now,
       );
+      const savedConcept = findConcept.get(documentPath, stableKey);
+      if (savedConcept) enrollConcept.run(savedConcept.id, initialRevisionDueAt, now);
     });
 
     const archiveConcept = db.prepare(`
@@ -1416,6 +1431,7 @@ module.exports = {
   generateDocumentMastery,
   generateDocumentMasteryMetaphor,
   getMasteryDatabase,
+  getMasteryDatabasePath,
   getDocumentMastery,
   masteryLevelForStageStates,
   masteryLevels,

@@ -350,6 +350,8 @@ declare global {
     passingScore: number;
     points: Record<MasteryCardKind, Record<MasteryCardDifficulty, number>>;
     practiceCardCount: number;
+    revisionDailyCardLimit: number;
+    revisionRetention: number;
     reviewCooldownDays: number;
     thresholds: Record<MasteryTargetProficiency, number>;
   };
@@ -496,6 +498,7 @@ declare global {
     metaphor: MasteryMetaphor | null;
     sortOrder: number;
     sourceCardId: number | null;
+    sourceDocumentPath: string;
     submittedAt: number | null;
     weaknesses: MasteryWeakness[];
   };
@@ -507,6 +510,8 @@ declare global {
     documentPath: string;
     id: number;
     masterySettings: MasteryScoringSettings;
+    scope: "document" | "global";
+    sessionKind: "practice" | "revision";
     status: MasteryPracticeSessionStatus;
     submittedAt: number | null;
   };
@@ -517,6 +522,8 @@ declare global {
     completedAt: number | null;
     createdAt: number;
     id: number;
+    scope: "document" | "global";
+    sessionKind: "practice" | "revision";
     status: MasteryPracticeSessionStatus;
   };
 
@@ -569,6 +576,43 @@ declare global {
   type MasteryPracticeCardOutcomeRequest = {
     outcome: "passed" | "review";
     sessionCardId: number;
+  };
+
+  type MasteryRevisionStage = {
+    dueAt: number;
+    isDue: boolean;
+    lapseCount: number;
+    score: number;
+    stage: MasteryStage;
+  };
+
+  type MasteryRevisionConcept = {
+    dueCount: number;
+    id: number;
+    lastReviewedAt: number | null;
+    name: string;
+    nextDueAt: number | null;
+    stages: MasteryRevisionStage[];
+  };
+
+  type MasteryRevisionNote = {
+    concepts: MasteryRevisionConcept[];
+    documentPath: string;
+    dueCount: number;
+    lastReviewedAt: number | null;
+    nextDueAt: number | null;
+  };
+
+  type MasteryRevisionOverview = {
+    activeSessionId: number | null;
+    calendar: Array<{ date: string; dueCount: number }>;
+    dailyCardLimit: number;
+    dueCount: number;
+    notes: MasteryRevisionNote[];
+    overdueCount: number;
+    preparedCardCount: number;
+    preparingCards: boolean;
+    requiredCardCount: number;
   };
 
   type DocumentMasteryScoreUpdateRequest = {
@@ -646,6 +690,16 @@ declare global {
       evaluateMasteryCard: (request: MasteryCardEvaluationRequest) => Promise<DocumentMasteryCards>;
       createMasteryPracticeSession: (
         request: MasteryPracticeSessionCreateRequest,
+      ) => Promise<MasteryPracticeSession>;
+      getMasteryRevisionOverview: (
+        request?: {
+          days?: number;
+          masterySettings?: MasteryScoringSettings;
+          settings?: LearnerAiSettings;
+        },
+      ) => Promise<MasteryRevisionOverview>;
+      createMasteryRevisionSession: (
+        request?: { masterySettings?: MasteryScoringSettings },
       ) => Promise<MasteryPracticeSession>;
       getMasteryPracticeSession: (
         sessionId: number,

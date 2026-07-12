@@ -18,6 +18,8 @@ export type MasteryScoringSettings = {
   passingScore: number;
   points: Record<(typeof masteryCardKinds)[number], Record<(typeof masteryCardDifficulties)[number], number>>;
   practiceCardCount: number;
+  revisionDailyCardLimit: number;
+  revisionRetention: number;
   reviewCooldownDays: number;
   thresholds: Record<(typeof masteryThresholdLevels)[number], number>;
 };
@@ -28,6 +30,8 @@ const settingsVersion = 2;
 export const defaultMasteryScoringSettings: MasteryScoringSettings = {
   passingScore: 60,
   practiceCardCount: 5,
+  revisionDailyCardLimit: 15,
+  revisionRetention: 90,
   reviewCooldownDays: 3,
   points: {
     feynman: { introductory: 8, standard: 12, advanced: 16, expert: 20 },
@@ -67,6 +71,8 @@ function cloneDefaults(): MasteryScoringSettings {
   return {
     passingScore: defaultMasteryScoringSettings.passingScore,
     practiceCardCount: defaultMasteryScoringSettings.practiceCardCount,
+    revisionDailyCardLimit: defaultMasteryScoringSettings.revisionDailyCardLimit,
+    revisionRetention: defaultMasteryScoringSettings.revisionRetention,
     reviewCooldownDays: defaultMasteryScoringSettings.reviewCooldownDays,
     points: Object.fromEntries(
       masteryCardKinds.map((kind) => [kind, { ...defaultMasteryScoringSettings.points[kind] }]),
@@ -92,6 +98,11 @@ export function normalizeMasterySettings(value: unknown): MasteryScoringSettings
   return {
     passingScore: Math.max(1, boundedInteger(source.passingScore, defaults.passingScore)),
     practiceCardCount: boundedPracticeCount(source.practiceCardCount, defaults.practiceCardCount),
+    revisionDailyCardLimit: boundedPracticeCount(
+      source.revisionDailyCardLimit,
+      defaults.revisionDailyCardLimit,
+    ),
+    revisionRetention: Math.max(70, Math.min(99, boundedInteger(source.revisionRetention, defaults.revisionRetention))),
     reviewCooldownDays: boundedCooldownDays(source.reviewCooldownDays, defaults.reviewCooldownDays),
     points: Object.fromEntries(
       masteryCardKinds.map((kind) => [

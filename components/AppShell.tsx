@@ -14,6 +14,7 @@ import TiptapEditor, {
 import { documentPathToRoute, routeToDocumentPath } from "@/components/documentPaths";
 import KnowledgeGraphPanel from "@/components/graph/KnowledgeGraphPanel";
 import MasteryController from "@/components/mastery/MasteryController";
+import RevisionDialog from "@/components/mastery/RevisionDialog";
 import AiSettingsDialog from "@/components/settings/AiSettingsDialog";
 import { readAiSettings } from "./ai/aiSettings";
 import ChatBubble from "./ai/ChatBubble";
@@ -119,6 +120,8 @@ export default function AppShell() {
   const [knowledgeGraphProgress, setKnowledgeGraphProgress] = useState<KnowledgeGraphProgress | null>(null);
   const [lastKnowledgeGraphExtractionChanged, setLastKnowledgeGraphExtractionChanged] = useState<boolean | null>(null);
   const [isMasteryOpen, setIsMasteryOpen] = useState(false);
+  const [isRevisionOpen, setIsRevisionOpen] = useState(false);
+  const [revisionRefreshKey, setRevisionRefreshKey] = useState(0);
   const [editorStates, setEditorStates] = useState<Record<string, PersistedEditorState>>({});
   const [documentsVersion, setDocumentsVersion] = useState(0);
   const [workspaceLoaded, setWorkspaceLoaded] = useState(false);
@@ -565,7 +568,9 @@ export default function AppShell() {
         onDocumentDeleted={handleDocumentDeleted}
         onDocumentMoved={handleDocumentMoved}
         onOpenSearch={() => setIsDocumentSearchOpen(true)}
+        onOpenRevision={() => setIsRevisionOpen(true)}
         onOpenDocument={openDocument}
+        revisionRefreshKey={revisionRefreshKey}
       />
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar
@@ -667,6 +672,13 @@ export default function AppShell() {
         onOpenDocument={openDocument}
       />
       <AiSettingsDialog open={isAiSettingsOpen} onClose={() => setIsAiSettingsOpen(false)} />
+      <RevisionDialog
+        open={isRevisionOpen}
+        onClose={() => {
+          setIsRevisionOpen(false);
+          setRevisionRefreshKey((current) => current + 1);
+        }}
+      />
       <ChatBubble isOpen={isBubbleOpen} toggleBubbleOpen={() => setIsBubbleOpen((isOpen) => !isOpen)} />
     </div>
   );

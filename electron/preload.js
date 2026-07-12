@@ -101,6 +101,12 @@ contextBridge.exposeInMainWorld("learner", {
   createMasteryPracticeSession: (request) => {
     return ipcRenderer.invoke("mastery:createPracticeSession", request);
   },
+  getMasteryRevisionOverview: (request) => {
+    return ipcRenderer.invoke("mastery:getRevisionOverview", request);
+  },
+  createMasteryRevisionSession: (request) => {
+    return ipcRenderer.invoke("mastery:createRevisionSession", request);
+  },
   getMasteryPracticeSession: (sessionId, settings) => {
     return ipcRenderer.invoke("mastery:getPracticeSession", sessionId, settings);
   },

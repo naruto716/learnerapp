@@ -6,6 +6,7 @@ const {
   masteryStages,
 } = require("./masteryConcepts");
 const { normalizeMasteryScoringSettings } = require("./masteryScoring");
+const { scheduleCardTargets } = require("./masteryRevision");
 
 const dayMs = 24 * 60 * 60 * 1000;
 
@@ -93,8 +94,8 @@ function updateStageEvidence(db, card, score, now, masterySettings) {
   const awardedPoints = cleared ? masterySettings.points[card.kind][card.difficulty] : 0;
   const update = db.prepare(
     `UPDATE mastery_stage_states
-     SET score = ?, attempt_count = attempt_count + 1, last_reviewed_at = ?, next_due_at = ?,
-         lapse_count = lapse_count + ?, updated_at = ?
+     SET score = ?, attempt_count = attempt_count + 1,
+       lapse_count = lapse_count + ?, updated_at = ?
      WHERE concept_id = ? AND stage = ?`,
   );
   const affectedConceptIds = new Set();
@@ -106,8 +107,6 @@ function updateStageEvidence(db, card, score, now, masterySettings) {
     const nextScore = Math.min(100, Number(state?.score || 0) + awardedPoints);
     update.run(
       nextScore,
-      now,
-      cleared ? null : now + masterySettings.reviewCooldownDays * dayMs,
       cleared ? 0 : 1,
       now,
       target.conceptId,
@@ -162,6 +161,8 @@ function saveCardEvaluation({
   mastery,
   masterySettings = {},
   practiceRunId = null,
+  practiceSessionCardId = null,
+  practiceSessionId = null,
   practiceSubmissionId = null,
   state,
 }) {
@@ -232,6 +233,21 @@ function saveCardEvaluation({
     });
 
     ensureMasteryStageStates(card.targets.map((target) => target.conceptId));
+    scheduleCardTargets({
+      card,
+      db,
+      documentPath,
+      eventKind: "graded",
+      gradingRunId: practiceRunId,
+      masterySettings: normalizedSettings,
+      outcome: evaluation.score >= normalizedSettings.passingScore ? "passed" : "review",
+      reviewedAt: now,
+      score: evaluation.score,
+      sessionCardId: practiceSessionCardId,
+      sessionId: practiceSessionId,
+      sourceCardId: card.id,
+      submissionId: practiceSubmissionId,
+    });
     updateStageEvidence(db, card, evaluation.score, now, normalizedSettings);
     db
       .prepare("UPDATE mastery_cards SET status = ?, retry_at = ?, updated_at = ? WHERE id = ?")

@@ -51,6 +51,7 @@ type MasteryPracticeWorkspaceProps = {
   onStartingChange: (isStarting: boolean) => void;
   onViewChange: (view: FlashcardView) => void;
   progress: MasteryCardProgress | null;
+  suppliedSession?: MasteryPracticeSession | null;
   view: FlashcardView;
 };
 
@@ -355,6 +356,11 @@ function PracticeCard({
   return (
     <MasteryCardFrame maxWidthClassName="max-w-[820px]">
       <div className="mb-3 flex min-h-6 items-center gap-2 text-[11px] font-medium uppercase tracking-wide text-white/38">
+        {sessionCard.sourceDocumentPath && (
+          <span className="max-w-52 truncate normal-case text-white/52">
+            {sessionCard.sourceDocumentPath.replace(/\.json$/i, "")}
+          </span>
+        )}
         <span>{kindLabels[card.kind]}</span>
         <span>· {card.difficulty}</span>
         {stages.length > 0 && <span>· {stages.map((stage) => stageLabels[stage]).join(" / ")}</span>}
@@ -527,6 +533,12 @@ function ResultsView({
     if (!grading || grading.status === "queued" || grading.status === "running") return false;
     return outcomeFor(entry) === filter;
   });
+  const resultGroups = session.scope === "global"
+    ? [...new Set(filteredCards.map((entry) => entry.sourceDocumentPath))].map((documentPath) => ({
+        cards: filteredCards.filter((entry) => entry.sourceDocumentPath === documentPath),
+        documentPath,
+      }))
+    : [{ cards: filteredCards, documentPath: "" }];
 
   return (
     <div className="mx-auto flex min-h-0 w-full max-w-5xl flex-1 flex-col">
@@ -563,7 +575,15 @@ function ResultsView({
         {filteredCards.length === 0 && (
           <div className="flex min-h-52 items-center justify-center text-sm text-white/42">No results in this filter.</div>
         )}
-        {filteredCards.map((entry, index) => {
+        {resultGroups.map((group) => (
+          <section className="space-y-3" key={group.documentPath || "practice"}>
+            {group.documentPath && (
+              <div className="sticky top-0 z-10 border-b border-white/[0.08] bg-[#242424]/95 px-1 py-2 text-xs font-medium text-white/48 backdrop-blur">
+                {group.documentPath.replace(/\.json$/i, "")}
+              </div>
+            )}
+            {group.cards.map((entry) => {
+          const index = session.cards.findIndex((candidate) => candidate.id === entry.id);
           const grading = entry.grading;
           const outcome = outcomeFor(entry);
           const canSetOutcome = grading?.status === "succeeded" || grading?.status === "failed";
@@ -659,7 +679,9 @@ function ResultsView({
               )}
             </article>
           );
-        })}
+            })}
+          </section>
+        ))}
       </div>
     </div>
   );
@@ -679,6 +701,7 @@ function MasteryPracticeWorkspace({
   onStartingChange,
   onViewChange,
   progress,
+  suppliedSession = null,
   view,
 }: MasteryPracticeWorkspaceProps, ref) {
   const cards = useMemo(() => cardState?.cards ?? [], [cardState?.cards]);
@@ -688,11 +711,15 @@ function MasteryPracticeWorkspace({
   const [error, setError] = useState<string | null>(null);
   const [isStarting, setIsStarting] = useState(false);
   const [outcomeChangingId, setOutcomeChangingId] = useState<number | null>(null);
-  const [practiceMode, setPracticeMode] = useState<PracticeMode>("answering");
+  const [practiceMode, setPracticeMode] = useState<PracticeMode>(
+    suppliedSession?.cards.every((entry) => entry.submittedAt) ? "results" : "answering",
+  );
   const [resultFilter, setResultFilter] = useState<ResultFilter>("all");
-  const [resumableSessionId, setResumableSessionId] = useState<number | null>(null);
+  const [resumableSessionId, setResumableSessionId] = useState<number | null>(
+    suppliedSession && isResumablePractice(suppliedSession) ? suppliedSession.id : null,
+  );
   const [selectedCardIds, setSelectedCardIds] = useState<number[]>([]);
-  const [session, setSession] = useState<MasteryPracticeSession | null>(null);
+  const [session, setSession] = useState<MasteryPracticeSession | null>(suppliedSession);
   const refreshedSessionsRef = useRef(new Set<number>());
 
   useEffect(() => {
@@ -705,7 +732,9 @@ function MasteryPracticeWorkspace({
     window.learner?.listMasteryPracticeSessions(documentPath)
       .then((sessions) => {
         if (cancelled) return;
-        const resumable = sessions.find((candidate) => candidate.status === "active");
+        const resumable = sessions.find(
+          (candidate) => candidate.sessionKind === "practice" && candidate.status === "active",
+        );
         setResumableSessionId(resumable?.id ?? null);
         onResumableChange(Boolean(resumable));
       })
@@ -990,7 +1019,7 @@ function MasteryPracticeWorkspace({
   const setFocusedPracticeIndex = useCallback((index: number) => {
     if (!session?.cards.length) return;
     setActiveIndex(Math.max(0, Math.min(session.cards.length - 1, index)));
-  }, [session?.cards.length]);
+  }, [session]);
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">

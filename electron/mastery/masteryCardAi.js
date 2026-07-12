@@ -29,6 +29,7 @@ const generatedCardSchema = z
   .strict();
 
 const generatedCardsSchema = z.object({ cards: z.array(generatedCardSchema).min(1) }).strict();
+const revisionCardsSchema = z.object({ cards: z.array(generatedCardSchema).min(1) }).strict();
 const discussionResponseSchema = z
   .object({ replyMarkdown: z.string().trim().min(1), shouldEnd: z.boolean() })
   .strict();
@@ -504,6 +505,64 @@ async function requestGeneratedCards({
   };
 }
 
+async function requestRevisionCards({ concepts, documentPath, settings = {} }) {
+  const requestedTargets = new Map(
+    concepts.map((concept) => [
+      concept.id,
+      new Set(concept.stages.map((stage) => `${concept.id}:${stage}`)),
+    ]),
+  );
+  const response = await requestStructuredOutput({
+    schema: revisionCardsSchema,
+    schemaName: "mastery_revision_cards",
+    modelKey: "chatModel",
+    settings,
+    temperature: 0.1,
+    timeoutMs: 180_000,
+    messages: [
+      {
+        role: "system",
+        content: [
+          "Create one focused diagnostic revision card for each supplied concept.",
+          "Every card must use kind='diagnostic', answerMode='single_turn', difficulty='standard', graphEdgeIds=[], targetedWeaknessIds=[], and empty contextMarkdown.",
+          "Each card must target exactly one concept and every requested stage for that concept, with no additional targets.",
+          "Ask one coherent recall-and-reasoning task that can genuinely demonstrate all requested stages together.",
+          "Write a detailed expected answer and an observable grading rubric. Do not reveal the concept explanation in the prompt.",
+        ].join("\n"),
+      },
+      {
+        role: "user",
+        content: [
+          `Document: ${documentPath}`,
+          ...concepts.map((concept) => [
+            `Concept ID: ${concept.id}`,
+            `Name: ${concept.name}`,
+            `Requested stages: ${concept.stages.join(", ")}`,
+            `Explanation:\n${compact(concept.explanationMarkdown, 8_000)}`,
+            concept.sourceExcerptMarkdown
+              ? `Source excerpt:\n${compact(concept.sourceExcerptMarkdown, 4_000)}`
+              : "",
+          ].filter(Boolean).join("\n")),
+        ].join("\n\n---\n\n"),
+      },
+    ],
+  });
+  const parsed = revisionCardsSchema.safeParse(response.data);
+  if (!parsed.success) {
+    throw new Error(`Revision card generation failed validation: ${parsed.error.issues.map((issue) => issue.message).join("; ")}`);
+  }
+  const cards = parsed.data.cards.filter((card) => {
+    if (card.kind !== "diagnostic" || card.answerMode !== "single_turn" || card.difficulty !== "standard") return false;
+    const conceptIds = [...new Set(card.targets.map((target) => target.conceptId))];
+    if (conceptIds.length !== 1) return false;
+    const requested = requestedTargets.get(conceptIds[0]);
+    if (!requested || card.targets.length !== requested.size) return false;
+    return card.targets.every((target) => requested.has(`${target.conceptId}:${target.stage}`));
+  });
+  if (cards.length === 0) throw new Error("Revision card generation returned no usable cards.");
+  return { cards, model: response.model };
+}
+
 async function requestDiscussionResponse({ card, conceptContext, message, priorMessages, settings }) {
   const response = await requestStructuredOutput({
     schema: discussionResponseSchema,
@@ -595,4 +654,5 @@ module.exports = {
   requestCardEvaluation,
   requestDiscussionResponse,
   requestGeneratedCards,
+  requestRevisionCards,
 };

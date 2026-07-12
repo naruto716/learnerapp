@@ -3,6 +3,7 @@
 import {
   CaretDownIcon,
   CaretRightIcon,
+  CalendarBlankIcon,
   FileIcon,
   FilePlusIcon,
   FolderPlusIcon,
@@ -12,8 +13,10 @@ import {
 import { DragEvent, MouseEvent, useEffect, useState } from "react";
 import Dialog from "../Dialog";
 import IconButton from "../IconButton";
+import { readAiSettings } from "../ai/aiSettings";
 import { filePathWithExtension } from "../documentPaths";
 import CreateDocumentDialog, { type CreateDocumentKind } from "./CreateDocumentDialog";
+import { readMasterySettings } from "../mastery/masterySettings";
 
 function displayName(node: DocumentNode) {
   return node.type === "file" ? node.name.replace(/\.json$/i, "") : node.name;
@@ -53,7 +56,9 @@ export default function SideBar({
   onDocumentDeleted,
   onDocumentMoved,
   onOpenSearch,
+  onOpenRevision,
   onOpenDocument,
+  revisionRefreshKey,
 }: {
   activeDocumentPath: string | null;
   documentsVersion: number;
@@ -62,7 +67,9 @@ export default function SideBar({
   onDocumentDeleted: (deletedPath: string, deletedType: DocumentNode["type"]) => void;
   onDocumentMoved: (oldPath: string, newPath: string) => void;
   onOpenSearch: () => void;
+  onOpenRevision: () => void;
   onOpenDocument: (documentPath: string) => void;
+  revisionRefreshKey: number;
 }) {
   const [nodes, setNodes] = useState<DocumentNode[]>([]);
   const [error, setError] = useState("");
@@ -73,6 +80,7 @@ export default function SideBar({
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [contextMenu, setContextMenu] = useState<ContextMenuState>(null);
   const [deleteTarget, setDeleteTarget] = useState<DocumentNode | null>(null);
+  const [revisionDueCount, setRevisionDueCount] = useState(0);
 
   function openCreateDialog(kind: CreateDocumentKind, parentPath = "") {
     setCreateKind(kind);
@@ -248,6 +256,28 @@ export default function SideBar({
     };
   }, [documentsVersion]);
 
+  useEffect(() => {
+    let ignore = false;
+    const refreshRevision = () => {
+      window.learner?.getMasteryRevisionOverview({
+        masterySettings: readMasterySettings(),
+        settings: readAiSettings(),
+      })
+        .then((overview) => {
+          if (!ignore && overview) setRevisionDueCount(overview.dueCount);
+        })
+        .catch(() => {
+          if (!ignore) setRevisionDueCount(0);
+        });
+    };
+    refreshRevision();
+    const intervalId = window.setInterval(refreshRevision, 15 * 60 * 1000);
+    return () => {
+      ignore = true;
+      window.clearInterval(intervalId);
+    };
+  }, [documentsVersion, revisionRefreshKey]);
+
   return (
     <div
       onDragOver={(event) => event.preventDefault()}
@@ -310,6 +340,22 @@ export default function SideBar({
           />
         </div>
       )}
+
+      <div className="border-t border-white/[0.08] p-2">
+        <button
+          className="flex h-9 w-full items-center gap-2 rounded-md px-2 text-sm text-white/62 transition hover:bg-white/[0.07] hover:text-white/90"
+          onClick={onOpenRevision}
+          type="button"
+        >
+          <CalendarBlankIcon size={17} />
+          <span className="flex-1 text-left">Revision</span>
+          {revisionDueCount > 0 && (
+            <span className="inline-flex min-w-5 items-center justify-center rounded bg-amber-200 px-1.5 py-0.5 text-[11px] font-semibold text-black">
+              {revisionDueCount > 99 ? "99+" : revisionDueCount}
+            </span>
+          )}
+        </button>
+      </div>
 
       <CreateDocumentDialog
         basePath={createParentPath}

@@ -14,6 +14,8 @@ const thresholdLevels = ["familiar", "developing", "proficient", "advanced", "ma
 const defaultMasteryScoringSettings = {
   passingScore: 60,
   practiceCardCount: 5,
+  revisionDailyCardLimit: 15,
+  revisionRetention: 90,
   reviewCooldownDays: 3,
   points: {
     feynman: { introductory: 8, standard: 12, advanced: 16, expert: 20 },
@@ -61,6 +63,17 @@ function normalizeMasteryScoringSettings(value = {}) {
     practiceCardCount: boundedPracticeCount(
       source.practiceCardCount,
       defaultMasteryScoringSettings.practiceCardCount,
+    ),
+    revisionDailyCardLimit: boundedPracticeCount(
+      source.revisionDailyCardLimit,
+      defaultMasteryScoringSettings.revisionDailyCardLimit,
+    ),
+    revisionRetention: Math.max(
+      70,
+      Math.min(
+        99,
+        boundedInteger(source.revisionRetention, defaultMasteryScoringSettings.revisionRetention),
+      ),
     ),
     reviewCooldownDays: boundedCooldownDays(
       source.reviewCooldownDays,

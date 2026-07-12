@@ -136,6 +136,8 @@ function ensureMasteryCardSchema() {
     CREATE TABLE IF NOT EXISTS mastery_practice_sessions (
       id INTEGER PRIMARY KEY,
       document_path TEXT NOT NULL,
+      session_kind TEXT NOT NULL DEFAULT 'practice',
+      scope TEXT NOT NULL DEFAULT 'document',
       status TEXT NOT NULL DEFAULT 'active'
         CHECK(status IN ('active', 'grading', 'complete', 'needs_attention')),
       document_markdown TEXT NOT NULL DEFAULT '',
@@ -153,6 +155,8 @@ function ensureMasteryCardSchema() {
       id INTEGER PRIMARY KEY,
       session_id INTEGER NOT NULL,
       source_card_id INTEGER,
+      source_document_path TEXT,
+      source_document_markdown TEXT,
       sort_order INTEGER NOT NULL,
       card_json TEXT NOT NULL,
       created_at INTEGER NOT NULL,

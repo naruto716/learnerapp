@@ -1,12 +1,15 @@
 const { getDocumentMastery, getMasteryDatabase, normalizeDocumentPath } = require("./masteryConcepts");
 const { ensureMasteryCardSchema } = require("./masteryCardSchema");
-const { requestCardEvaluation } = require("./masteryCardAi");
+const { requestCardEvaluation, requestRevisionCards } = require("./masteryCardAi");
 const { saveCardEvaluation, targetedWeaknesses } = require("./masteryCardProgress");
 const { getDocumentMasteryCards } = require("./masteryCardStore");
+const { saveGeneratedCards } = require("./masteryCardStore");
 const { normalizeMasteryScoringSettings } = require("./masteryScoring");
+const { rescheduleManualOutcome } = require("./masteryRevision");
 
 const staleRunMs = 5 * 60 * 1000;
 let gradingWorkerRunning = false;
+let revisionPreparationPromise = null;
 
 function parseJson(value, fallback) {
   try {
@@ -122,6 +125,8 @@ function practiceSessionResult(sessionId) {
     documentPath: session.document_path,
     id: session.id,
     masterySettings: normalizeMasteryScoringSettings(parseJson(session.mastery_settings_json, {})),
+    scope: session.scope || "document",
+    sessionKind: session.session_kind || "practice",
     status: session.status,
     submittedAt: session.submitted_at ?? null,
     cards: rows.map((row) => {
@@ -149,6 +154,7 @@ function practiceSessionResult(sessionId) {
         metaphor: snapshot.metaphor || null,
         sortOrder: row.sort_order,
         sourceCardId: row.source_card_id ?? null,
+        sourceDocumentPath: row.source_document_path || session.document_path,
         submittedAt: row.submitted_at ?? null,
         weaknesses: snapshot.weaknesses || [],
       };
@@ -191,8 +197,9 @@ function createPracticeSession({ cardIds = [], desiredCount = 5, documentPath, m
     const sessionId = Number(result.lastInsertRowid);
     const insertCard = db.prepare(
       `INSERT INTO mastery_practice_session_cards(
-         session_id, source_card_id, sort_order, card_json, created_at
-       ) VALUES (?, ?, ?, ?, ?)`,
+         session_id, source_card_id, source_document_path, source_document_markdown,
+         sort_order, card_json, created_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
     );
     cards.forEach((card, index) => {
       const conceptIds = new Set(card.targets.map((target) => target.conceptId));
@@ -200,10 +207,383 @@ function createPracticeSession({ cardIds = [], desiredCount = 5, documentPath, m
       insertCard.run(
         sessionId,
         card.id,
+        normalizedPath,
+        String(markdown || ""),
         index,
         JSON.stringify({
           card,
           concepts: mastery.concepts.filter((concept) => conceptIds.has(concept.id)),
+          metaphor: mastery.metaphor,
+          weaknesses: state.weaknesses.filter((weakness) => weaknessIds.has(weakness.id)),
+        }),
+        now,
+      );
+    });
+    db.exec("COMMIT");
+    return practiceSessionResult(sessionId);
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function dueRevisionRows(now = Date.now()) {
+  ensurePracticeSchema();
+  return getMasteryDatabase()
+    .prepare(
+      `SELECT states.*, concepts.document_path, concepts.name AS concept_name,
+              concepts.explanation_markdown, concepts.source_excerpt_markdown,
+              concepts.mastery_level,
+              (SELECT COUNT(*) FROM mastery_weakness_targets targets
+               JOIN mastery_weaknesses weaknesses ON weaknesses.id = targets.weakness_id
+               WHERE targets.concept_id = states.concept_id AND targets.stage = states.stage
+                 AND weaknesses.status = 'active') AS active_weakness_count
+       FROM mastery_stage_states states
+       JOIN mastery_concepts concepts ON concepts.id = states.concept_id
+       WHERE concepts.status = 'active' AND states.status = 'active'
+         AND states.next_due_at IS NOT NULL
+       ORDER BY states.next_due_at ASC, active_weakness_count DESC,
+                states.lapse_count DESC, states.score ASC, concepts.document_path, concepts.id, states.stage`,
+    )
+    .all()
+    .map((row) => ({ ...row, is_due: row.next_due_at <= now }));
+}
+
+function revisionOverview({ days = 35, masterySettings = {} } = {}) {
+  const normalizedSettings = normalizeMasteryScoringSettings(masterySettings);
+  const now = Date.now();
+  const rows = dueRevisionRows(now);
+  const dueRows = rows.filter((row) => row.is_due);
+  const preparationPlan = revisionPreparationPlan({ masterySettings: normalizedSettings, now });
+  const notes = new Map();
+  rows.forEach((row) => {
+    const note = notes.get(row.document_path) || {
+      concepts: new Map(),
+      documentPath: row.document_path,
+      dueCount: 0,
+      lastReviewedAt: null,
+      nextDueAt: null,
+    };
+    note.dueCount += row.is_due ? 1 : 0;
+    note.lastReviewedAt = Math.max(note.lastReviewedAt || 0, row.last_reviewed_at || 0) || null;
+    note.nextDueAt = Math.min(note.nextDueAt ?? Number.POSITIVE_INFINITY, row.next_due_at);
+    const concept = note.concepts.get(row.concept_id) || {
+      dueCount: 0,
+      id: row.concept_id,
+      lastReviewedAt: null,
+      name: row.concept_name,
+      nextDueAt: null,
+      stages: [],
+    };
+    concept.dueCount += row.is_due ? 1 : 0;
+    concept.lastReviewedAt = Math.max(concept.lastReviewedAt || 0, row.last_reviewed_at || 0) || null;
+    concept.nextDueAt = Math.min(concept.nextDueAt ?? Number.POSITIVE_INFINITY, row.next_due_at);
+    concept.stages.push({
+      dueAt: row.next_due_at,
+      isDue: row.is_due,
+      lapseCount: row.lapse_count,
+      score: Number(row.score),
+      stage: row.stage,
+    });
+    note.concepts.set(row.concept_id, concept);
+    notes.set(row.document_path, note);
+  });
+
+  const calendarStart = new Date(now);
+  calendarStart.setHours(0, 0, 0, 0);
+  const dayCounts = new Map();
+  rows.forEach((row) => {
+    const date = new Date(Math.max(row.next_due_at, calendarStart.getTime()));
+    const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+    dayCounts.set(key, (dayCounts.get(key) || 0) + 1);
+  });
+  const calendar = Array.from({ length: Math.max(7, Math.min(90, Number(days) || 35)) }, (_, index) => {
+    const date = new Date(calendarStart.getTime() + index * 24 * 60 * 60 * 1000);
+    const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+    return { date: key, dueCount: dayCounts.get(key) || 0 };
+  });
+  const activeSession = getMasteryDatabase().prepare(
+    `SELECT sessions.id FROM mastery_practice_sessions sessions
+     WHERE sessions.session_kind = 'revision' AND sessions.scope = 'global'
+       AND sessions.status != 'complete'
+     ORDER BY sessions.created_at DESC, sessions.id DESC LIMIT 1`,
+  ).get();
+  return {
+    activeSessionId: activeSession?.id ?? null,
+    calendar,
+    dailyCardLimit: normalizedSettings.revisionDailyCardLimit,
+    dueCount: dueRows.length,
+    notes: [...notes.values()].map((note) => ({
+      ...note,
+      concepts: [...note.concepts.values()],
+      nextDueAt: Number.isFinite(note.nextDueAt) ? note.nextDueAt : null,
+    })),
+    overdueCount: dueRows.filter((row) => row.next_due_at < calendarStart.getTime()).length,
+    preparedCardCount: preparationPlan.selected.length,
+    preparingCards: Boolean(revisionPreparationPromise),
+    requiredCardCount: preparationPlan.selected.length + preparationPlan.conceptsToGenerate.length,
+  };
+}
+
+function fallbackRevisionCard(row) {
+  const stagePrompts = {
+    2: "Explain the concept plainly, including its purpose and core mechanism.",
+    3: "Connect this concept to another idea or consequence from the note, and explain why the connection holds.",
+    4: "Describe the concept's structure: its important parts, relationships, and boundaries.",
+    5: "Describe a likely misunderstanding or failure involving this concept, then diagnose and correct it.",
+    6: "Apply this concept to a concrete example or decision and justify the result.",
+  };
+  return {
+    answerMode: "single_turn",
+    conceptContextVisible: false,
+    contextMarkdown: row.source_excerpt_markdown || "",
+    difficulty: "standard",
+    expectedAnswerMarkdown: row.explanation_markdown || row.source_excerpt_markdown || row.concept_name,
+    graphEdgeIds: [],
+    kind: "diagnostic",
+    metaphorContextVisible: false,
+    promptMarkdown: stagePrompts[row.stage] || "Explain and apply this concept.",
+    rubricMarkdown: `The answer accurately demonstrates ${row.concept_name} at mastery stage ${row.stage}, uses the note's meaning, and explains its reasoning rather than only naming terms.`,
+    targetedWeaknessIds: [],
+    targets: [{ conceptId: row.concept_id, conceptName: row.concept_name, stage: row.stage }],
+    title: row.concept_name,
+    weaknessLinks: [],
+  };
+}
+
+function dueTargetKey(target) {
+  return `${target.conceptId}:${target.stage}`;
+}
+
+function revisionPreparationPlan({ masterySettings = {}, now = Date.now() } = {}) {
+  const normalizedSettings = normalizeMasteryScoringSettings(masterySettings);
+  const dueRows = dueRevisionRows(now).filter((row) => row.is_due);
+  const targetRows = new Map(dueRows.map((row) => [`${row.concept_id}:${row.stage}`, row]));
+  const uncovered = new Set(targetRows.keys());
+  const selected = [];
+  const statesByPath = new Map();
+  const candidateCards = [];
+
+  [...new Set(dueRows.map((row) => row.document_path))].forEach((documentPath) => {
+    const state = getDocumentMasteryCards(documentPath);
+    statesByPath.set(documentPath, state);
+    state.cards.forEach((card) => {
+      if (card.status !== "active") return;
+      const covered = card.targets.map(dueTargetKey).filter((key) => targetRows.has(key));
+      if (covered.length > 0) candidateCards.push({ card, covered, documentPath, state });
+    });
+  });
+
+  while (selected.length < normalizedSettings.revisionDailyCardLimit) {
+    const best = candidateCards
+      .filter((candidate) => !selected.some((entry) => entry.card.id === candidate.card.id))
+      .map((candidate) => ({
+        ...candidate,
+        uncoveredTargets: candidate.covered.filter((key) => uncovered.has(key)),
+      }))
+      .filter((candidate) => candidate.uncoveredTargets.length > 0)
+      .sort((left, right) => right.uncoveredTargets.length - left.uncoveredTargets.length)[0];
+    if (!best) break;
+    best.uncoveredTargets.forEach((key) => uncovered.delete(key));
+    selected.push({
+      card: {
+        ...best.card,
+        targets: best.card.targets.filter((target) => best.uncoveredTargets.includes(dueTargetKey(target))),
+      },
+      documentPath: best.documentPath,
+      state: best.state,
+    });
+  }
+
+  const uncoveredRows = [...uncovered].map((key) => targetRows.get(key)).filter(Boolean);
+  const conceptsToGenerate = [...new Set(uncoveredRows.map((row) => row.concept_id))]
+    .slice(0, Math.max(0, normalizedSettings.revisionDailyCardLimit - selected.length))
+    .map((conceptId) => {
+      const rows = uncoveredRows.filter((row) => row.concept_id === conceptId);
+      return {
+        documentPath: rows[0].document_path,
+        explanationMarkdown: rows[0].explanation_markdown || "",
+        id: conceptId,
+        name: rows[0].concept_name,
+        sourceExcerptMarkdown: rows[0].source_excerpt_markdown || "",
+        stages: rows.map((row) => row.stage),
+      };
+    });
+  return { conceptsToGenerate, dueRows, selected };
+}
+
+async function prepareRevisionCards({ masterySettings = {}, settings = {} } = {}) {
+  if (revisionPreparationPromise) return revisionPreparationPromise;
+  revisionPreparationPromise = (async () => {
+    const initialPlan = revisionPreparationPlan({ masterySettings });
+    const conceptsByPath = new Map();
+    initialPlan.conceptsToGenerate.forEach((concept) => {
+      const concepts = conceptsByPath.get(concept.documentPath) || [];
+      concepts.push(concept);
+      conceptsByPath.set(concept.documentPath, concepts);
+    });
+    for (const [documentPath, concepts] of conceptsByPath) {
+      let generatedCards = [];
+      let model = "local";
+      try {
+        const generated = await requestRevisionCards({ concepts, documentPath, settings });
+        generatedCards = generated.cards;
+        model = generated.model;
+      } catch (error) {
+        console.warn(
+          `Background revision card generation failed for ${documentPath}:`,
+          error instanceof Error ? error.message : error,
+        );
+      }
+      const currentPlan = revisionPreparationPlan({ masterySettings });
+      const stillNeeded = new Map(
+        currentPlan.conceptsToGenerate
+          .filter((concept) => concept.documentPath === documentPath)
+          .map((concept) => [concept.id, new Set(concept.stages)]),
+      );
+      generatedCards = generatedCards.filter((card) => {
+        const conceptId = card.targets[0]?.conceptId;
+        const stages = stillNeeded.get(conceptId);
+        return stages && card.targets.every((target) => stages.has(target.stage));
+      });
+      const generatedConceptIds = new Set(
+        generatedCards.flatMap((card) => card.targets.map((target) => target.conceptId)),
+      );
+      const fallbacks = concepts
+        .filter((concept) => stillNeeded.has(concept.id))
+        .filter((concept) => !generatedConceptIds.has(concept.id))
+        .map((concept) => fallbackRevisionCard({
+          concept_id: concept.id,
+          concept_name: concept.name,
+          explanation_markdown: concept.explanationMarkdown,
+          source_excerpt_markdown: concept.sourceExcerptMarkdown,
+          stage: concept.stages[0],
+        }))
+        .map((card, index) => ({
+          ...card,
+          targets: concepts
+            .find((concept) => concept.id === card.targets[0].conceptId)
+            .stages.map((stage) => ({
+              conceptId: card.targets[0].conceptId,
+              conceptName: card.targets[0].conceptName,
+              stage,
+            })),
+          title: concepts.find((concept) => concept.id === card.targets[0].conceptId)?.name || card.title,
+          generationOrder: index,
+        }));
+      const cards = [...generatedCards, ...fallbacks];
+      if (cards.length > 0) {
+        saveGeneratedCards({
+          cards,
+          documentPath,
+          generationPrompt: "Automatic due revision preparation",
+          model,
+        });
+      }
+    }
+    return revisionPreparationPlan({ masterySettings });
+  })().finally(() => {
+    revisionPreparationPromise = null;
+  });
+  return revisionPreparationPromise;
+}
+
+function kickRevisionPreparation(request = {}) {
+  void prepareRevisionCards(request).catch((error) => {
+    console.warn("Background revision preparation failed:", error instanceof Error ? error.message : error);
+  });
+}
+
+function createRevisionSession({ masterySettings = {} } = {}) {
+  ensurePracticeSchema();
+  const normalizedSettings = normalizeMasteryScoringSettings(masterySettings);
+  const overview = revisionOverview({ masterySettings: normalizedSettings });
+  if (overview.activeSessionId) return practiceSessionResult(overview.activeSessionId);
+  const plan = revisionPreparationPlan({ masterySettings: normalizedSettings });
+  const dueRows = plan.dueRows.filter((row) => row.is_due);
+  if (dueRows.length === 0) throw new Error("No concepts are due for revision.");
+
+  const selected = [...plan.selected];
+  const selectedCardIds = new Set();
+  const selectedTargets = new Set();
+  const statesByPath = new Map();
+  selected.forEach((entry) => {
+    selectedCardIds.add(entry.card.id);
+    entry.card.targets.forEach((target) => selectedTargets.add(dueTargetKey(target)));
+    statesByPath.set(entry.documentPath, entry.state);
+  });
+  for (const row of dueRows) {
+    if (selected.length >= normalizedSettings.revisionDailyCardLimit) break;
+    const targetKey = `${row.concept_id}:${row.stage}`;
+    if (selectedTargets.has(targetKey)) continue;
+    let state = statesByPath.get(row.document_path);
+    if (!state) {
+      state = getDocumentMasteryCards(row.document_path);
+      statesByPath.set(row.document_path, state);
+    }
+    let card = state.cards.find((candidate) =>
+      !selectedCardIds.has(candidate.id)
+      && candidate.status !== "retired"
+      && candidate.targets.some((target) => target.conceptId === row.concept_id && target.stage === row.stage),
+    );
+    if (!card) {
+      saveGeneratedCards({
+        cards: [fallbackRevisionCard(row)],
+        documentPath: row.document_path,
+        generationPrompt: "Automatic revision fallback",
+        model: "local",
+      });
+      state = getDocumentMasteryCards(row.document_path);
+      statesByPath.set(row.document_path, state);
+      card = state.cards.find((candidate) =>
+        !selectedCardIds.has(candidate.id)
+        && candidate.targets.some((target) => target.conceptId === row.concept_id && target.stage === row.stage),
+      );
+    }
+    if (!card) continue;
+    const dueTargetKeys = new Set(dueRows.map((candidate) => `${candidate.concept_id}:${candidate.stage}`));
+    const dueTargets = card.targets.filter((target) => dueTargetKeys.has(`${target.conceptId}:${target.stage}`));
+    if (dueTargets.length === 0) continue;
+    dueTargets.forEach((target) => selectedTargets.add(`${target.conceptId}:${target.stage}`));
+    selectedCardIds.add(card.id);
+    selected.push({ card: { ...card, targets: dueTargets }, documentPath: row.document_path, state });
+  }
+  if (selected.length === 0) throw new Error("No revision cards could be prepared.");
+
+  const db = getMasteryDatabase();
+  const now = Date.now();
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const result = db.prepare(
+      `INSERT INTO mastery_practice_sessions(
+         document_path, session_kind, scope, status, document_markdown,
+         mastery_settings_json, created_at, updated_at
+       ) VALUES ('__global_revision__', 'revision', 'global', 'active', '', ?, ?, ?)`,
+    ).run(JSON.stringify(normalizedSettings), now, now);
+    const sessionId = Number(result.lastInsertRowid);
+    const insertCard = db.prepare(
+      `INSERT INTO mastery_practice_session_cards(
+         session_id, source_card_id, source_document_path, source_document_markdown,
+         sort_order, card_json, created_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    );
+    selected.forEach(({ card, documentPath, state }, index) => {
+      const mastery = getDocumentMastery(documentPath, "");
+      const conceptIds = new Set(card.targets.map((target) => target.conceptId));
+      const weaknessIds = new Set(card.weaknessLinks.map((link) => link.weaknessId));
+      const concepts = mastery.concepts.filter((concept) => conceptIds.has(concept.id));
+      const sourceMarkdown = concepts
+        .map((concept) => `## ${concept.name}\n\n${concept.explanationMarkdown}`)
+        .join("\n\n");
+      insertCard.run(
+        sessionId,
+        card.id,
+        documentPath,
+        sourceMarkdown,
+        index,
+        JSON.stringify({
+          card,
+          concepts,
           metaphor: mastery.metaphor,
           weaknesses: state.weaknesses.filter((weakness) => weaknessIds.has(weakness.id)),
         }),
@@ -243,8 +623,10 @@ function claimNextRun() {
     const row = db
       .prepare(
         `SELECT runs.*, submissions.answer_markdown, submissions.id AS submission_id,
-                cards.source_card_id, cards.card_json, cards.session_id,
-                sessions.document_path, sessions.document_markdown, sessions.mastery_settings_json
+                cards.id AS session_card_id, cards.source_card_id, cards.card_json, cards.session_id,
+                COALESCE(cards.source_document_path, sessions.document_path) AS document_path,
+                COALESCE(cards.source_document_markdown, sessions.document_markdown) AS document_markdown,
+                sessions.mastery_settings_json
          FROM mastery_practice_grading_runs runs
          JOIN mastery_practice_submissions submissions ON submissions.id = runs.submission_id
          JOIN mastery_practice_session_cards cards ON cards.id = submissions.session_card_id
@@ -299,6 +681,8 @@ async function gradeRun(run) {
       mastery,
       masterySettings,
       practiceRunId: run.id,
+      practiceSessionCardId: run.session_card_id,
+      practiceSessionId: run.session_id,
       practiceSubmissionId: run.submission_id,
       state,
     });
@@ -440,9 +824,18 @@ function setPracticeCardOutcome({ outcome, sessionCardId }) {
   const db = getMasteryDatabase();
   const sessionCard = db
     .prepare(
-      `SELECT cards.id, cards.session_id, cards.source_card_id, sessions.mastery_settings_json
+      `SELECT cards.id, cards.session_id, cards.source_card_id, cards.card_json,
+              COALESCE(cards.source_document_path, sessions.document_path) AS source_document_path,
+              sessions.mastery_settings_json,
+              submissions.id AS submission_id,
+              runs.score
        FROM mastery_practice_session_cards cards
        JOIN mastery_practice_sessions sessions ON sessions.id = cards.session_id
+       LEFT JOIN mastery_practice_submissions submissions ON submissions.session_card_id = cards.id
+       LEFT JOIN mastery_practice_grading_runs runs ON runs.id = (
+         SELECT MAX(candidate.id) FROM mastery_practice_grading_runs candidate
+         WHERE candidate.submission_id = submissions.id AND candidate.status = 'succeeded'
+       )
        WHERE cards.id = ?`,
     )
     .get(Number(sessionCardId));
@@ -462,6 +855,22 @@ function setPracticeCardOutcome({ outcome, sessionCardId }) {
           now,
           sessionCard.source_card_id,
         );
+    }
+    const snapshot = parseJson(sessionCard.card_json, {});
+    const card = snapshot.card || snapshot;
+    if (card?.targets?.length) {
+      rescheduleManualOutcome({
+        card,
+        db,
+        documentPath: sessionCard.source_document_path,
+        masterySettings,
+        outcome,
+        reviewedAt: now,
+        score: sessionCard.score ?? (outcome === "passed" ? masterySettings.passingScore : 0),
+        sessionCardId: sessionCard.id,
+        sessionId: sessionCard.session_id,
+        sourceCardId: sessionCard.source_card_id,
+      });
     }
     db.prepare("UPDATE mastery_practice_sessions SET updated_at = ? WHERE id = ?")
       .run(now, sessionCard.session_id);
@@ -496,15 +905,22 @@ function listPracticeSessions(documentPath) {
                WHERE cards.session_id = sessions.id) AS average_score
        FROM mastery_practice_sessions sessions
        WHERE sessions.document_path = ?
+         OR EXISTS (
+          SELECT 1 FROM mastery_practice_session_cards source_cards
+          WHERE source_cards.session_id = sessions.id
+            AND source_cards.source_document_path = ?
+         )
        ORDER BY sessions.created_at DESC, sessions.id DESC`,
     )
-    .all(normalizedPath)
+     .all(normalizedPath, normalizedPath)
     .map((row) => ({
       averageScore: row.average_score ?? null,
       cardCount: row.card_count,
       completedAt: row.completed_at ?? null,
       createdAt: row.created_at,
       id: row.id,
+      scope: row.scope || "document",
+      sessionKind: row.session_kind || "practice",
       status: row.status,
     }));
 }
@@ -546,7 +962,7 @@ function listPracticeEvidence({ cardId, conceptId, documentPath }) {
          SELECT MAX(candidate.id) FROM mastery_practice_grading_runs candidate
          WHERE candidate.submission_id = submissions.id
        )
-       WHERE sessions.document_path = ?
+      WHERE COALESCE(cards.source_document_path, sessions.document_path) = ?
        ORDER BY sessions.created_at DESC, sessions.id DESC, cards.sort_order, cards.id`,
     )
     .all(normalizedPath)
@@ -591,12 +1007,17 @@ function listPracticeEvidence({ cardId, conceptId, documentPath }) {
 
 module.exports = {
   createPracticeSession,
+  createRevisionSession,
   deletePracticeSession,
   ensurePracticeSchema,
   getPracticeSession,
   kickPracticeGrading,
   listPracticeEvidence,
   listPracticeSessions,
+  kickRevisionPreparation,
+  prepareRevisionCards,
+  revisionPreparationPlan,
+  revisionOverview,
   retryPracticeGrading,
   setPracticeCardOutcome,
   submitPracticeAnswer,

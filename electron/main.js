@@ -38,14 +38,18 @@ const {
 } = require("./mastery/masteryCards");
 const {
   createPracticeSession,
+  createRevisionSession,
   deletePracticeSession,
   getPracticeSession,
+  kickRevisionPreparation,
   listPracticeEvidence,
   listPracticeSessions,
+  revisionOverview,
   retryPracticeGrading,
   setPracticeCardOutcome,
   submitPracticeAnswer,
 } = require("./mastery/masteryPractice");
+const { runMasteryMigrations } = require("./mastery/masteryMigrations");
 const {
   closeSearchDatabase,
   deleteIndexedDocument,
@@ -224,6 +228,7 @@ async function refreshSearchIndex(action) {
 }
 
 app.whenReady().then(() => {
+  runMasteryMigrations();
   protocol.handle(appProtocol, (request) => {
     const url = new URL(request.url);
 
@@ -537,6 +542,16 @@ ipcMain.handle("mastery:createPracticeSession", async (_event, request) => {
     ...request,
     documentPath: filePathWithExtension(request.documentPath),
   });
+});
+
+ipcMain.handle("mastery:getRevisionOverview", async (_event, request) => {
+  const overview = revisionOverview(request);
+  kickRevisionPreparation(request);
+  return overview;
+});
+
+ipcMain.handle("mastery:createRevisionSession", async (_event, request) => {
+  return createRevisionSession(request);
 });
 
 ipcMain.handle("mastery:getPracticeSession", async (_event, sessionId, settings) => {

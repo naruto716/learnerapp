@@ -369,6 +369,20 @@ export default function AiSettingsDialog({
                   onChange={(value) => setMasterySettings((current) => ({ ...current, reviewCooldownDays: value }))}
                   value={masterySettings.reviewCooldownDays}
                 />
+                <NumberField
+                  label="Daily revision cards"
+                  max={50}
+                  min={1}
+                  onChange={(value) => setMasterySettings((current) => ({ ...current, revisionDailyCardLimit: value }))}
+                  value={masterySettings.revisionDailyCardLimit}
+                />
+                <NumberField
+                  label="Revision retention %"
+                  max={99}
+                  min={70}
+                  onChange={(value) => setMasterySettings((current) => ({ ...current, revisionRetention: value }))}
+                  value={masterySettings.revisionRetention}
+                />
               </div>
             </div>
 

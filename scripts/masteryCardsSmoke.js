@@ -58,6 +58,22 @@ function seedLegacyDatabase() {
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
+    CREATE TABLE mastery_stage_states (
+      concept_id INTEGER NOT NULL,
+      stage INTEGER NOT NULL CHECK(stage BETWEEN 2 AND 6),
+      score REAL NOT NULL DEFAULT 0 CHECK(score BETWEEN 0 AND 100),
+      attempt_count INTEGER NOT NULL DEFAULT 0,
+      last_reviewed_at INTEGER,
+      next_due_at INTEGER,
+      fsrs_difficulty REAL,
+      fsrs_stability REAL,
+      fsrs_retrievability REAL,
+      lapse_count INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'active',
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY(concept_id, stage),
+      FOREIGN KEY(concept_id) REFERENCES mastery_concepts(id) ON DELETE CASCADE
+    );
   `);
   db.prepare(
     "INSERT INTO mastery_generation_runs(id, document_path, document_hash, model, generated_at) VALUES (1, ?, 'hash', 'test', ?)",
@@ -70,6 +86,20 @@ function seedLegacyDatabase() {
      ) VALUES (1, ?, 1, 'alpha', 'Alpha', 'concept', 'legacy summary',
                'Alpha explanation', 'Alpha source', 'new', 'No evidence', 'active', 0, ?, ?)`,
   ).run(documentPath, now, now);
+  db.prepare(
+    `INSERT INTO mastery_concepts(
+       id, document_path, run_id, stable_key, name, type, summary_markdown,
+       explanation_markdown, source_excerpt_markdown, mastery_level,
+       mastery_rationale, status, sort_order, created_at, updated_at
+     ) VALUES (50, 'smoke/bootstrap.json', NULL, 'bootstrap', 'Bootstrap', 'concept', '',
+               'Bootstrap explanation', 'Bootstrap source', 'new', 'No evidence', 'active', 0, ?, ?)`,
+  ).run(now, now);
+  db.prepare(
+    `INSERT INTO mastery_stage_states(
+       concept_id, stage, score, attempt_count, last_reviewed_at, next_due_at,
+       lapse_count, status, updated_at
+     ) VALUES (1, 2, 12, 1, ?, NULL, 0, 'active', ?)`,
+  ).run(now - 7 * 24 * 60 * 60 * 1000, now);
   db.prepare(
     `INSERT INTO mastery_cards(
        id, document_path, kind, answer_mode, prompt_markdown, status, created_at, updated_at
@@ -87,6 +117,8 @@ Module._load = function loadWithElectronStub(request, parent, isMain) {
 };
 
 const conceptsApi = require("../electron/mastery/masteryConcepts");
+const { latestVersion, runMasteryMigrations } = require("../electron/mastery/masteryMigrations");
+runMasteryMigrations();
 const {
   clearDocumentMasteryCards,
   getDocumentMasteryCards,
@@ -99,16 +131,58 @@ const { prepareGeneratedCards } = require("../electron/mastery/masteryCardAi");
 const { defaultMasteryScoringSettings } = require("../electron/mastery/masteryScoring");
 const {
   createPracticeSession,
+  createRevisionSession,
   deletePracticeSession,
   getPracticeSession,
   listPracticeEvidence,
   listPracticeSessions,
+  revisionPreparationPlan,
+  revisionOverview,
   setPracticeCardOutcome,
 } = require("../electron/mastery/masteryPractice");
 Module._load = originalLoad;
 
 assert.equal(defaultMasteryScoringSettings.passingScore, 60);
 assert.equal(defaultMasteryScoringSettings.reviewCooldownDays, 3);
+assert.equal(
+  conceptsApi.getMasteryDatabase()
+    .prepare("SELECT MAX(version) AS version FROM learner_schema_migrations WHERE component = 'mastery'")
+    .get().version,
+  latestVersion,
+);
+assert.ok(
+  conceptsApi.getMasteryDatabase()
+    .prepare("PRAGMA table_info(mastery_practice_session_cards)")
+    .all()
+    .some((column) => column.name === "source_document_path"),
+);
+assert.ok(
+  conceptsApi.getMasteryDatabase()
+    .prepare("PRAGMA table_info(mastery_stage_states)")
+    .all()
+    .some((column) => column.name === "fsrs_state"),
+);
+const migratedStage = conceptsApi.getMasteryDatabase()
+  .prepare("SELECT * FROM mastery_stage_states WHERE concept_id = 1 AND stage = 2")
+  .get();
+assert.equal(migratedStage.score, 12);
+assert.equal(migratedStage.attempt_count, 1);
+assert.ok(migratedStage.fsrs_state > 0);
+assert.ok(migratedStage.next_due_at > migratedStage.last_reviewed_at);
+assert.equal(
+  conceptsApi.getMasteryDatabase()
+    .prepare("SELECT COUNT(*) AS count FROM mastery_revision_events WHERE concept_id = 1 AND stage = 2")
+    .get().count,
+  1,
+);
+const bootstrappedStage = conceptsApi.getMasteryDatabase()
+  .prepare("SELECT * FROM mastery_stage_states WHERE concept_id = 50 AND stage = 2")
+  .get();
+assert.equal(bootstrappedStage.attempt_count, 0);
+assert.equal(bootstrappedStage.fsrs_state, 0);
+assert.equal(bootstrappedStage.next_due_at, now + 24 * 60 * 60 * 1000);
+conceptsApi.getMasteryDatabase().prepare("DELETE FROM mastery_concepts WHERE id = 50").run();
+runMasteryMigrations();
 
 function baseCard(overrides = {}) {
   return {
@@ -366,7 +440,12 @@ try {
   const delayedCard = state.cards.find((card) => card.id === firstCard.id);
   assert.equal(delayedCard.status, "delayed", "the configured pass threshold must be used");
   assert.ok(delayedCard.retryAt >= now + 7 * 24 * 60 * 60 * 1000);
-  assert.equal(state.stageStates.find((entry) => entry.conceptId === 1 && entry.stage === 2).score, 0);
+  assert.ok(
+    state.stageStates.find((entry) => entry.conceptId === 1 && entry.stage === 2).nextDueAt
+      < now + 24 * 60 * 60 * 1000,
+    "The identical-card cooldown must not suppress the concept-stage FSRS schedule",
+  );
+  assert.equal(state.stageStates.find((entry) => entry.conceptId === 1 && entry.stage === 2).score, 12);
   assert.equal(state.stageStates.find((entry) => entry.conceptId === 1 && entry.stage === 3).score, 0);
   assert.equal(state.weaknesses[0].status, "active");
 
@@ -422,7 +501,7 @@ try {
   state = getDocumentMasteryCards(documentPath);
   assert.equal(state.cards.find((card) => card.id === targetedCard.id).status, "done");
   assert.equal(state.weaknesses.find((weakness) => weakness.id === weaknessId).status, "resolved");
-  assert.equal(state.stageStates.find((entry) => entry.conceptId === 1 && entry.stage === 2).score, 17);
+  assert.equal(state.stageStates.find((entry) => entry.conceptId === 1 && entry.stage === 2).score, 29);
   assert.equal(state.stageStates.find((entry) => entry.conceptId === 1 && entry.stage === 3).score, 17);
   const duplicateAttemptId = saveCardEvaluation({
     answerMarkdown: "Complete answer",
@@ -463,6 +542,43 @@ try {
   });
   state = getDocumentMasteryCards(documentPath);
   assert.equal(state.cards.length, 4, "later generations must append cards");
+
+  const secondDocumentPath = "smoke/second-topic.json";
+  db.prepare(
+    `INSERT INTO mastery_concepts(
+       id, document_path, run_id, stable_key, name, type, explanation_markdown,
+       source_excerpt_markdown, mastery_level, mastery_rationale, status,
+       sort_order, created_at, updated_at
+     ) VALUES (3, ?, NULL, 'gamma', 'Gamma', 'concept', 'Gamma explanation',
+               'Gamma source', 'developing', 'Prior evidence', 'active', 0, ?, ?)`,
+  ).run(secondDocumentPath, now, now);
+  conceptsApi.ensureMasteryStageStates([3]);
+  const revisionDueAt = Date.now() - 60_000;
+  db.prepare(
+    `UPDATE mastery_stage_states
+     SET attempt_count = 1, last_reviewed_at = ?, next_due_at = ?, fsrs_state = 2,
+         fsrs_stability = 1, fsrs_difficulty = 5, updated_at = ?
+     WHERE (concept_id = 1 AND stage = 3) OR (concept_id = 3 AND stage = 2)`,
+  ).run(revisionDueAt - 24 * 60 * 60 * 1000, revisionDueAt, Date.now());
+  const beforeRevision = revisionOverview({ masterySettings: { revisionDailyCardLimit: 2 } });
+  assert.equal(beforeRevision.dueCount, 2);
+  const preparationPlan = revisionPreparationPlan({ masterySettings: { revisionDailyCardLimit: 2 } });
+  assert.equal(preparationPlan.selected.length, 1, "one existing card should cover the first due target");
+  assert.equal(preparationPlan.conceptsToGenerate.length, 1, "only the uncovered due concept needs a card");
+  assert.equal(beforeRevision.requiredCardCount, 2, "the minimum set is one existing and one generated card");
+  const revisionSession = createRevisionSession({ masterySettings: { revisionDailyCardLimit: 2 } });
+  assert.equal(revisionSession.sessionKind, "revision");
+  assert.equal(revisionSession.scope, "global");
+  assert.deepEqual(
+    new Set(revisionSession.cards.map((entry) => entry.sourceDocumentPath)),
+    new Set([documentPath, secondDocumentPath]),
+  );
+  assert.equal(
+    createRevisionSession({ masterySettings: { revisionDailyCardLimit: 2 } }).id,
+    revisionSession.id,
+    "an unfinished global revision session must resume instead of duplicating",
+  );
+  assert.equal(revisionOverview({ masterySettings: { revisionDailyCardLimit: 1 } }).dueCount, 2);
 
   db.prepare("DELETE FROM mastery_concepts WHERE id = 1").run();
   state = getDocumentMasteryCards(documentPath);
