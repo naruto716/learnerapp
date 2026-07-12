@@ -171,7 +171,7 @@ export default function RevisionDialog({
   return (
     <Dialog
       display={
-        <div className="flex h-[calc(100vh-7rem)] min-h-0 flex-col overflow-hidden">
+        <div className="flex h-[calc(100vh-7rem)] min-h-0 flex-col overflow-hidden [--results-sticky-bg:#242424]">
           {error && (
             <div className="mb-3 rounded-md border border-red-300/15 bg-red-300/10 px-3 py-2 text-sm text-red-100/80">
               {error}

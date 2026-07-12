@@ -564,7 +564,7 @@ export default function MasteryPanel({
 
   return (
     <section
-      className={`app-no-drag fixed bottom-0 right-0 top-10 z-30 flex flex-col bg-[#171717]/90 text-white shadow-[0_30px_90px_rgba(0,0,0,0.5)] ring-1 ring-white/[0.08] backdrop-blur-[24px] ${isSidebarOpen ? "left-64" : "left-0"}`}
+      className={`app-no-drag fixed bottom-0 right-0 top-10 z-30 flex flex-col bg-[#171717] text-white shadow-[0_30px_90px_rgba(0,0,0,0.5)] ring-1 ring-white/[0.08] [--results-sticky-bg:#171717] ${isSidebarOpen ? "left-64" : "left-0"}`}
     >
       <header className="flex h-14 shrink-0 items-center justify-between gap-4 px-5">
         <div className="flex min-w-0 items-center gap-3">

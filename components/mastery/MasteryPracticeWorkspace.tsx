@@ -570,14 +570,14 @@ function ResultsView({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pb-4 pr-1">
+      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
         {filteredCards.length === 0 && (
           <div className="flex min-h-52 items-center justify-center text-sm text-white/42">No results in this filter.</div>
         )}
         {resultGroups.map((group) => (
           <section className="space-y-3" key={group.documentPath || "practice"}>
             {group.documentPath && (
-              <div className="sticky top-0 z-10 border-b border-white/[0.08] bg-[#242424]/95 px-1 py-2 text-xs font-medium text-white/48 backdrop-blur">
+              <div className="sticky top-0 z-10 border-b border-white/[0.08] bg-[var(--results-sticky-bg)] px-1 py-2 text-xs font-medium text-white/48">
                 {group.documentPath.replace(/\.json$/i, "")}
               </div>
             )}
@@ -588,41 +588,49 @@ function ResultsView({
           const canSetOutcome = grading?.status === "succeeded" || grading?.status === "failed";
           const changingOutcome = outcomeChangingId === entry.id;
           return (
-            <article className="rounded-md border border-white/[0.07] bg-white/[0.025] p-4" key={entry.id}>
-              <div className="flex items-start justify-between gap-4">
-                <div className="min-w-0">
+            <article className="relative rounded-md border border-white/[0.07] bg-white/[0.025] p-4" key={entry.id}>
+              <div className="min-w-0 pr-80">
                   <p className="text-[10px] font-medium uppercase tracking-wide text-white/34">
                     Card {index + 1} · {kindLabels[entry.card.kind]}
                   </p>
                   <h3 className="mt-1 text-base font-semibold leading-6 text-white/88">{entry.card.title}</h3>
-                </div>
-                <div className="flex shrink-0 flex-col items-end gap-2">
-                  <span className={`text-sm font-semibold ${
-                    grading?.status === "failed" ? "text-red-200/80" : "text-white/68"
-                  }`}>
-                    {gradingLabel(grading)}
-                  </span>
-                  {canSetOutcome && (
-                    <div className="flex h-8 overflow-hidden rounded-md bg-white/[0.035]">
-                      {(["passed", "review"] as const).map((value) => (
-                        <button
-                          aria-pressed={outcome === value}
-                          className={`px-3 text-xs capitalize transition disabled:opacity-40 ${
-                            outcome === value
-                              ? "bg-white/[0.12] text-white/84"
-                              : "text-white/42 hover:bg-white/[0.06] hover:text-white/72"
-                          }`}
-                          disabled={changingOutcome}
-                          key={value}
-                          onClick={() => onOutcomeChange(entry, value)}
-                          type="button"
-                        >
-                          {value}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
+              </div>
+              <div className="absolute right-4 top-4 flex h-8 items-center gap-2">
+                <span className={`text-sm font-semibold ${
+                  grading?.status === "failed" ? "text-red-200/80" : "text-white/68"
+                }`}>
+                  {gradingLabel(grading)}
+                </span>
+                {canSetOutcome && (
+                  <div className="flex h-8 overflow-hidden rounded-md bg-white/[0.035]">
+                    {(["passed", "review"] as const).map((value) => (
+                      <button
+                        aria-pressed={outcome === value}
+                        className={`px-3 text-xs capitalize transition disabled:opacity-40 ${
+                          outcome === value
+                            ? "bg-white/[0.12] text-white/84"
+                            : "text-white/42 hover:bg-white/[0.06] hover:text-white/72"
+                        }`}
+                        disabled={changingOutcome}
+                        key={value}
+                        onClick={() => onOutcomeChange(entry, value)}
+                        type="button"
+                      >
+                        {value}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {grading?.status === "succeeded" && (
+                  <button
+                    className="inline-flex h-8 items-center gap-2 rounded-md bg-white/[0.07] px-3 text-xs font-medium text-white/62 transition hover:bg-white/[0.11] hover:text-white/84"
+                    onClick={() => onRetry(entry)}
+                    type="button"
+                  >
+                    <ArrowsClockwiseIcon size={14} />
+                    Regrade
+                  </button>
+                )}
               </div>
 
               <div className="mt-5 space-y-5">
@@ -660,20 +668,11 @@ function ResultsView({
               </div>
 
               {grading?.status === "succeeded" && (
-                <div className="mt-5 flex items-start justify-between gap-4 border-t border-white/[0.07] pt-5">
-                  <div className="min-w-0 flex-1">
-                    <p className="text-[10px] font-semibold uppercase tracking-wide text-white/32">Sample answer</p>
-                    <RichMarkdown className="mt-2 text-sm leading-6 text-white/58">
-                      {entry.card.expectedAnswerMarkdown}
-                    </RichMarkdown>
-                  </div>
-                  <button
-                    className="shrink-0 rounded-md px-3 py-2 text-xs font-medium text-white/44 transition hover:bg-white/[0.06] hover:text-white/74"
-                    onClick={() => onRetry(entry)}
-                    type="button"
-                  >
-                    Regrade
-                  </button>
+                <div className="mt-5 border-t border-white/[0.07] pt-5">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-white/32">Sample answer</p>
+                  <RichMarkdown className="mt-2 text-sm leading-6 text-white/58">
+                    {entry.card.expectedAnswerMarkdown}
+                  </RichMarkdown>
                 </div>
               )}
             </article>
