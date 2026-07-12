@@ -7,6 +7,7 @@ import {
   FileIcon,
   FilePlusIcon,
   FolderPlusIcon,
+  GearSixIcon,
   MagnifyingGlassIcon,
   TrashIcon,
 } from "@phosphor-icons/react";
@@ -56,6 +57,7 @@ export default function SideBar({
   onDocumentDeleted,
   onDocumentMoved,
   onOpenSearch,
+  onOpenSettings,
   onOpenRevision,
   onOpenDocument,
   revisionRefreshKey,
@@ -67,6 +69,7 @@ export default function SideBar({
   onDocumentDeleted: (deletedPath: string, deletedType: DocumentNode["type"]) => void;
   onDocumentMoved: (oldPath: string, newPath: string) => void;
   onOpenSearch: () => void;
+  onOpenSettings: () => void;
   onOpenRevision: () => void;
   onOpenDocument: (documentPath: string) => void;
   revisionRefreshKey: number;
@@ -296,11 +299,6 @@ export default function SideBar({
         <p className="pointer-events-none relative z-10 text-sm font-medium ml-1">HexNote</p>
         <div className="app-no-drag relative z-10 flex gap-1">
           <IconButton
-            ariaLabel="Search notes"
-            icon={<MagnifyingGlassIcon size={18} />}
-            onClick={onOpenSearch}
-          />
-          <IconButton
             ariaLabel="New folder"
             icon={<FolderPlusIcon size={18} />}
             onClick={() => openCreateDialog("folder")}
@@ -317,11 +315,15 @@ export default function SideBar({
         <p className="px-3 text-xs text-red-300">{error}</p>
       ) : (
         <div
-          className={`min-h-0 flex-1 transition-colors ${
+          className={`min-h-0 flex-1 overflow-y-auto transition-colors ${
             dragTarget?.type === "container" && dragTarget.folderPath === "" ? "bg-white/[0.03]" : ""
           }`}
           onDragOver={(event) => handleContainerDragOver(event, "")}
           onDrop={(event) => handleContainerDrop(event, "")}
+          style={{
+            WebkitMaskImage: "linear-gradient(to bottom, black 0%, black calc(100% - 28px), transparent 100%)",
+            maskImage: "linear-gradient(to bottom, black 0%, black calc(100% - 28px), transparent 100%)",
+          }}
         >
           <FileTree
             dragTarget={dragTarget}
@@ -341,20 +343,32 @@ export default function SideBar({
         </div>
       )}
 
-      <div className="p-2">
+      <div className="grid grid-cols-[36px_minmax(0,1fr)_36px] items-center gap-1 p-2">
+        <IconButton
+          ariaLabel="Search notes"
+          className="h-9 w-9 text-white/52 hover:text-white/88"
+          icon={<MagnifyingGlassIcon size={17} />}
+          onClick={onOpenSearch}
+        />
         <button
-          className="flex h-9 w-full items-center gap-2 rounded-md px-2 text-sm text-white/62 transition hover:bg-white/[0.07] hover:text-white/90"
+          className="flex h-9 min-w-0 items-center justify-center gap-2 rounded-md px-2 text-sm text-white/62 transition hover:bg-white/[0.07] hover:text-white/90"
           onClick={onOpenRevision}
           type="button"
         >
           <CalendarBlankIcon size={17} />
-          <span className="flex-1 text-left">Revision</span>
+          <span className="truncate">Revision</span>
           {revisionDueCount > 0 && (
-            <span className="inline-flex min-w-5 items-center justify-center rounded bg-amber-200 px-1.5 py-0.5 text-[11px] font-semibold text-black">
+            <span className="inline-flex min-w-5 items-center justify-center rounded-full border border-amber-200/15 bg-amber-200/10 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-amber-100/75">
               {revisionDueCount > 99 ? "99+" : revisionDueCount}
             </span>
           )}
         </button>
+        <IconButton
+          ariaLabel="AI settings"
+          className="h-9 w-9 text-white/52 hover:text-white/88"
+          icon={<GearSixIcon size={17} />}
+          onClick={onOpenSettings}
+        />
       </div>
 
       <CreateDocumentDialog

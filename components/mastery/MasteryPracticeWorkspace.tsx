@@ -541,12 +541,11 @@ function ResultsView({
     : [{ cards: filteredCards, documentPath: "" }];
 
   return (
-    <div className="mx-auto flex min-h-0 w-full max-w-5xl flex-1 flex-col">
-      <div className="shrink-0 border-b border-white/[0.07] pb-4">
+    <div className="flex min-h-0 w-full flex-1 flex-col">
+      <div className="shrink-0 pb-3">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-white/34">Practice results</p>
-            <h2 className="mt-1 text-2xl font-semibold text-white/92">
+            <h2 className="text-2xl font-semibold text-white/92">
               {average === null ? "Grading in progress" : `${average}/100 average`}
             </h2>
             <p className="mt-1 text-sm text-white/42">
@@ -571,7 +570,7 @@ function ResultsView({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto py-4 pr-1">
+      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pb-4 pr-1">
         {filteredCards.length === 0 && (
           <div className="flex min-h-52 items-center justify-center text-sm text-white/42">No results in this filter.</div>
         )}

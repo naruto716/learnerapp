@@ -568,6 +568,7 @@ export default function AppShell() {
         onDocumentDeleted={handleDocumentDeleted}
         onDocumentMoved={handleDocumentMoved}
         onOpenSearch={() => setIsDocumentSearchOpen(true)}
+        onOpenSettings={() => setIsAiSettingsOpen(true)}
         onOpenRevision={() => setIsRevisionOpen(true)}
         onOpenDocument={openDocument}
         revisionRefreshKey={revisionRefreshKey}
@@ -578,7 +579,6 @@ export default function AppShell() {
           isSidebarOpen={isSidebarOpen}
           openTabs={openTabs}
           onCloseTab={closeTab}
-          onOpenSettings={() => setIsAiSettingsOpen(true)}
           onReorderTabs={(sourcePath, targetPath, position) => {
             updateOpenTabs((current) => reorderList(current, sourcePath, targetPath, position));
           }}

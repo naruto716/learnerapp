@@ -1,6 +1,6 @@
 "use client";
 
-import { CaretLeftIcon, CaretRightIcon, GearSixIcon, SidebarIcon, XIcon } from "@phosphor-icons/react";
+import { CaretLeftIcon, CaretRightIcon, SidebarIcon, XIcon } from "@phosphor-icons/react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import IconButton from "../IconButton";
@@ -15,7 +15,6 @@ export default function TopBar({
   activeDocumentPath,
   isSidebarOpen,
   onCloseTab,
-  onOpenSettings,
   onReorderTabs,
   onSelectTab,
   openTabs,
@@ -24,7 +23,6 @@ export default function TopBar({
   activeDocumentPath: string | null;
   isSidebarOpen: boolean;
   onCloseTab: (documentPath: string) => void;
-  onOpenSettings: () => void;
   onReorderTabs: (sourcePath: string, targetPath: string, position: "before" | "after") => void;
   onSelectTab: (documentPath: string) => void;
   openTabs: string[];
@@ -51,11 +49,6 @@ export default function TopBar({
           ariaLabel="Forward"
           icon={<CaretRightIcon size={20} />}
           onClick={router.forward}
-        />
-        <IconButton
-          ariaLabel="AI settings"
-          icon={<GearSixIcon size={19} />}
-          onClick={onOpenSettings}
         />
       </div>
 
