@@ -86,7 +86,7 @@ export function useDocumentMastery({
     if (validation.snapshot === null) {
       setMastery(null);
       setError(validation.error);
-      return false;
+      return null;
     }
 
     const documentSnapshot = validation.snapshot;
@@ -104,10 +104,10 @@ export function useDocumentMastery({
       }
 
       setMastery(result.mastery);
-      return true;
+      return result;
     } catch (generationError) {
       setError(generationError instanceof Error ? generationError.message : "Mastery extraction failed.");
-      return false;
+      return null;
     } finally {
       setIsLoading(false);
     }
@@ -136,7 +136,7 @@ export function useDocumentMastery({
 
       if (cachedMastery.concepts.length > 0) {
         setMastery(cachedMastery);
-        return;
+        return { generated: false, mastery: cachedMastery };
       }
 
       const result = await window.learner?.generateDocumentMastery({
@@ -150,8 +150,10 @@ export function useDocumentMastery({
       }
 
       setMastery(result.mastery);
+      return result;
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Mastery extraction failed.");
+      return null;
     } finally {
       setIsLoading(false);
     }
@@ -226,18 +228,18 @@ export function useDocumentMastery({
     return refreshed ?? null;
   }, [activeDocumentPath, getCurrentDocumentTools]);
 
-  const generateMetaphor = useCallback(async () => {
-    setError(null);
+  const generateMetaphor = useCallback(async (sourceMastery?: DocumentMastery, reportError = true) => {
+    if (reportError) setError(null);
 
     const tools = getCurrentDocumentTools();
     const validation = readValidSnapshot(activeDocumentPath, tools, "viewing");
     if (validation.snapshot === null) {
-      setError(validation.error);
+      if (reportError) setError(validation.error);
       return false;
     }
 
-    if (!mastery || mastery.concepts.length === 0) {
-      setError("Extract mastery concepts before generating a metaphor.");
+    if (!(sourceMastery ?? mastery)?.concepts.length) {
+      if (reportError) setError("Extract mastery concepts before generating a metaphor.");
       return false;
     }
 
@@ -263,7 +265,9 @@ export function useDocumentMastery({
       setMastery(updatedMastery);
       return true;
     } catch (metaphorError) {
-      setError(metaphorError instanceof Error ? metaphorError.message : "Mastery metaphor generation failed.");
+      if (reportError) {
+        setError(metaphorError instanceof Error ? metaphorError.message : "Mastery metaphor generation failed.");
+      }
       return false;
     } finally {
       setIsMetaphorLoading(false);

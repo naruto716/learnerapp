@@ -100,8 +100,8 @@ export function useMasteryCards({
     }
   }, [activeDocumentPath, getCurrentDocumentTools]);
 
-  const ensureReadyCards = useCallback(async (minimumReadyCards: number) => {
-    setError(null);
+  const ensureReadyCards = useCallback(async (minimumReadyCards: number, reportError = true) => {
+    if (reportError) setError(null);
     setIsGenerating(true);
     setProgress({ completed: 0, label: "Preparing practice cards", phase: "planning", total: 1 });
 
@@ -122,12 +122,14 @@ export function useMasteryCards({
       setCardState(state);
       return state;
     } catch (generationError) {
-      setError(generationError instanceof Error ? generationError.message : "Flashcard generation failed.");
+      if (reportError) {
+        setError(generationError instanceof Error ? generationError.message : "Flashcard generation failed.");
+      }
       return null;
     } finally {
       setIsGenerating(false);
     }
-  }, [activeDocumentPath, cardState?.preferences, getCurrentDocumentTools]);
+  }, [activeDocumentPath, cardState, getCurrentDocumentTools]);
 
   const evaluateCard = useCallback(async (cardId: number, answerMarkdown = "") => {
     setError(null);

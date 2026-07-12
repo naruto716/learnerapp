@@ -341,7 +341,7 @@ export default function SideBar({
         </div>
       )}
 
-      <div className="border-t border-white/[0.08] p-2">
+      <div className="p-2">
         <button
           className="flex h-9 w-full items-center gap-2 rounded-md px-2 text-sm text-white/62 transition hover:bg-white/[0.07] hover:text-white/90"
           onClick={onOpenRevision}

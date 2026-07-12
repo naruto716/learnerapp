@@ -2,9 +2,11 @@
 
 import { SparkleIcon } from "@phosphor-icons/react";
 import { useCallback } from "react";
+import { toast } from "sonner";
 import FloatingIconButton from "@/components/FloatingIconButton";
 import type { CurrentDocumentAgentTools } from "@/components/editor/TiptapEditor";
 import MasteryPanel from "./MasteryPanel";
+import { readMasterySettings } from "./masterySettings";
 import { useDocumentMastery } from "./useDocumentMastery";
 import { useMasteryCards } from "./useMasteryCards";
 
@@ -50,10 +52,32 @@ export default function MasteryController({
     onMasteryChanged: refreshMastery,
   });
 
+  const startInitialMasteryJobs = (result: DocumentMasteryGenerationResult) => {
+    if (!result.generated) return;
+
+    const metaphorJob = generateMetaphor(result.mastery, false).then((generated) => {
+      if (!generated) toast.error("Metaphor generation failed. You can generate it manually from Mastery.");
+    });
+    const cardJob = cardsController.ensureReadyCards(readMasterySettings().practiceCardCount, false).then((state) => {
+      if (!state) {
+        toast.error("Knowledge graph or flashcard generation failed. You can generate cards manually from Mastery.");
+      }
+    });
+    void Promise.allSettled([metaphorJob, cardJob]);
+  };
+
   const generateAndSyncCards = async (force = false) => {
-    const generated = await generateMastery(force);
-    if (generated) await cardsController.loadCards();
-    return generated;
+    const result = await generateMastery(force);
+    if (!result) return false;
+    startInitialMasteryJobs(result);
+    return true;
+  };
+
+  const openAndPrepareMastery = async () => {
+    const result = await openMastery();
+    if (!result) return false;
+    startInitialMasteryJobs(result);
+    return true;
   };
 
   const clearAndSyncCards = async () => {
@@ -81,7 +105,7 @@ export default function MasteryController({
           disabled={isLoading}
           icon={<SparkleIcon size={16} className={isLoading ? "animate-pulse" : ""} />}
           onClick={() => {
-            void openMastery();
+            void openAndPrepareMastery();
           }}
           size={8}
           tooltip={isLoading ? "Building mastery" : "Mastery"}
