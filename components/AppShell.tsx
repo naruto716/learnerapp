@@ -1,7 +1,7 @@
 "use client";
 
 import { GraphIcon } from "@phosphor-icons/react";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import FloatingIconButton from "@/components/FloatingIconButton";
 import type { AgentForegroundContext } from "@/components/ai/agentForegroundContext";
@@ -104,8 +104,15 @@ function reorderList(items: string[], source: string, target: string, position: 
   return next;
 }
 
+function navigateToRoute(route: string, replace = false) {
+  if (replace) {
+    window.history.replaceState(null, "", route);
+  } else {
+    window.history.pushState(null, "", route);
+  }
+}
+
 export default function AppShell() {
-  const router = useRouter();
   const pathname = usePathname();
   const activeDocumentPath = useMemo(() => routeToDocumentPath(pathname), [pathname]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -179,12 +186,12 @@ export default function AppShell() {
       setWorkspaceLoaded(true);
 
       if (pathname === "/" && workspace.lastActivePath) {
-        router.replace(documentPathToRoute(workspace.lastActivePath));
+        navigateToRoute(documentPathToRoute(workspace.lastActivePath), true);
       }
     }, 0);
 
     return () => window.clearTimeout(timer);
-  }, [pathname, router]);
+  }, [pathname]);
 
   useEffect(() => {
     if (!workspaceLoaded) return;
@@ -239,7 +246,7 @@ export default function AppShell() {
   function openDocument(documentPath: string) {
     const normalizedPath = normalizeDocumentToolPath(documentPath);
     updateOpenTabs((current) => (current.includes(normalizedPath) ? current : [...current, normalizedPath]));
-    router.push(documentPathToRoute(normalizedPath));
+    navigateToRoute(documentPathToRoute(normalizedPath));
   }
 
   function markDocumentsChanged() {
@@ -260,7 +267,7 @@ export default function AppShell() {
     });
 
     if (activeDocumentPath === oldPath || activeDocumentPath?.startsWith(`${oldPath}/`)) {
-      router.replace(documentPathToRoute(activeDocumentPath.replace(oldPath, newPath)));
+      navigateToRoute(documentPathToRoute(activeDocumentPath.replace(oldPath, newPath)), true);
     }
 
     markDocumentsChanged();
@@ -273,7 +280,7 @@ export default function AppShell() {
 
       if (activeDocumentPath && isDeletedDocumentPath(activeDocumentPath, deletedPath, deletedType)) {
         const nextActivePath = nextTabs[activeIndex] ?? nextTabs[activeIndex - 1] ?? nextTabs[0] ?? null;
-        router.push(nextActivePath ? documentPathToRoute(nextActivePath) : "/");
+        navigateToRoute(nextActivePath ? documentPathToRoute(nextActivePath) : "/");
       }
 
       return nextTabs;
@@ -308,7 +315,7 @@ export default function AppShell() {
       }
       return next;
     });
-    router.replace(documentPathToRoute(newPath));
+    navigateToRoute(documentPathToRoute(newPath), true);
     markDocumentsChanged();
   }
 
@@ -326,7 +333,7 @@ export default function AppShell() {
 
       if (documentPath === activeDocumentPath) {
         const nextActivePath = nextTabs[tabIndex] ?? nextTabs[tabIndex - 1] ?? null;
-        router.push(nextActivePath ? documentPathToRoute(nextActivePath) : "/");
+        navigateToRoute(nextActivePath ? documentPathToRoute(nextActivePath) : "/");
       }
 
       return nextTabs;

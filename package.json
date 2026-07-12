@@ -6,7 +6,7 @@
   "main": "electron/main.js",
   "scripts": {
     "dev": "next dev",
-    "electron:dev": "concurrently -k -s first -n NEXT,ELECTRON -c blue,green \"next dev -p 3000\" \"wait-on http://localhost:3000 && cross-env NEXT_DEV_SERVER_URL=http://localhost:3000 electron .\"",
+    "electron:dev": "concurrently -k -s first -n NEXT,ELECTRON -c blue,green \"next dev -p 3000\" \"wait-on http://localhost:3000 && cross-env NEXT_DEV_SERVER_URL=http://localhost:3000 LEARNER_DATA_PROFILE=development electron .\"",
     "electron:preview": "npm run build && electron .",
     "electron:dist": "npm run build && electron-builder",
     "build": "cross-env NEXT_OUTPUT_EXPORT=1 next build",

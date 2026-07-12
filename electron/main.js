@@ -2,6 +2,14 @@ const { app, BrowserWindow, ipcMain, net, protocol, shell } = require("electron"
 const fs = require("fs");
 const path = require("path");
 const { pathToFileURL } = require("url");
+const { loadLocalEnv } = require("./localEnv");
+
+loadLocalEnv();
+
+const dataProfile = process.env.LEARNER_DATA_PROFILE === "development" ? "development" : "production";
+const userDataDirectoryName = dataProfile === "development" ? "learnerapp-dev" : "learnerapp";
+app.setPath("userData", path.join(app.getPath("appData"), userDataDirectoryName));
+
 const {
   createDocumentFile,
   createDocumentFolder,
@@ -16,7 +24,6 @@ const {
   saveDocumentImage,
   saveDocumentFile,
 } = require("./documentUtil");
-const { loadLocalEnv } = require("./localEnv");
 const { configureAiSettings } = require("./aiSettings");
 const { generateImage, listAiModels } = require("./imageGeneration");
 const { transcribeSpeech } = require("./speechToText");
@@ -76,8 +83,6 @@ const {
   updateConcept,
   updateRelation,
 } = require("./graph/graphDb");
-
-loadLocalEnv();
 
 const appProtocol = "learner";
 const devServerUrl = process.env.NEXT_DEV_SERVER_URL;
