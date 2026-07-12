@@ -5,8 +5,10 @@ import { getEncoding } from "js-tiktoken";
 import { createAgent, tool } from "langchain";
 import { z } from "zod";
 import { readAiSettings } from "./aiSettings";
+import type { AgentForegroundContext } from "./agentForegroundContext";
 import type { ProposedDocumentPatch } from "./documentPatch";
 import type { CurrentDocumentAgentTools } from "@/components/editor/TiptapEditor";
+import { readMasterySettings } from "@/components/mastery/masterySettings";
 
 const maxHistoryInputTokens = 200_000;
 const summarizeWhenHistoryExceedsTokens = 140_000;
@@ -39,6 +41,7 @@ type RunStudyAgentRequest = {
   contextState?: AgentContextState;
   closeDocumentTab?: (documentPath: string, documentType?: DocumentNode["type"]) => void;
   ensureDocumentTools?: (documentPath: string) => Promise<CurrentDocumentAgentTools | null>;
+  foregroundContext?: AgentForegroundContext | null;
   getCurrentDocumentTools: () => CurrentDocumentAgentTools | null;
   getDocumentTools?: (documentPath: string) => CurrentDocumentAgentTools | null;
   getOpenDocumentPaths?: () => string[];
@@ -402,6 +405,25 @@ function summarizeGraph(graph: KnowledgeDocumentGraph) {
       toConceptId: edge.target,
       explanation: edge.explanation,
     })),
+  };
+}
+
+function foregroundContextModelMessage(context: AgentForegroundContext): ModelMessage {
+  return {
+    role: "system",
+    content: [
+      "Foreground study context attached for this request only. Do not assume it remains visible in later turns.",
+      `Context kind: ${context.kind}`,
+      `Document: ${context.documentPath}`,
+      JSON.stringify(context, null, 2),
+    ].join("\n\n"),
+  };
+}
+
+function noForegroundContextModelMessage(): ModelMessage {
+  return {
+    role: "system",
+    content: "No foreground study context is attached for this request. Do not infer a visible concept, flashcard, or answer sheet from earlier turns.",
   };
 }
 
@@ -1179,6 +1201,147 @@ function createStudyTools({
       },
     ),
     tool(
+      async ({ documentPath }) => {
+        const normalizedPath = normalizeDocumentPath(documentPath ?? getTools()?.path ?? "");
+        if (!normalizedPath) return "No document path was provided and no document is currently open.";
+        if (!window.learner?.getDocumentMastery || !window.learner?.getDocumentMasteryCards) {
+          return "Mastery reading is not available in this environment.";
+        }
+        const openTools = getToolsForPath(normalizedPath);
+        const markdown = openTools?.read().markdown ?? "";
+        const [mastery, cards] = await Promise.all([
+          window.learner.getDocumentMastery(normalizedPath, markdown),
+                    window.learner.getDocumentMastery(
+                      normalizedPath,
+                      markdown,
+                      { checkFreshness: Boolean(openTools) },
+                    ),
+          window.learner.getDocumentMasteryCards(normalizedPath),
+        ]);
+        return JSON.stringify({ type: "mastery_state", mastery, cards }, null, 2);
+      },
+      {
+        name: "read_mastery_state",
+        description:
+          "Read a note's mastery concepts, metaphor, stage schedule, flashcards, weaknesses, attempts, and card status. This tool is read-only.",
+        schema: z.object({
+          documentPath: z.string().optional().describe("Note path. Omit for the current open note."),
+        }),
+      },
+    ),
+    tool(
+      async ({ cardId, conceptId, documentPath }) => {
+        const normalizedPath = normalizeDocumentPath(documentPath ?? getTools()?.path ?? "");
+        if (!normalizedPath) return "No document path was provided and no document is currently open.";
+        if (!window.learner?.listMasteryPracticeSessions || !window.learner?.listMasteryPracticeEvidence) {
+          return "Mastery history reading is not available in this environment.";
+        }
+        const sessions = await window.learner.listMasteryPracticeSessions(normalizedPath);
+        const evidence = cardId || conceptId
+          ? await window.learner.listMasteryPracticeEvidence({
+              cardId,
+              conceptId,
+              documentPath: normalizedPath,
+            })
+          : [];
+        return JSON.stringify({ type: "mastery_history", documentPath: normalizedPath, sessions, evidence }, null, 2);
+      },
+      {
+        name: "read_mastery_history",
+        description:
+          "Read saved flashcard completion history and session summaries. When conceptId or cardId is provided, also return matching answers, feedback, scores, and outcomes. Use read_mastery_answer_sheet for every answer in a session. This tool is read-only.",
+        schema: z.object({
+          documentPath: z.string().optional().describe("Note path. Omit for the current open note."),
+          conceptId: z.number().int().optional().describe("Optional mastery concept id."),
+          cardId: z.number().int().optional().describe("Optional flashcard id."),
+        }),
+      },
+    ),
+    tool(
+      async ({ sessionId }) => {
+        if (!window.learner?.getMasteryPracticeSession) {
+          return "Mastery answer-sheet reading is not available in this environment.";
+        }
+        const session = await window.learner.getMasteryPracticeSession(
+          sessionId,
+          readAiSettings(),
+          { runGrading: false },
+        );
+        return JSON.stringify({ type: "mastery_answer_sheet", session }, null, 2);
+      },
+      {
+        name: "read_mastery_answer_sheet",
+        description:
+          "Read an entire practice or revision answer sheet by session id, including every prompt, learner answer, grading feedback, score, linked concepts, and weaknesses. This tool is read-only.",
+        schema: z.object({
+          sessionId: z.number().int().positive().describe("Practice or revision session id from read_mastery_history."),
+        }),
+      },
+    ),
+    tool(
+      async ({ days = 35 }) => {
+        if (!window.learner?.getMasteryRevisionOverview) {
+          return "Revision schedule reading is not available in this environment.";
+        }
+        const overview = await window.learner.getMasteryRevisionOverview({
+          days: Math.min(Math.max(days, 7), 90),
+          masterySettings: readMasterySettings(),
+          prepare: false,
+          settings: readAiSettings(),
+        });
+        return JSON.stringify({ type: "revision_schedule", overview }, null, 2);
+      },
+      {
+        name: "read_revision_schedule",
+        description:
+          "Read the learner's revision schedule, due concepts grouped by note, overdue counts, future calendar, and card preparation status. This tool is read-only.",
+        schema: z.object({
+          days: z.number().int().min(7).max(90).optional().describe("Calendar days to include. Defaults to 35."),
+        }),
+      },
+    ),
+    tool(
+      async ({ documentPath, prompt, targetProficiency }) => {
+        const normalizedPath = normalizeDocumentPath(documentPath ?? getTools()?.path ?? "");
+        if (!normalizedPath) return "No document path was provided and no document is currently open.";
+        if (!window.learner?.generateDocumentMasteryCards || !window.learner?.getDocumentMasteryCards) {
+          return "Mastery card generation is not available in this environment.";
+        }
+        const openTools = await getToolsForMutation(normalizedPath);
+        if (!openTools) return `Open ${normalizedPath} before generating mastery cards.`;
+        const markdown = openTools.read().markdown;
+        const current = await window.learner.getDocumentMasteryCards(normalizedPath);
+        const currentCardIds = new Set(current.cards.map((card) => card.id));
+        const state = await window.learner.generateDocumentMasteryCards({
+          documentPath: normalizedPath,
+          generationPrompt: prompt,
+          markdown,
+          masterySettings: readMasterySettings(),
+          settings: readAiSettings(),
+          targetProficiency: targetProficiency ?? current.preferences.targetProficiency,
+        });
+        window.dispatchEvent(new CustomEvent("learner:mastery-cards-changed", {
+          detail: { documentPath: normalizedPath },
+        }));
+        return JSON.stringify({
+          type: "generated_mastery_cards",
+          documentPath: normalizedPath,
+          message: `Generated ${state.cards.filter((card) => !currentCardIds.has(card.id)).length} new mastery cards using the dedicated card generator.`,
+          cards: state.cards.filter((card) => !currentCardIds.has(card.id)),
+        }, null, 2);
+      },
+      {
+        name: "generate_mastery_cards",
+        description:
+          "Generate additional mastery flashcards for a note with a custom user-requested prompt. This is the only mastery write tool. It reuses Learner's dedicated graph-aware card generator and validation framework.",
+        schema: z.object({
+          documentPath: z.string().optional().describe("Note path. Omit for the current open note."),
+          prompt: z.string().min(1).describe("Specific custom request, such as a card about a particular problem or misconception."),
+          targetProficiency: z.enum(["familiar", "developing", "proficient", "advanced", "mastered"]).optional(),
+        }),
+      },
+    ),
+    tool(
       async ({ patchText, summary }) => {
         const documentTools = getTools();
         if (!documentTools) return "No document is currently open.";
@@ -1322,6 +1485,10 @@ function createStudyAgent({
       "Use open_note_tab only when you specifically need to prepare a note tab before another operation; otherwise mutation tools can open their target tabs themselves.",
       "Use create_note when the user asks you to create a new note; write Markdown content when useful.",
       "Use graph tools to inspect and modify knowledge graph concepts and connections. Search existing graph concepts before creating likely duplicates.",
+      "Use read_mastery_state to inspect concepts, flashcards, weaknesses, attempts, and stage scheduling. Use read_mastery_history for completion history and read_mastery_answer_sheet for a complete saved answer/feedback session. These mastery tools are read-only.",
+      "Use read_revision_schedule when the user asks what is due, overdue, planned, or scheduled for future review.",
+      "Foreground study context, when present, is attached as a system message for the current request only. Treat it as what the user is currently viewing, and do not assume it remains visible in later turns unless it is attached again.",
+      "Only use generate_mastery_cards when the user explicitly asks to create flashcards. It is the only mastery write tool and routes through Learner's dedicated card-generation framework.",
       "Before modifying existing note content, read the current document unless the user only asks to insert new content.",
       "For writing a note from scratch, replacing the whole note, broad rewrites, long outlines, study guides, math-heavy content, Mermaid diagrams, or code-heavy generated content, use propose_current_document_replacement and write the replacement body in Markdown.",
       "Replacement Markdown should be the complete final document body, not a diff. Do not wrap it in a markdown code fence.",
@@ -1352,6 +1519,7 @@ export async function* runStudyAgentLoop({
   contextState: currentContextState = {},
   closeDocumentTab,
   ensureDocumentTools,
+  foregroundContext,
   getCurrentDocumentTools,
   getDocumentTools,
   getOpenDocumentPaths,
@@ -1375,8 +1543,17 @@ export async function* runStudyAgentLoop({
     registerSources,
   });
 
+  const modelMessages = buildModelMessages(messages, nextContextState);
+  modelMessages.splice(
+    Math.max(0, modelMessages.length - 1),
+    0,
+    foregroundContext
+      ? foregroundContextModelMessage(foregroundContext)
+      : noForegroundContextModelMessage(),
+  );
+
   const run = await agent.streamEvents({
-    messages: buildModelMessages(messages, nextContextState),
+    messages: modelMessages,
   }, {
     signal,
     version: "v3",

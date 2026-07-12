@@ -1,3 +1,8 @@
+      getDocumentMastery: (
+        filePath: string,
+        markdown?: string,
+        options?: { checkFreshness?: boolean },
+      ) => Promise<DocumentMastery>;
 // learnerapp/global.d.ts
 export {};
 
@@ -664,7 +669,11 @@ declare global {
       listAiModels: (settings?: LearnerAiSettings) => Promise<LearnerAiModel[]>;
       generateImage: (request: LearnerImageGenerationRequest) => Promise<LearnerImageGenerationResult>;
       transcribeSpeech: (request: LearnerSpeechTranscriptionRequest) => Promise<LearnerSpeechTranscriptionResult>;
-      getDocumentMastery: (filePath: string, markdown: string) => Promise<DocumentMastery>;
+      getDocumentMastery: (
+        filePath: string,
+        markdown?: string,
+        options?: { checkFreshness?: boolean },
+      ) => Promise<DocumentMastery>;
       generateDocumentMastery: (
         request: DocumentMasteryGenerationRequest,
       ) => Promise<DocumentMasteryGenerationResult>;
@@ -695,6 +704,7 @@ declare global {
         request?: {
           days?: number;
           masterySettings?: MasteryScoringSettings;
+          prepare?: boolean;
           settings?: LearnerAiSettings;
         },
       ) => Promise<MasteryRevisionOverview>;
@@ -704,6 +714,7 @@ declare global {
       getMasteryPracticeSession: (
         sessionId: number,
         settings?: LearnerAiSettings,
+        options?: { runGrading?: boolean },
       ) => Promise<MasteryPracticeSession>;
       listMasteryPracticeSessions: (documentPath: string) => Promise<MasteryPracticeSessionSummary[]>;
       deleteMasteryPracticeSession: (

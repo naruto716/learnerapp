@@ -50,6 +50,16 @@ export function useMasteryCards({
   }, [activeDocumentPath]);
 
   useEffect(() => {
+    const reloadChangedCards = (event: Event) => {
+      const changedPath = (event as CustomEvent<{ documentPath?: string }>).detail?.documentPath;
+      if (!activeDocumentPath || changedPath !== activeDocumentPath.replace(/\.json$/i, "")) return;
+      void loadCards();
+    };
+    window.addEventListener("learner:mastery-cards-changed", reloadChangedCards);
+    return () => window.removeEventListener("learner:mastery-cards-changed", reloadChangedCards);
+  }, [activeDocumentPath, loadCards]);
+
+  useEffect(() => {
     if (!isOpen || !activeDocumentPath) return;
     let cancelled = false;
 

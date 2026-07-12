@@ -882,8 +882,8 @@ function setPracticeCardOutcome({ outcome, sessionCardId }) {
   return practiceSessionResult(sessionCard.session_id);
 }
 
-function getPracticeSession(sessionId) {
-  kickPracticeGrading();
+function getPracticeSession(sessionId, { runGrading = true } = {}) {
+  if (runGrading) kickPracticeGrading();
   return practiceSessionResult(sessionId);
 }
 

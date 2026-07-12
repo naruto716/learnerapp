@@ -543,9 +543,9 @@ function getDocumentMetaphor(documentPath, currentDocumentHash, currentConceptSi
   return rowToMetaphor(latestMetaphorRun, conceptScenes, currentDocumentHash, currentConceptSignature);
 }
 
-function getDocumentMastery(documentPath, markdown = "") {
+function getDocumentMastery(documentPath, markdown = "", { checkFreshness = true } = {}) {
   const normalizedPath = normalizeDocumentPath(documentPath);
-  const currentDocumentHash = hashContent(markdown);
+  const currentDocumentHash = checkFreshness ? hashContent(markdown) : "";
   const latestRun = getLatestRun(normalizedPath);
   const concepts = getActiveConceptRows(normalizedPath).map(rowToConcept);
   const currentConceptSignature = conceptSignature(concepts);

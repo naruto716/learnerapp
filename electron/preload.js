@@ -58,8 +58,8 @@ contextBridge.exposeInMainWorld("learner", {
   transcribeSpeech: (request) => {
     return ipcRenderer.invoke("speech:transcribe", request);
   },
-  getDocumentMastery: (filePath, markdown) => {
-    return ipcRenderer.invoke("mastery:getDocumentMastery", filePath, markdown);
+  getDocumentMastery: (filePath, markdown, options) => {
+    return ipcRenderer.invoke("mastery:getDocumentMastery", filePath, markdown, options);
   },
   generateDocumentMastery: (request) => {
     return ipcRenderer.invoke("mastery:generateDocumentMastery", request);
@@ -107,8 +107,8 @@ contextBridge.exposeInMainWorld("learner", {
   createMasteryRevisionSession: (request) => {
     return ipcRenderer.invoke("mastery:createRevisionSession", request);
   },
-  getMasteryPracticeSession: (sessionId, settings) => {
-    return ipcRenderer.invoke("mastery:getPracticeSession", sessionId, settings);
+  getMasteryPracticeSession: (sessionId, settings, options) => {
+    return ipcRenderer.invoke("mastery:getPracticeSession", sessionId, settings, options);
   },
   listMasteryPracticeSessions: (documentPath) => {
     return ipcRenderer.invoke("mastery:listPracticeSessions", documentPath);

@@ -4,6 +4,7 @@ import { GraphIcon } from "@phosphor-icons/react";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import FloatingIconButton from "@/components/FloatingIconButton";
+import type { AgentForegroundContext } from "@/components/ai/agentForegroundContext";
 import SideBar from "@/components/sidebar/sidebar";
 import DocumentSearchDialog from "@/components/sidebar/DocumentSearchDialog";
 import TopBar from "@/components/topbar/topbar";
@@ -121,6 +122,8 @@ export default function AppShell() {
   const [lastKnowledgeGraphExtractionChanged, setLastKnowledgeGraphExtractionChanged] = useState<boolean | null>(null);
   const [isMasteryOpen, setIsMasteryOpen] = useState(false);
   const [isRevisionOpen, setIsRevisionOpen] = useState(false);
+  const [masteryForegroundContext, setMasteryForegroundContext] = useState<AgentForegroundContext | null>(null);
+  const [revisionForegroundContext, setRevisionForegroundContext] = useState<AgentForegroundContext | null>(null);
   const [revisionRefreshKey, setRevisionRefreshKey] = useState(0);
   const [editorStates, setEditorStates] = useState<Record<string, PersistedEditorState>>({});
   const [documentsVersion, setDocumentsVersion] = useState(0);
@@ -631,6 +634,7 @@ export default function AppShell() {
             hidden={isKnowledgeGraphOpen}
             isSidebarOpen={isSidebarOpen}
             key={activeDocumentPath ?? "no-document"}
+            onForegroundContextChange={setMasteryForegroundContext}
             onOpenChange={setIsMasteryOpen}
           />
         </main>
@@ -660,6 +664,7 @@ export default function AppShell() {
         getCurrentDocumentTools={getCurrentDocumentTools}
         getDocumentTools={getDocumentTools}
         getOpenDocumentPaths={getOpenDocumentPaths}
+        foregroundContext={isRevisionOpen ? revisionForegroundContext : masteryForegroundContext}
         isOpen={isBubbleOpen}
         isSidebarOpen={isSidebarOpen}
         onClose={() => setIsBubbleOpen(false)}
@@ -673,6 +678,7 @@ export default function AppShell() {
       />
       <AiSettingsDialog open={isAiSettingsOpen} onClose={() => setIsAiSettingsOpen(false)} />
       <RevisionDialog
+        onForegroundContextChange={setRevisionForegroundContext}
         open={isRevisionOpen}
         onClose={() => {
           setIsRevisionOpen(false);

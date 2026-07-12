@@ -4,6 +4,7 @@ import { SparkleIcon } from "@phosphor-icons/react";
 import { useCallback } from "react";
 import { toast } from "sonner";
 import FloatingIconButton from "@/components/FloatingIconButton";
+import type { AgentForegroundContext } from "@/components/ai/agentForegroundContext";
 import type { CurrentDocumentAgentTools } from "@/components/editor/TiptapEditor";
 import MasteryPanel from "./MasteryPanel";
 import { readMasterySettings } from "./masterySettings";
@@ -15,6 +16,7 @@ type MasteryControllerProps = {
   getCurrentDocumentTools: () => CurrentDocumentAgentTools | null;
   hidden?: boolean;
   isSidebarOpen: boolean;
+  onForegroundContextChange?: (context: AgentForegroundContext | null) => void;
   onOpenChange?: (open: boolean) => void;
 };
 
@@ -23,6 +25,7 @@ export default function MasteryController({
   getCurrentDocumentTools,
   hidden = false,
   isSidebarOpen,
+  onForegroundContextChange,
   onOpenChange,
 }: MasteryControllerProps) {
   const masteryController = useDocumentMastery({
@@ -129,6 +132,7 @@ export default function MasteryController({
         onEnsureReadyCards={cardsController.ensureReadyCards}
         onGenerateCards={cardsController.generateCards}
         onGenerateMetaphor={generateMetaphor}
+        onForegroundContextChange={onForegroundContextChange}
         onPracticeChanged={syncAfterPractice}
         onMasteryScoreChange={updateConceptMasteryScore}
         onGenerate={generateAndSyncCards}

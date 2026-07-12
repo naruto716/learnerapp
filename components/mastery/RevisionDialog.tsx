@@ -10,6 +10,7 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Dialog from "@/components/Dialog";
 import { readAiSettings } from "@/components/ai/aiSettings";
+import type { AgentForegroundContext } from "@/components/ai/agentForegroundContext";
 import { readMasterySettings } from "./masterySettings";
 import MasteryPracticeWorkspace from "./MasteryPracticeWorkspace";
 
@@ -55,9 +56,11 @@ type CalendarDueItem = {
 
 export default function RevisionDialog({
   onClose,
+  onForegroundContextChange,
   open,
 }: {
   onClose: () => void;
+  onForegroundContextChange?: (context: AgentForegroundContext | null) => void;
   open: boolean;
 }) {
   const [error, setError] = useState<string | null>(null);
@@ -186,6 +189,7 @@ export default function RevisionDialog({
                 getCurrentDocumentMarkdown={() => ""}
                 isGenerating={false}
                 onEnsureReadyCards={async () => null}
+                onForegroundContextChange={open ? onForegroundContextChange : undefined}
                 onOpenGeneration={() => {}}
                 onPracticeChanged={loadOverview}
                 onResultsChange={() => {}}

@@ -21,6 +21,7 @@ import {
   useState,
 } from "react";
 import { readAiSettings } from "@/components/ai/aiSettings";
+import type { AgentForegroundContext } from "@/components/ai/agentForegroundContext";
 import Dialog from "@/components/Dialog";
 import RichMarkdown from "@/components/markdown/RichMarkdown";
 import MasteryCardCarousel from "./MasteryCardCarousel";
@@ -44,6 +45,7 @@ type MasteryPracticeWorkspaceProps = {
   getCurrentDocumentMarkdown: () => string;
   isGenerating: boolean;
   onEnsureReadyCards: (minimumReadyCards: number) => Promise<DocumentMasteryCards | null>;
+  onForegroundContextChange?: (context: AgentForegroundContext | null) => void;
   onOpenGeneration: () => void;
   onPracticeChanged: () => Promise<unknown>;
   onResultsChange: (showingResults: boolean) => void;
@@ -506,6 +508,7 @@ function ResultsView({
   onOutcomeChange,
   onRetry,
   outcomeChangingId,
+  onForegroundContextChange,
   session,
 }: {
   filter: ResultFilter;
@@ -513,6 +516,7 @@ function ResultsView({
   onOutcomeChange: (sessionCard: MasteryPracticeSessionCard, outcome: "passed" | "review") => void;
   onRetry: (sessionCard: MasteryPracticeSessionCard) => void;
   outcomeChangingId: number | null;
+  onForegroundContextChange?: (context: AgentForegroundContext | null) => void;
   session: MasteryPracticeSession;
 }) {
   const passingScore = session.masterySettings.passingScore;
@@ -526,19 +530,56 @@ function ResultsView({
   const average = succeeded.length > 0
     ? Math.round(succeeded.reduce((total, entry) => total + (entry.grading?.score ?? 0), 0) / succeeded.length)
     : null;
-  const filteredCards = session.cards.filter((entry) => {
+  const filteredCards = useMemo(() => session.cards.filter((entry) => {
     const grading = entry.grading;
     if (filter === "all") return true;
     if (filter === "pending") return !grading || grading.status === "queued" || grading.status === "running";
     if (!grading || grading.status === "queued" || grading.status === "running") return false;
-    return outcomeFor(entry) === filter;
-  });
-  const resultGroups = session.scope === "global"
+    if (entry.manualOutcome) return entry.manualOutcome === filter;
+    return ((grading.score ?? 0) >= passingScore ? "passed" : "review") === filter;
+  }), [filter, passingScore, session.cards]);
+  const resultGroups = useMemo(() => session.scope === "global"
     ? [...new Set(filteredCards.map((entry) => entry.sourceDocumentPath))].map((documentPath) => ({
         cards: filteredCards.filter((entry) => entry.sourceDocumentPath === documentPath),
         documentPath,
       }))
-    : [{ cards: filteredCards, documentPath: "" }];
+    : [{ cards: filteredCards, documentPath: "" }], [filteredCards, session.scope]);
+  const resultsScrollRef = useRef<HTMLDivElement>(null);
+  const visibleCardsRef = useRef(new Map<number, { entry: MasteryPracticeSessionCard; ratio: number }>());
+
+  useEffect(() => {
+    const root = resultsScrollRef.current;
+    if (!root || !onForegroundContextChange) return;
+    const entriesById = new Map(filteredCards.map((entry) => [entry.id, entry]));
+    const visibleCards = visibleCardsRef.current;
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach((intersection) => {
+        const entryId = Number((intersection.target as HTMLElement).dataset.sessionCardId);
+        const entry = entriesById.get(entryId);
+        if (!entry) return;
+        if (intersection.isIntersecting) {
+          visibleCards.set(entry.id, { entry, ratio: intersection.intersectionRatio });
+        } else {
+          visibleCards.delete(entry.id);
+        }
+      });
+      const visible = [...visibleCards.values()].sort((left, right) => right.ratio - left.ratio)[0]?.entry;
+      onForegroundContextChange(visible ? {
+        documentPath: visible.sourceDocumentPath,
+        key: `answer:${session.id}:${visible.id}`,
+        kind: "answer",
+        label: visible.card.title,
+        sessionCard: visible,
+        sessionId: session.id,
+      } : null);
+    }, { root, threshold: [0.25, 0.5, 0.75] });
+    root.querySelectorAll<HTMLElement>("[data-session-card-id]").forEach((node) => observer.observe(node));
+    return () => {
+      observer.disconnect();
+      visibleCards.clear();
+      onForegroundContextChange(null);
+    };
+  }, [filteredCards, onForegroundContextChange, session.id]);
 
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
@@ -570,7 +611,7 @@ function ResultsView({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
+      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1" ref={resultsScrollRef}>
         {filteredCards.length === 0 && (
           <div className="flex min-h-52 items-center justify-center text-sm text-white/42">No results in this filter.</div>
         )}
@@ -588,7 +629,11 @@ function ResultsView({
           const canSetOutcome = grading?.status === "succeeded" || grading?.status === "failed";
           const changingOutcome = outcomeChangingId === entry.id;
           return (
-            <article className="relative rounded-md border border-white/[0.07] bg-white/[0.025] p-4" key={entry.id}>
+            <article
+              className="relative rounded-md border border-white/[0.07] bg-white/[0.025] p-4"
+              data-session-card-id={entry.id}
+              key={entry.id}
+            >
               <div className="min-w-0 pr-80">
                   <p className="text-[10px] font-medium uppercase tracking-wide text-white/34">
                     Card {index + 1} · {kindLabels[entry.card.kind]}
@@ -692,6 +737,7 @@ function MasteryPracticeWorkspace({
   getCurrentDocumentMarkdown,
   isGenerating,
   onEnsureReadyCards,
+  onForegroundContextChange,
   onOpenGeneration,
   onPracticeChanged,
   onResultsChange,
@@ -1019,6 +1065,39 @@ function MasteryPracticeWorkspace({
     setActiveIndex(Math.max(0, Math.min(session.cards.length - 1, index)));
   }, [session]);
 
+  useEffect(() => {
+    if (view !== "deck" || !documentPath) return;
+    const card = cards.find((candidate) => candidate.id === detailCardId) ?? cards[0] ?? null;
+    if (!card) return;
+    const weaknessIds = new Set(card.weaknessLinks.map((link) => link.weaknessId));
+    onForegroundContextChange?.({
+      card,
+      documentPath,
+      key: `card:${documentPath}:${card.id}`,
+      kind: "card",
+      label: card.title,
+      stageStates: cardState?.stageStates.filter((state) => card.targets.some((target) => target.conceptId === state.conceptId && target.stage === state.stage)) ?? [],
+      weaknesses: cardState?.weaknesses.filter((weakness) => weaknessIds.has(weakness.id)) ?? [],
+    });
+    return () => onForegroundContextChange?.(null);
+  }, [cardState?.stageStates, cardState?.weaknesses, cards, detailCardId, documentPath, onForegroundContextChange, view]);
+
+  useEffect(() => {
+    if (view !== "practice" || practiceMode !== "answering" || !session?.cards.length) return;
+    const entry = session.cards[safeActiveIndex];
+    if (!entry) return;
+    onForegroundContextChange?.({
+      card: entry.card,
+      documentPath: entry.sourceDocumentPath,
+      key: `card:${entry.sourceDocumentPath}:${entry.card.id}`,
+      kind: "card",
+      label: entry.card.title,
+      stageStates: [],
+      weaknesses: entry.weaknesses,
+    });
+    return () => onForegroundContextChange?.(null);
+  }, [onForegroundContextChange, practiceMode, safeActiveIndex, session, view]);
+
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
       {isGenerating && progress && <ProgressStatus progress={progress} />}
@@ -1069,6 +1148,7 @@ function MasteryPracticeWorkspace({
           onOutcomeChange={setCardOutcome}
           onRetry={retryGrading}
           outcomeChangingId={outcomeChangingId}
+          onForegroundContextChange={onForegroundContextChange}
           session={session}
         />
       ) : (

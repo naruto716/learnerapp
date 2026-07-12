@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  CheckIcon,
   ClockCounterClockwiseIcon,
   CornersInIcon,
   CornersOutIcon,
@@ -14,6 +15,10 @@ import {
 } from "@phosphor-icons/react";
 import { useEffect, useRef, useState } from "react";
 import type { ProposedDocumentPatch } from "./documentPatch";
+import {
+  foregroundContextDescription,
+  type AgentForegroundContext,
+} from "./agentForegroundContext";
 import type { ChangeEvent, DragEvent, FormEvent, KeyboardEvent, ClipboardEvent } from "react";
 import { runStudyAgentLoop, type AgentContextState, type AgentSource, type AgentToolCall } from "./studyAgent";
 import type { CurrentDocumentAgentTools } from "@/components/editor/TiptapEditor";
@@ -45,6 +50,11 @@ type ChatMessage = {
   toolCalls?: AgentToolCall[];
   toolName?: string;
   toolResult?: unknown;
+  viewingContext?: {
+    attached: boolean;
+    description: string | null;
+    key: string | null;
+  };
 };
 
 type ChatSession = {
@@ -486,6 +496,7 @@ function ToolResultMessage({ message }: { message: ChatMessage }) {
 export default function ChatPanel({
   closeDocumentTab,
   ensureDocumentTools,
+  foregroundContext,
   getCurrentDocumentTools,
   getDocumentTools,
   getOpenDocumentPaths,
@@ -497,6 +508,7 @@ export default function ChatPanel({
 }: {
   closeDocumentTab: (documentPath: string, documentType?: DocumentNode["type"]) => void;
   ensureDocumentTools: (documentPath: string) => Promise<CurrentDocumentAgentTools | null>;
+  foregroundContext: AgentForegroundContext | null;
   getCurrentDocumentTools: () => CurrentDocumentAgentTools | null;
   getDocumentTools: (documentPath: string) => CurrentDocumentAgentTools | null;
   getOpenDocumentPaths: () => string[];
@@ -510,6 +522,8 @@ export default function ChatPanel({
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState("");
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
+  const [dismissedForegroundContextKey, setDismissedForegroundContextKey] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [images, setImages] = useState<PendingImage[]>([]);
   const [isAgentRunning, setIsAgentRunning] = useState(false);
@@ -524,6 +538,9 @@ export default function ChatPanel({
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const imagesRef = useRef<PendingImage[]>([]);
+  const foregroundContextEnabled = Boolean(
+    foregroundContext && foregroundContext.key !== dismissedForegroundContextKey,
+  );
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -613,6 +630,7 @@ export default function ChatPanel({
       return [];
     });
     setHistoryOpen(false);
+    setAttachmentMenuOpen(false);
   }
 
   function loadSession(session: ChatSession) {
@@ -848,6 +866,7 @@ export default function ChatPanel({
     const content = input.trim();
     const readyImages = images.filter((image) => image.status === "ready" && image.dataUrl);
     if (!content && readyImages.length === 0) return;
+    const attachedForegroundContext = foregroundContextEnabled ? foregroundContext : null;
 
     const userMessage: ChatMessage = {
       id: generateId("message"),
@@ -855,6 +874,11 @@ export default function ChatPanel({
       content,
       createdAt: Date.now(),
       images: readyImages.map((image) => image.dataUrl as string),
+      viewingContext: {
+        attached: Boolean(attachedForegroundContext),
+        description: attachedForegroundContext ? foregroundContextDescription(attachedForegroundContext) : null,
+        key: attachedForegroundContext?.key ?? null,
+      },
     };
     const messagesForAgent = [...messages, userMessage];
     const nextMessages = [...messages, userMessage];
@@ -882,6 +906,7 @@ export default function ChatPanel({
         getCurrentDocumentTools,
         getDocumentTools,
         getOpenDocumentPaths,
+        foregroundContext: attachedForegroundContext,
         messages: messagesForAgent
           .filter(
             (message): message is ChatMessage & { role: "user" | "assistant" } =>
@@ -1114,6 +1139,13 @@ export default function ChatPanel({
                         ))}
                       </div>
                     )}
+                    {message.role === "user" && message.viewingContext && (
+                      <p className={`${message.content || message.images?.length ? "mt-2" : ""} text-[11px] text-white/42`}>
+                        {message.viewingContext.attached
+                          ? `Viewing context attached · ${message.viewingContext.description}`
+                          : "No viewing context attached"}
+                      </p>
+                    )}
                     {message.toolCalls?.length ? (
                       <ToolCallMessage toolCalls={message.toolCalls} />
                     ) : message.role === "tool" ? (
@@ -1203,15 +1235,77 @@ export default function ChatPanel({
             </div>
           )}
 
+          {foregroundContext && foregroundContextEnabled && (
+            <div className="mb-2 flex items-center px-1">
+              <span className="inline-flex min-w-0 items-center gap-2 rounded-full bg-white/[0.07] py-1 pl-2.5 pr-1 text-[11px] text-white/62 ring-1 ring-white/[0.08]">
+                <span className="shrink-0 font-medium text-white/42">Viewing</span>
+                <span className="truncate">{foregroundContextDescription(foregroundContext)}</span>
+                <button
+                  aria-label="Remove viewing context"
+                  className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-white/38 transition hover:bg-white/[0.08] hover:text-white/74"
+                  onClick={() => setDismissedForegroundContextKey(foregroundContext.key)}
+                  type="button"
+                >
+                  <XIcon size={11} />
+                </button>
+              </span>
+            </div>
+          )}
+
           <div className="flex items-end gap-1">
-            <button
-              type="button"
-              aria-label="Attach image"
-              className="mb-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-white/55 transition-colors hover:bg-white/[0.08] hover:text-white/85"
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <ImageIcon size={19} />
-            </button>
+            <div className="relative shrink-0">
+              <button
+                type="button"
+                aria-label="Add attachment"
+                aria-expanded={attachmentMenuOpen}
+                className="mb-0.5 flex h-8 w-8 items-center justify-center rounded-full text-white/55 transition-colors hover:bg-white/[0.08] hover:text-white/85"
+                onClick={() => setAttachmentMenuOpen((open) => !open)}
+              >
+                <PlusIcon size={19} />
+              </button>
+              {attachmentMenuOpen && (
+                <div className="absolute bottom-10 left-0 z-30 w-64 rounded-xl bg-[#242424] p-1.5 shadow-2xl ring-1 ring-white/[0.12]">
+                  <button
+                    className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-white/72 transition hover:bg-white/[0.07] hover:text-white/90"
+                    onClick={() => {
+                      setAttachmentMenuOpen(false);
+                      fileInputRef.current?.click();
+                    }}
+                    type="button"
+                  >
+                    <ImageIcon size={17} />
+                    Add images
+                  </button>
+                  <button
+                    className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left transition hover:bg-white/[0.07] disabled:opacity-40"
+                    disabled={!foregroundContext}
+                    onClick={() => {
+                      if (!foregroundContext) return;
+                      setDismissedForegroundContextKey(
+                        foregroundContextEnabled ? foregroundContext.key : null,
+                      );
+                    }}
+                    type="button"
+                  >
+                    <span className="min-w-0">
+                      <span className="block text-sm text-white/72">Include viewing context</span>
+                      <span className="block truncate text-[11px] text-white/36">
+                        {foregroundContext
+                          ? foregroundContextDescription(foregroundContext)
+                          : "Nothing relevant is currently visible"}
+                      </span>
+                    </span>
+                    <span className={`flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition ${
+                      foregroundContextEnabled ? "justify-end bg-white/22" : "justify-start bg-white/[0.08]"
+                    }`}>
+                      <span className="flex h-4 w-4 items-center justify-center rounded-full bg-white text-black">
+                        {foregroundContextEnabled && <CheckIcon size={10} weight="bold" />}
+                      </span>
+                    </span>
+                  </button>
+                </div>
+              )}
+            </div>
 
             <textarea
               aria-label="Message"

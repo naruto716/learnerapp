@@ -19,7 +19,8 @@ import {
   WarningCircleIcon,
   XIcon,
 } from "@phosphor-icons/react";
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import type { AgentForegroundContext } from "@/components/ai/agentForegroundContext";
 import MasteryCardCarousel from "./MasteryCardCarousel";
 import MasteryCardGenerationDialog from "./MasteryCardGenerationDialog";
 import { MasteryCardFrame, MasteryCardNavigation, masteryBottomFadeStyle } from "./MasteryCardLayout";
@@ -50,6 +51,7 @@ type MasteryPanelProps = {
   onGenerate: (force?: boolean) => boolean | Promise<boolean>;
   onGenerateCards: (preferences: MasteryCardPreferences) => boolean | Promise<boolean>;
   onGenerateMetaphor: () => boolean | Promise<boolean>;
+  onForegroundContextChange?: (context: AgentForegroundContext | null) => void;
   onPracticeChanged: () => Promise<unknown>;
   onMasteryScoreChange: (conceptId: number, score: number) => void | Promise<void>;
   readCurrentDocumentMarkdown: () => string;
@@ -428,12 +430,13 @@ export default function MasteryPanel({
   onGenerate,
   onGenerateCards,
   onGenerateMetaphor,
+  onForegroundContextChange,
   onPracticeChanged,
   onMasteryScoreChange,
   readCurrentDocumentMarkdown,
   open,
 }: MasteryPanelProps) {
-  const concepts = mastery?.concepts ?? [];
+  const concepts = useMemo(() => mastery?.concepts ?? [], [mastery?.concepts]);
   const conceptCount = concepts.length;
   const hasConcepts = conceptCount > 0;
   const hasMetaphor = mastery?.metaphor !== null && mastery?.metaphor !== undefined;
@@ -461,6 +464,23 @@ export default function MasteryPanel({
   const completedCardCount = cards.filter((card) => card.status === "done").length;
   const practiceWorkspaceRef = useRef<MasteryPracticeWorkspaceHandle>(null);
   const practiceOpen = flashcardView === "practice";
+
+  useEffect(() => {
+    if (!open || section !== "concepts" || viewMode !== "focus" || !activeDocumentPath) {
+      return;
+    }
+    const concept = concepts[safeActiveIndex];
+    if (!concept) return;
+    onForegroundContextChange?.({
+      concept,
+      documentPath: activeDocumentPath,
+      key: `concept:${activeDocumentPath}:${concept.id}`,
+      kind: "concept",
+      label: concept.name,
+      metaphorScene: mastery?.metaphor?.conceptScenes.find((scene) => scene.conceptId === concept.id) ?? null,
+    });
+    return () => onForegroundContextChange?.(null);
+  }, [activeDocumentPath, concepts, mastery?.metaphor, onForegroundContextChange, open, safeActiveIndex, section, viewMode]);
 
   useEffect(() => {
     setShowMetaphor(hasMetaphor);
@@ -849,6 +869,7 @@ export default function MasteryPanel({
             key={activeDocumentPath}
             onOpenGeneration={() => setCardGenerationOpen(true)}
             onEnsureReadyCards={onEnsureReadyCards}
+            onForegroundContextChange={onForegroundContextChange}
             onPracticeChanged={onPracticeChanged}
             onResultsChange={setPracticeResultsOpen}
             onResumableChange={setHasResumablePractice}

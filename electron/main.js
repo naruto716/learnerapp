@@ -402,8 +402,8 @@ ipcMain.handle("speech:transcribe", async (_event, request) => {
   return transcribeSpeech(request);
 });
 
-ipcMain.handle("mastery:getDocumentMastery", async (_event, filePath, markdown) => {
-  return getDocumentMastery(filePathWithExtension(filePath), markdown);
+ipcMain.handle("mastery:getDocumentMastery", async (_event, filePath, markdown, options) => {
+  return getDocumentMastery(filePathWithExtension(filePath), markdown, options);
 });
 
 ipcMain.handle("mastery:generateDocumentMastery", async (_event, request) => {
@@ -546,7 +546,7 @@ ipcMain.handle("mastery:createPracticeSession", async (_event, request) => {
 
 ipcMain.handle("mastery:getRevisionOverview", async (_event, request) => {
   const overview = revisionOverview(request);
-  kickRevisionPreparation(request);
+  if (request?.prepare !== false) kickRevisionPreparation(request);
   return overview;
 });
 
@@ -554,9 +554,9 @@ ipcMain.handle("mastery:createRevisionSession", async (_event, request) => {
   return createRevisionSession(request);
 });
 
-ipcMain.handle("mastery:getPracticeSession", async (_event, sessionId, settings) => {
+ipcMain.handle("mastery:getPracticeSession", async (_event, sessionId, settings, options) => {
   configureAiSettings(settings);
-  return getPracticeSession(sessionId);
+  return getPracticeSession(sessionId, options);
 });
 
 ipcMain.handle("mastery:listPracticeSessions", async (_event, documentPath) => {
