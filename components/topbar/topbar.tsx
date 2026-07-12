@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import IconButton from "../IconButton";
 import { documentTitle } from "../documentPaths";
+import WindowControls from "./WindowControls";
 
 type TabDragTarget = {
   path: string;
@@ -109,6 +110,7 @@ export default function TopBar({
           </div>
         ))}
       </div>
+      <WindowControls />
     </div>
   );
 }

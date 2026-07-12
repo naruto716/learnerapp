@@ -132,6 +132,10 @@ function notifyFullScreenChange(win) {
   win.webContents.send("window:fullscreen-change", win.isFullScreen());
 }
 
+function notifyMaximizedChange(win) {
+  win.webContents.send("window:maximized-change", win.isMaximized());
+}
+
 function isTrustedAppOrigin(origin) {
   if (!origin) return false;
   if (origin.startsWith(`${appProtocol}://app`)) return true;
@@ -160,6 +164,25 @@ ipcMain.handle("window:is-fullscreen", (event) => {
   return BrowserWindow.fromWebContents(event.sender)?.isFullScreen() ?? false;
 });
 
+ipcMain.handle("window:minimize", (event) => {
+  BrowserWindow.fromWebContents(event.sender)?.minimize();
+});
+
+ipcMain.handle("window:toggle-maximize", (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (!win) return false;
+  if (win.isMaximized()) {
+    win.unmaximize();
+  } else {
+    win.maximize();
+  }
+  return win.isMaximized();
+});
+
+ipcMain.handle("window:close", (event) => {
+  BrowserWindow.fromWebContents(event.sender)?.close();
+});
+
 function createWindow() {
   const isMac = process.platform === "darwin";
   const win = new BrowserWindow({
@@ -181,6 +204,8 @@ function createWindow() {
 
   win.on("enter-full-screen", () => notifyFullScreenChange(win));
   win.on("leave-full-screen", () => notifyFullScreenChange(win));
+  win.on("maximize", () => notifyMaximizedChange(win));
+  win.on("unmaximize", () => notifyMaximizedChange(win));
 
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);

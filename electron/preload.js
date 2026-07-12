@@ -5,6 +5,20 @@ contextBridge.exposeInMainWorld("learner", {
   isFullScreen: () => {
     return ipcRenderer.invoke("window:is-fullscreen");
   },
+  minimizeWindow: () => {
+    return ipcRenderer.invoke("window:minimize");
+  },
+  toggleMaximizeWindow: () => {
+    return ipcRenderer.invoke("window:toggle-maximize");
+  },
+  onMaximizedChange: (callback) => {
+    const listener = (_event, isMaximized) => callback(isMaximized);
+    ipcRenderer.on("window:maximized-change", listener);
+    return () => ipcRenderer.removeListener("window:maximized-change", listener);
+  },
+  closeWindow: () => {
+    return ipcRenderer.invoke("window:close");
+  },
   onFullScreenChange: (callback) => {
     const listener = (_event, isFullScreen) => callback(isFullScreen);
     ipcRenderer.on("window:fullscreen-change", listener);

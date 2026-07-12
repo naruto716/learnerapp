@@ -631,6 +631,10 @@ declare global {
   interface Window {
     learner?: {
       platform: NodeJS.Platform;
+      minimizeWindow: () => Promise<void>;
+      toggleMaximizeWindow: () => Promise<boolean>;
+      onMaximizedChange: (callback: (isMaximized: boolean) => void) => () => void;
+      closeWindow: () => Promise<void>;
       listDocuments: () => Promise<{
         directory: string;
         tree: DocumentNode[];

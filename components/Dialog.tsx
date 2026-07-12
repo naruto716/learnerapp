@@ -1,11 +1,12 @@
 "use client";
 
 import { XIcon } from "@phosphor-icons/react";
-import { useEffect, useEffectEvent, useId, useRef, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useId, useRef, useSyncExternalStore, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import IconButton from "./IconButton";
 
 const openDialogStack: symbol[] = [];
+const subscribeToClient = () => () => {};
 
 export default function Dialog({
   display,
@@ -32,6 +33,7 @@ export default function Dialog({
 }) {
   const titleId = useId();
   const dialogIdRef = useRef(Symbol("dialog"));
+  const isClient = useSyncExternalStore(subscribeToClient, () => true, () => false);
   const requestClose = useEffectEvent(() => onClose());
 
   useEffect(() => {
@@ -52,7 +54,7 @@ export default function Dialog({
     };
   }, [open]);
 
-  if ((!open && !keepMounted) || typeof document === "undefined") return null;
+  if ((!open && !keepMounted) || !isClient) return null;
 
   return createPortal(
     <div

@@ -13,6 +13,7 @@ import {
   TrashIcon,
   XIcon,
 } from "@phosphor-icons/react";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { useEffect, useRef, useState } from "react";
 import type { ProposedDocumentPatch } from "./documentPatch";
 import {
@@ -522,7 +523,6 @@ export default function ChatPanel({
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState("");
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
   const [dismissedForegroundContextKey, setDismissedForegroundContextKey] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [images, setImages] = useState<PendingImage[]>([]);
@@ -630,7 +630,6 @@ export default function ChatPanel({
       return [];
     });
     setHistoryOpen(false);
-    setAttachmentMenuOpen(false);
   }
 
   function loadSession(session: ChatSession) {
@@ -1253,39 +1252,39 @@ export default function ChatPanel({
           )}
 
           <div className="flex items-end gap-1">
-            <div className="relative shrink-0">
-              <button
-                type="button"
-                aria-label="Add attachment"
-                aria-expanded={attachmentMenuOpen}
-                className="mb-0.5 flex h-8 w-8 items-center justify-center rounded-full text-white/55 transition-colors hover:bg-white/[0.08] hover:text-white/85"
-                onClick={() => setAttachmentMenuOpen((open) => !open)}
-              >
-                <PlusIcon size={19} />
-              </button>
-              {attachmentMenuOpen && (
-                <div className="absolute bottom-10 left-0 z-30 w-64 rounded-xl bg-[#242424] p-1.5 shadow-2xl ring-1 ring-white/[0.12]">
-                  <button
-                    className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-white/72 transition hover:bg-white/[0.07] hover:text-white/90"
-                    onClick={() => {
-                      setAttachmentMenuOpen(false);
-                      fileInputRef.current?.click();
-                    }}
-                    type="button"
+            <DropdownMenu.Root>
+              <DropdownMenu.Trigger asChild>
+                <button
+                  type="button"
+                  aria-label="Add attachment"
+                  className="mb-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-white/55 transition-colors hover:bg-white/[0.08] hover:text-white/85 data-[state=open]:bg-white/[0.08] data-[state=open]:text-white/85"
+                >
+                  <PlusIcon size={19} />
+                </button>
+              </DropdownMenu.Trigger>
+              <DropdownMenu.Portal>
+                <DropdownMenu.Content
+                  align="start"
+                  className="app-no-drag z-[90] w-64 rounded-xl bg-[#242424] p-1.5 text-white shadow-2xl ring-1 ring-white/[0.12]"
+                  side="top"
+                  sideOffset={8}
+                >
+                  <DropdownMenu.Item
+                    className="flex cursor-default select-none items-center gap-3 rounded-lg px-3 py-2 text-sm text-white/72 outline-none transition data-[highlighted]:bg-white/[0.07] data-[highlighted]:text-white/90"
+                    onSelect={() => fileInputRef.current?.click()}
                   >
                     <ImageIcon size={17} />
                     Add images
-                  </button>
-                  <button
-                    className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left transition hover:bg-white/[0.07] disabled:opacity-40"
+                  </DropdownMenu.Item>
+                  <DropdownMenu.CheckboxItem
+                    checked={foregroundContextEnabled}
+                    className="flex cursor-default select-none items-center justify-between gap-3 rounded-lg px-3 py-2 text-left outline-none transition data-[disabled]:opacity-40 data-[highlighted]:bg-white/[0.07]"
                     disabled={!foregroundContext}
-                    onClick={() => {
+                    onCheckedChange={(checked) => {
                       if (!foregroundContext) return;
-                      setDismissedForegroundContextKey(
-                        foregroundContextEnabled ? foregroundContext.key : null,
-                      );
+                      setDismissedForegroundContextKey(checked ? null : foregroundContext.key);
                     }}
-                    type="button"
+                    onSelect={(event) => event.preventDefault()}
                   >
                     <span className="min-w-0">
                       <span className="block text-sm text-white/72">Include viewing context</span>
@@ -1302,10 +1301,10 @@ export default function ChatPanel({
                         {foregroundContextEnabled && <CheckIcon size={10} weight="bold" />}
                       </span>
                     </span>
-                  </button>
-                </div>
-              )}
-            </div>
+                  </DropdownMenu.CheckboxItem>
+                </DropdownMenu.Content>
+              </DropdownMenu.Portal>
+            </DropdownMenu.Root>
 
             <textarea
               aria-label="Message"
