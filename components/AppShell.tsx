@@ -590,7 +590,11 @@ export default function AppShell() {
         />
         <main className="relative min-h-0 flex-1 overflow-hidden">
           {openTabs.length === 0 ? (
-            <div className="p-4 text-sm text-white/50">Select or create a document.</div>
+            <div className="absolute inset-0 flex items-center justify-center">
+              <p className="bg-gradient-to-r from-white/85 to-white/65 bg-clip-text text-center text-lg font-medium text-transparent">
+                Select or create a document to start.
+              </p>
+            </div>
           ) : (
             openTabs.map((documentPath) => (
               <TiptapEditor
