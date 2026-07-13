@@ -12,6 +12,7 @@ export type LearnerAiSettings = {
   imageQuality: string;
   imageBackground: string;
   imageOutputFormat: string;
+  imageConcurrency: string;
   speechToTextApiKey: string;
   speechToTextLanguage: string;
   speechToTextModel: string;
@@ -30,6 +31,7 @@ export const aiSettingsStorageKeys = {
   imageQuality: "learner.ai.imageQuality.v1",
   imageBackground: "learner.ai.imageBackground.v1",
   imageOutputFormat: "learner.ai.imageOutputFormat.v1",
+  imageConcurrency: "learner.ai.imageConcurrency.v1",
   speechToTextApiKey: "learner.ai.speechToTextApiKey.v1",
   speechToTextLanguage: "learner.ai.speechToTextLanguage.v1",
   speechToTextModel: "learner.ai.speechToTextModel.v1",
@@ -48,6 +50,7 @@ export const defaultAiSettings: LearnerAiSettings = {
   imageQuality: "low",
   imageBackground: "opaque",
   imageOutputFormat: "png",
+  imageConcurrency: "8",
   speechToTextApiKey: "",
   speechToTextLanguage: "eng",
   speechToTextModel: "scribe_v2",
@@ -72,6 +75,7 @@ export function readAiSettings(): LearnerAiSettings {
     imageQuality: readSetting("imageQuality"),
     imageBackground: readSetting("imageBackground"),
     imageOutputFormat: readSetting("imageOutputFormat"),
+    imageConcurrency: readSetting("imageConcurrency"),
     speechToTextApiKey: readSetting("speechToTextApiKey"),
     speechToTextLanguage: readSetting("speechToTextLanguage"),
     speechToTextModel: readSetting("speechToTextModel"),

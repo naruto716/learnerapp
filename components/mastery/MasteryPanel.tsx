@@ -449,8 +449,9 @@ export default function MasteryPanel({
   const [practiceResultsOpen, setPracticeResultsOpen] = useState(false);
   const [practiceStarting, setPracticeStarting] = useState(false);
   const [section, setSection] = useState<MasterySection>("concepts");
-  const [showMetaphor, setShowMetaphor] = useState(hasMetaphor);
+  const [hiddenMetaphorId, setHiddenMetaphorId] = useState<number | null>(null);
   const [viewMode, setViewMode] = useState<MasteryViewMode>("focus");
+  const showMetaphor = hasMetaphor && hiddenMetaphorId !== mastery.metaphor?.id;
   const masteryThresholds = readMasterySettings().thresholds;
   const safeActiveIndex = hasConcepts ? Math.min(activeIndex, conceptCount - 1) : 0;
   const cards = cardState?.cards ?? [];
@@ -498,7 +499,7 @@ export default function MasteryPanel({
   const handleGenerateMetaphor = async () => {
     const generated = await onGenerateMetaphor();
     if (generated) {
-      setShowMetaphor(true);
+      setHiddenMetaphorId(null);
     }
   };
 
@@ -513,7 +514,7 @@ export default function MasteryPanel({
     if (cleared) {
       setActiveIndex(0);
       setSection("concepts");
-      setShowMetaphor(false);
+      setHiddenMetaphorId(null);
       setViewMode("focus");
     }
   };
@@ -800,7 +801,7 @@ export default function MasteryPanel({
                 ariaLabel={showMetaphor ? "Hide metaphor" : "Show metaphor"}
                 disabled={isMetaphorLoading}
                 icon={showMetaphor ? <EyeSlashIcon size={16} /> : <EyeIcon size={16} />}
-                onClick={() => setShowMetaphor((visible) => !visible)}
+                onClick={() => setHiddenMetaphorId(showMetaphor ? mastery.metaphor?.id ?? null : null)}
               />
             )}
             <PanelIconButton

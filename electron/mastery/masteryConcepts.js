@@ -5,6 +5,7 @@ const path = require("path");
 const { DatabaseSync } = require("node:sqlite");
 const { z } = require("zod");
 const { requestStructuredOutput } = require("../aiClient");
+const { getAiSettings } = require("../aiSettings");
 const { resolveDocumentAssetPath, saveDocumentImage } = require("../documentUtil");
 const { generateImage } = require("../imageGeneration");
 const { normalizeMasteryScoringSettings } = require("./masteryScoring");
@@ -946,6 +947,7 @@ async function generateAndSaveMasteryImage({ documentPath, prompt, settings, suf
 }
 
 async function generateMetaphorImages({ concepts, documentPath, metaphor, settings, onProgress }) {
+  const imageConcurrency = Number(getAiSettings(settings).imageConcurrency);
   const imageJobs = [
     {
       kind: "overview",
@@ -977,7 +979,7 @@ async function generateMetaphorImages({ concepts, documentPath, metaphor, settin
     total: totalImages,
   });
 
-  const imageResults = await mapWithConcurrency(imageJobs, 4, async (job) => {
+  const imageResults = await mapWithConcurrency(imageJobs, imageConcurrency, async (job) => {
     try {
       const generated = await generateAndSaveMasteryImage({
         documentPath,

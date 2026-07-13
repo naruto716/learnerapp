@@ -168,7 +168,23 @@ function configureMediaPermissions(ses) {
   });
 }
 
-const aiOperationLock = createKeyedOperationLock();
+function publicAiOperationStatus(status) {
+  if (!status) return null;
+  const documentPrefix = "document:";
+  return {
+    ...status,
+    documentPath: status.key.startsWith(documentPrefix) ? status.key.slice(documentPrefix.length) : null,
+  };
+}
+
+function broadcastAiOperationStatus(status) {
+  const publicStatus = publicAiOperationStatus(status);
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.webContents.send("ai:operationStatus", publicStatus);
+  }
+}
+
+const aiOperationLock = createKeyedOperationLock(broadcastAiOperationStatus);
 
 async function runExclusiveAiOperation(key, label, operation) {
   try {
@@ -523,10 +539,12 @@ ipcMain.handle("mastery:generateMetaphor", async (_event, request) => {
 
   const documentPath = filePathWithExtension(request.documentPath);
   const sendProgress = (progress) => {
-    _event.sender.send("mastery:metaphorProgress", {
+    const nextProgress = {
       ...progress,
       documentPath,
-    });
+    };
+    aiOperationLock.updateProgress(`document:${documentPath}`, nextProgress);
+    _event.sender.send("mastery:metaphorProgress", nextProgress);
   };
 
   configureAiSettings(request?.settings);
@@ -564,6 +582,11 @@ ipcMain.handle("mastery:getCards", async (_event, documentPath) => {
   return getDocumentMasteryCards(filePathWithExtension(documentPath));
 });
 
+ipcMain.handle("mastery:getGenerationStatus", async (_event, documentPath) => {
+  const normalizedPath = filePathWithExtension(documentPath);
+  return publicAiOperationStatus(aiOperationLock.getStatus(`document:${normalizedPath}`));
+});
+
 ipcMain.handle("mastery:generateCards", async (_event, request) => {
   if (!request?.documentPath) {
     throw new Error("Document path is required.");
@@ -571,10 +594,12 @@ ipcMain.handle("mastery:generateCards", async (_event, request) => {
 
   const documentPath = filePathWithExtension(request.documentPath);
   const sendProgress = (progress) => {
-    _event.sender.send("mastery:cardProgress", {
+    const nextProgress = {
       ...progress,
       documentPath,
-    });
+    };
+    aiOperationLock.updateProgress(`document:${documentPath}`, nextProgress);
+    _event.sender.send("mastery:cardProgress", nextProgress);
   };
 
   configureAiSettings(request?.settings);

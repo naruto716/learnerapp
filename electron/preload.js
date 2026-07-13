@@ -101,6 +101,9 @@ contextBridge.exposeInMainWorld("learner", {
   getDocumentMasteryCards: (documentPath) => {
     return ipcRenderer.invoke("mastery:getCards", documentPath);
   },
+  getDocumentMasteryGenerationStatus: (documentPath) => {
+    return ipcRenderer.invoke("mastery:getGenerationStatus", documentPath);
+  },
   generateDocumentMasteryCards: (request) => {
     return ipcRenderer.invoke("mastery:generateCards", request);
   },
@@ -108,6 +111,11 @@ contextBridge.exposeInMainWorld("learner", {
     const listener = (_event, progress) => callback(progress);
     ipcRenderer.on("mastery:cardProgress", listener);
     return () => ipcRenderer.removeListener("mastery:cardProgress", listener);
+  },
+  onAiOperationStatus: (callback) => {
+    const listener = (_event, status) => callback(status);
+    ipcRenderer.on("ai:operationStatus", listener);
+    return () => ipcRenderer.removeListener("ai:operationStatus", listener);
   },
   continueMasteryCardDiscussion: (request) => {
     return ipcRenderer.invoke("mastery:continueCardDiscussion", request);

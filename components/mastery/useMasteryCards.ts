@@ -32,6 +32,29 @@ export function useMasteryCards({
     generationSequenceRef.current += 1;
   }, [activeDocumentPath]);
 
+  const applyGenerationStatus = useCallback((status: LearnerAiOperationStatus | null) => {
+    if (!status || status.documentPath !== activeDocumentPathRef.current || status.operation !== "flashcard generation") {
+      return;
+    }
+
+    if (status.state === "running") {
+      setError(null);
+      setIsGenerating(true);
+      setProgress(status.progress as MasteryCardProgress | null);
+      return;
+    }
+
+    setIsGenerating(false);
+    if (status.state === "failed") {
+      setError(status.error || "Flashcard generation failed.");
+      setProgress(status.progress as MasteryCardProgress | null);
+      return;
+    }
+
+    setError(null);
+    setProgress(null);
+  }, []);
+
   useEffect(() => {
     return window.learner?.onMasteryCardProgress?.((nextProgress) => {
       if (!nextProgress.documentPath || nextProgress.documentPath !== activeDocumentPathRef.current) return;
@@ -56,6 +79,34 @@ export function useMasteryCards({
       return null;
     }
   }, [activeDocumentPath]);
+
+  useEffect(() => {
+    if (!activeDocumentPath) return;
+    let cancelled = false;
+
+    window.learner?.getDocumentMasteryGenerationStatus(activeDocumentPath).then((status) => {
+      if (cancelled) return;
+      applyGenerationStatus(status);
+      if (status?.operation === "flashcard generation" && status.state === "completed") {
+        void loadCards();
+      }
+    });
+    const removeStatusListener = window.learner?.onAiOperationStatus?.((status) => {
+      applyGenerationStatus(status);
+      if (
+        status.documentPath === activeDocumentPathRef.current
+        && status.operation === "flashcard generation"
+        && status.state === "completed"
+      ) {
+        void loadCards();
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      removeStatusListener?.();
+    };
+  }, [activeDocumentPath, applyGenerationStatus, loadCards]);
 
   useEffect(() => {
     const reloadChangedCards = (event: Event) => {

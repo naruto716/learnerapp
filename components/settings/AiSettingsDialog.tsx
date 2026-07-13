@@ -387,6 +387,13 @@ export default function AiSettingsDialog({
                 options={imageFormats}
                 value={settings.imageOutputFormat}
               />
+              <NumberField
+                label="Concurrent images"
+                max={16}
+                min={1}
+                onChange={(value) => updateSetting("imageConcurrency", String(value))}
+                value={Number(settings.imageConcurrency)}
+              />
             </div>
           </Section>
             </>

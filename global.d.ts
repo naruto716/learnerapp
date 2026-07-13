@@ -55,6 +55,7 @@ declare global {
     imageQuality?: string;
     imageBackground?: string;
     imageOutputFormat?: string;
+    imageConcurrency?: string;
     speechToTextApiKey?: string;
     speechToTextLanguage?: string;
     speechToTextModel?: string;
@@ -445,6 +446,18 @@ declare global {
     total: number;
   };
 
+  type LearnerAiOperationStatus = {
+    completedAt: number | null;
+    documentPath: string | null;
+    error: string | null;
+    key: string;
+    operation: string;
+    progress: MasteryCardProgress | MasteryMetaphorProgress | null;
+    startedAt: number;
+    state: "running" | "completed" | "failed";
+    updatedAt: number;
+  };
+
   type DocumentMasteryCardGenerationRequest = {
     documentPath: string;
     generationPrompt: string;
@@ -695,10 +708,12 @@ declare global {
       onMasteryMetaphorProgress: (callback: (progress: MasteryMetaphorProgress) => void) => () => void;
       clearDocumentMastery: (request: DocumentMasteryClearRequest) => Promise<DocumentMastery>;
       getDocumentMasteryCards: (documentPath: string) => Promise<DocumentMasteryCards>;
+      getDocumentMasteryGenerationStatus: (documentPath: string) => Promise<LearnerAiOperationStatus | null>;
       generateDocumentMasteryCards: (
         request: DocumentMasteryCardGenerationRequest,
       ) => Promise<DocumentMasteryCards>;
       onMasteryCardProgress: (callback: (progress: MasteryCardProgress) => void) => () => void;
+      onAiOperationStatus: (callback: (status: LearnerAiOperationStatus) => void) => () => void;
       continueMasteryCardDiscussion: (
         request: MasteryCardDiscussionRequest,
       ) => Promise<MasteryCardDiscussionResult>;

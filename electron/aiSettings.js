@@ -10,6 +10,7 @@ const defaultAiSettings = {
   imageQuality: "low",
   imageBackground: "opaque",
   imageOutputFormat: "png",
+  imageConcurrency: "8",
   speechToTextApiKey: String(process.env.ELEVENLABS_API_KEY || process.env.ELEVEN_LABS_API_KEY || "").trim(),
   speechToTextLanguage: "eng",
   speechToTextModel: "scribe_v2",
@@ -26,6 +27,12 @@ function normalizeBaseUrl(baseUrl) {
   return cleanSetting(baseUrl, defaultAiSettings.baseUrl).replace(/\/+$/g, "");
 }
 
+function normalizeIntegerSetting(value, fallback, minimum, maximum) {
+  const parsed = Number.parseInt(String(value || ""), 10);
+  const fallbackValue = Number.parseInt(String(fallback), 10);
+  return String(Math.min(maximum, Math.max(minimum, Number.isFinite(parsed) ? parsed : fallbackValue)));
+}
+
 function normalizeAiSettings(settings = {}) {
   return {
     apiKey: cleanSetting(settings.apiKey, defaultAiSettings.apiKey),
@@ -39,6 +46,7 @@ function normalizeAiSettings(settings = {}) {
     imageQuality: cleanSetting(settings.imageQuality, defaultAiSettings.imageQuality),
     imageBackground: cleanSetting(settings.imageBackground, defaultAiSettings.imageBackground),
     imageOutputFormat: cleanSetting(settings.imageOutputFormat, defaultAiSettings.imageOutputFormat),
+    imageConcurrency: normalizeIntegerSetting(settings.imageConcurrency, defaultAiSettings.imageConcurrency, 1, 16),
     speechToTextApiKey: cleanSetting(settings.speechToTextApiKey, defaultAiSettings.speechToTextApiKey),
     speechToTextLanguage: cleanSetting(settings.speechToTextLanguage, defaultAiSettings.speechToTextLanguage),
     speechToTextModel: cleanSetting(settings.speechToTextModel, defaultAiSettings.speechToTextModel),

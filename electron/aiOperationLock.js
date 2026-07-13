@@ -1,5 +1,12 @@
-function createKeyedOperationLock() {
+function createKeyedOperationLock(onStatusChange = () => {}) {
   const activeOperations = new Map();
+  const operationStatuses = new Map();
+
+  function saveStatus(key, status) {
+    operationStatuses.set(key, status);
+    onStatusChange(status);
+    return status;
+  }
 
   async function run(key, label, operation) {
     const activeOperation = activeOperations.get(key);
@@ -10,14 +17,57 @@ function createKeyedOperationLock() {
     }
 
     activeOperations.set(key, label);
+    const startedAt = Date.now();
+    saveStatus(key, {
+      completedAt: null,
+      error: null,
+      key,
+      operation: label,
+      progress: null,
+      startedAt,
+      state: "running",
+      updatedAt: startedAt,
+    });
     try {
-      return await operation();
+      const result = await operation();
+      const completedAt = Date.now();
+      saveStatus(key, {
+        ...operationStatuses.get(key),
+        completedAt,
+        state: "completed",
+        updatedAt: completedAt,
+      });
+      return result;
+    } catch (error) {
+      const completedAt = Date.now();
+      saveStatus(key, {
+        ...operationStatuses.get(key),
+        completedAt,
+        error: error instanceof Error ? error.message : String(error),
+        state: "failed",
+        updatedAt: completedAt,
+      });
+      throw error;
     } finally {
       activeOperations.delete(key);
     }
   }
 
-  return { run };
+  function getStatus(key) {
+    return operationStatuses.get(key) ?? null;
+  }
+
+  function updateProgress(key, progress) {
+    const status = operationStatuses.get(key);
+    if (!status || status.state !== "running") return status ?? null;
+    return saveStatus(key, {
+      ...status,
+      progress: { ...progress },
+      updatedAt: Date.now(),
+    });
+  }
+
+  return { getStatus, run, updateProgress };
 }
 
 module.exports = { createKeyedOperationLock };

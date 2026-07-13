@@ -236,6 +236,40 @@ export function useDocumentMastery({
     return refreshed ?? null;
   }, [activeDocumentPath, getCurrentDocumentTools]);
 
+  useEffect(() => {
+    if (!activeDocumentPath) return;
+    let cancelled = false;
+
+    const applyStatus = (status: LearnerAiOperationStatus | null) => {
+      if (!status || status.documentPath !== activeDocumentPathRef.current) return;
+
+      if (status.operation === "mastery concept generation") {
+        setIsLoading(status.state === "running");
+        if (status.state === "failed") setError(status.error || "Mastery extraction failed.");
+        if (status.state === "completed") void refreshMastery();
+        return;
+      }
+
+      if (status.operation !== "metaphor generation") return;
+      setIsMetaphorLoading(status.state === "running");
+      setMetaphorProgress(
+        status.state === "completed" ? null : status.progress as MasteryMetaphorProgress | null,
+      );
+      if (status.state === "failed") setError(status.error || "Mastery metaphor generation failed.");
+      if (status.state === "completed") void refreshMastery();
+    };
+
+    window.learner?.getDocumentMasteryGenerationStatus(activeDocumentPath).then((status) => {
+      if (!cancelled) applyStatus(status);
+    });
+    const removeStatusListener = window.learner?.onAiOperationStatus?.(applyStatus);
+
+    return () => {
+      cancelled = true;
+      removeStatusListener?.();
+    };
+  }, [activeDocumentPath, refreshMastery]);
+
   const generateMetaphor = useCallback(async (sourceMastery?: DocumentMastery, reportError = true) => {
     if (reportError) setError(null);
 
