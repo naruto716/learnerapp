@@ -6,6 +6,7 @@ import FloatingIconButton from "@/components/FloatingIconButton";
 import type { AgentForegroundContext } from "@/components/ai/agentForegroundContext";
 import type { CurrentDocumentAgentTools } from "@/components/editor/TiptapEditor";
 import MasteryPanel from "./MasteryPanel";
+import { readMasterySettings } from "./masterySettings";
 import { useDocumentMastery } from "./useDocumentMastery";
 import { useMasteryCards } from "./useMasteryCards";
 
@@ -53,26 +54,24 @@ export default function MasteryController({
     onMasteryChanged: refreshMastery,
   });
 
-  const generateMasteryAssets = async (force = false) => {
-    const result = await generateMastery(force);
-    if (!result) return false;
+  const masteryAssetsCardRequest = () => {
+    const preferences = cardsController.cardState?.preferences ?? {
+      generationPrompt: "",
+      targetProficiency: "proficient" as const,
+    };
+    return {
+      generationPrompt: preferences.generationPrompt,
+      masterySettings: readMasterySettings(),
+      targetProficiency: preferences.targetProficiency,
+    };
+  };
 
-    await generateMetaphor(result.mastery, false);
-    await cardsController.generateCards(
-      cardsController.cardState?.preferences ?? { generationPrompt: "", targetProficiency: "proficient" },
-    );
-    return true;
+  const generateMasteryAssets = async (force = false) => {
+    return Boolean(await generateMastery(force, masteryAssetsCardRequest()));
   };
 
   const openAndPrepareMastery = async () => {
-    const result = await openMastery();
-    if (result?.generated) {
-      await generateMetaphor(result.mastery, false);
-      await cardsController.generateCards(
-        cardsController.cardState?.preferences ?? { generationPrompt: "", targetProficiency: "proficient" },
-      );
-    }
-    return Boolean(result);
+    return Boolean(await openMastery(masteryAssetsCardRequest()));
   };
 
   const clearAndSyncCards = async () => {

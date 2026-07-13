@@ -12,6 +12,10 @@ type UseDocumentMasteryOptions = {
 };
 
 type DocumentSnapshot = ReturnType<CurrentDocumentAgentTools["read"]>;
+type MasteryAssetsCardRequest = Omit<
+  DocumentMasteryCardGenerationRequest,
+  "documentPath" | "markdown" | "settings"
+>;
 
 function readValidSnapshot(
   activeDocumentPath: string | null,
@@ -56,7 +60,10 @@ export function useDocumentMastery({
 }: UseDocumentMasteryOptions) {
   const [isOpen, setIsOpenState] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [loadingDocumentPath, setLoadingDocumentPath] = useState<string | null>(null);
   const [isMetaphorLoading, setIsMetaphorLoading] = useState(false);
+  const [metaphorLoadingDocumentPath, setMetaphorLoadingDocumentPath] = useState<string | null>(null);
+  const [statusDocumentPath, setStatusDocumentPath] = useState<string | null>(null);
   const [metaphorProgress, setMetaphorProgress] = useState<MasteryMetaphorProgress | null>(null);
   const [mastery, setMastery] = useState<DocumentMastery | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -84,7 +91,7 @@ export function useDocumentMastery({
     [onOpenChange],
   );
 
-  const generateMastery = useCallback(async (force = false) => {
+  const generateMastery = useCallback(async (force = false, cardRequest?: MasteryAssetsCardRequest) => {
     setIsOpen(true);
     setError(null);
     setMetaphorProgress(null);
@@ -98,15 +105,19 @@ export function useDocumentMastery({
     }
 
     const documentSnapshot = validation.snapshot;
+    setLoadingDocumentPath(documentSnapshot.path);
     setIsLoading(true);
 
     try {
-      const result = await window.learner?.generateDocumentMastery({
+      const request = {
         documentPath: documentSnapshot.path,
         force,
         markdown: documentSnapshot.markdown,
         settings: readAiSettings(),
-      });
+      };
+      const result = cardRequest
+        ? await window.learner?.generateDocumentMasteryAssets({ ...request, cardRequest })
+        : await window.learner?.generateDocumentMastery(request);
       if (!result) {
         throw new Error("Mastery extraction is not available in this renderer.");
       }
@@ -121,7 +132,7 @@ export function useDocumentMastery({
     }
   }, [activeDocumentPath, getCurrentDocumentTools, setIsOpen]);
 
-  const openMastery = useCallback(async () => {
+  const openMastery = useCallback(async (cardRequest?: MasteryAssetsCardRequest) => {
     setIsOpen(true);
     setError(null);
 
@@ -134,6 +145,7 @@ export function useDocumentMastery({
     }
 
     const documentSnapshot = validation.snapshot;
+    setLoadingDocumentPath(documentSnapshot.path);
     setIsLoading(true);
 
     try {
@@ -144,15 +156,27 @@ export function useDocumentMastery({
 
       if (cachedMastery.concepts.length > 0) {
         setMastery(cachedMastery);
+        if (cardRequest) {
+          return window.learner?.generateDocumentMasteryAssets({
+            cardRequest,
+            documentPath: documentSnapshot.path,
+            force: false,
+            markdown: documentSnapshot.markdown,
+            settings: readAiSettings(),
+          });
+        }
         return { generated: false, mastery: cachedMastery };
       }
 
-      const result = await window.learner?.generateDocumentMastery({
+      const request = {
         documentPath: documentSnapshot.path,
         force: false,
         markdown: documentSnapshot.markdown,
         settings: readAiSettings(),
-      });
+      };
+      const result = cardRequest
+        ? await window.learner?.generateDocumentMasteryAssets({ ...request, cardRequest })
+        : await window.learner?.generateDocumentMastery(request);
       if (!result) {
         throw new Error("Mastery extraction is not available in this renderer.");
       }
@@ -242,8 +266,10 @@ export function useDocumentMastery({
 
     const applyStatus = (status: LearnerAiOperationStatus | null) => {
       if (!status || status.documentPath !== activeDocumentPathRef.current) return;
+      setStatusDocumentPath(status.documentPath);
 
       if (status.operation === "mastery concept generation") {
+        if (status.state === "running") setLoadingDocumentPath(status.documentPath);
         setIsLoading(status.state === "running");
         if (status.state === "failed") setError(status.error || "Mastery extraction failed.");
         if (status.state === "completed") void refreshMastery();
@@ -251,6 +277,7 @@ export function useDocumentMastery({
       }
 
       if (status.operation !== "metaphor generation") return;
+      if (status.state === "running") setMetaphorLoadingDocumentPath(status.documentPath);
       setIsMetaphorLoading(status.state === "running");
       setMetaphorProgress(
         status.state === "completed" ? null : status.progress as MasteryMetaphorProgress | null,
@@ -259,8 +286,17 @@ export function useDocumentMastery({
       if (status.state === "completed") void refreshMastery();
     };
 
-    window.learner?.getDocumentMasteryGenerationStatus(activeDocumentPath).then((status) => {
-      if (!cancelled) applyStatus(status);
+    window.learner?.getDocumentMasteryGenerationStatuses(activeDocumentPath).then((statuses) => {
+      if (cancelled) return;
+      setStatusDocumentPath(activeDocumentPath);
+      const conceptStatus = statuses.find((status) => status.operation === "mastery concept generation") ?? null;
+      const metaphorStatus = statuses.find((status) => status.operation === "metaphor generation") ?? null;
+      setError(null);
+      setIsLoading(false);
+      setIsMetaphorLoading(false);
+      setMetaphorProgress(null);
+      applyStatus(conceptStatus);
+      applyStatus(metaphorStatus);
     });
     const removeStatusListener = window.learner?.onAiOperationStatus?.(applyStatus);
 
@@ -289,6 +325,7 @@ export function useDocumentMastery({
     const metaphorSequence = metaphorSequenceRef.current + 1;
     metaphorSequenceRef.current = metaphorSequence;
     const documentPath = validation.snapshot.path;
+    setMetaphorLoadingDocumentPath(documentPath);
     setMetaphorProgress({
       completed: 0,
       failed: 0,
@@ -334,6 +371,7 @@ export function useDocumentMastery({
     }
 
     const snapshot = getCurrentDocumentTools()?.read();
+    setLoadingDocumentPath(snapshot?.path ?? activeDocumentPath);
     setIsLoading(true);
     setIsMetaphorLoading(false);
 
@@ -366,8 +404,10 @@ export function useDocumentMastery({
     error,
     generateMastery,
     generateMetaphor,
-    isLoading,
-    isMetaphorLoading,
+    isLoading: statusDocumentPath === activeDocumentPath && isLoading && loadingDocumentPath === activeDocumentPath,
+    isMetaphorLoading: statusDocumentPath === activeDocumentPath
+      && isMetaphorLoading
+      && metaphorLoadingDocumentPath === activeDocumentPath,
     isOpen,
     mastery,
     metaphorProgress,

@@ -132,20 +132,36 @@ function createTaskDependencyResolver({ definitions, queue }) {
       const dedupKey = requiredString(definition, "dedupKey", type, context, artifactKey);
       const lockKey = requiredString(definition, "lockKey", type, context, artifactKey);
       const isForced = forcedTypes.has(type);
+      const activeTask = isForced ? null : queue.getActiveTaskByDedupKey(dedupKey);
 
-      if (!isForced) {
-        const activeTask = queue.getActiveTaskByDedupKey(dedupKey);
-        if (activeTask) {
-          const node = { artifactKey, dedupKey, disposition: "joined", lockKey, taskId: activeTask.id };
-          nodes.set(type, node);
-          return node;
-        }
+      if (activeTask && (activeTask.status === "queued" || activeTask.status === "running")) {
+        const node = { artifactKey, dedupKey, disposition: "joined", lockKey, taskId: activeTask.id };
+        nodes.set(type, node);
+        return node;
       }
 
       visiting.push(type);
       const dependencyTypes = taskDependencies(definition, context);
       const dependencyNodes = dependencyTypes.map(resolveType);
       visiting.pop();
+
+      const expectedDependencyIds = dependencyNodes
+        .filter((node) => node.disposition !== "persisted")
+        .map((node) => node.taskId)
+        .sort();
+      const activeDependencyIds = activeTask
+        ? activeTask.dependencies
+          .filter((dependencyId) => queue.getTask(dependencyId)?.status !== "completed")
+          .sort()
+        : [];
+      const activeTaskMatchesDependencies = activeTask
+        && expectedDependencyIds.length === activeDependencyIds.length
+        && expectedDependencyIds.every((dependencyId, index) => dependencyId === activeDependencyIds[index]);
+      if (activeTaskMatchesDependencies) {
+        const node = { artifactKey, dedupKey, disposition: "joined", lockKey, taskId: activeTask.id };
+        nodes.set(type, node);
+        return node;
+      }
 
       const activeLockTasks = queue.getActiveTasksByLockKey(lockKey);
       const dependenciesArePersisted = dependencyNodes.every((node) => node.disposition === "persisted");
@@ -168,7 +184,7 @@ function createTaskDependencyResolver({ definitions, queue }) {
       }
 
       const task = {
-        allowDuplicate: isForced,
+        allowDuplicate: isForced || Boolean(activeTask),
         artifactKey,
         callback: callbackFor(definition, context),
         dedupKey,

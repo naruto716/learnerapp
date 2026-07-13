@@ -19,6 +19,7 @@ function createTaskManagementQueue({ onListenerError = () => {} } = {}) {
     const activeTaskIdsByDedupKey = new Map();
     const activeTaskIdsByLockKey = new Map();
     const listeners = new Set();
+    const taskWaiters = new Map();
 
     function deduplicationKey(document, type) {
         return JSON.stringify([document, type]);
@@ -265,6 +266,7 @@ function createTaskManagementQueue({ onListenerError = () => {} } = {}) {
                 document: task.document,
                 error: null,
                 externalDependencies,
+                failure: null,
                 id: taskIdsByKey.get(task.key),
                 key: task.key,
                 lockKey: task.lockKey || taskDeduplicationKey,
@@ -376,6 +378,7 @@ function createTaskManagementQueue({ onListenerError = () => {} } = {}) {
             releaseDeduplicationKey(dependentTask);
             blockDependents(dependentTask.id, failedTaskId);
             detachFromDependencies(dependentTask);
+            settleTaskWaiters(dependentTask);
             emitTaskChange(dependentTask);
         }
     }
@@ -398,22 +401,55 @@ function createTaskManagementQueue({ onListenerError = () => {} } = {}) {
         }
     }
 
-    function nextRunnableTask() {
-        while (runnableQueue.length > 0) {
-            const task = tasks.get(runnableQueue.shift());
-            if (task?.status === "queued") return task;
+    function claimNextTask({ excludedLockKeys = [] } = {}) {
+        const excludedLocks = excludedLockKeys instanceof Set ? excludedLockKeys : new Set(excludedLockKeys);
+        for (let taskIndex = 0; taskIndex < runnableQueue.length;) {
+            const task = tasks.get(runnableQueue[taskIndex]);
+            if (!task || task.status !== "queued") {
+                runnableQueue.splice(taskIndex, 1);
+                continue;
+            }
+            if (excludedLocks.has(task.lockKey)) {
+                taskIndex += 1;
+                continue;
+            }
+
+            runnableQueue.splice(taskIndex, 1);
+            task.status = "running";
+            task.startedAt = Date.now();
+            task.updatedAt = task.startedAt;
+            emitTaskChange(task);
+            return publicTask(task);
         }
         return null;
     }
 
-    async function processNextTask() {
-        const task = nextRunnableTask();
-        if (!task) return null;
+    function settleTaskWaiters(task) {
+        const waiters = taskWaiters.get(task.id);
+        if (!waiters) return;
+        taskWaiters.delete(task.id);
 
-        task.status = "running";
-        task.startedAt = Date.now();
-        task.updatedAt = task.startedAt;
-        emitTaskChange(task);
+        for (const waiter of waiters) {
+            if (task.status === "completed") {
+                waiter.resolve(task.result);
+            } else {
+                waiter.reject(task.failure || new TaskQueueError(
+                    task.error?.message || `Task "${task.id}" did not complete.`,
+                    task.error?.code || "TASK_FAILED",
+                    { taskId: task.id },
+                ));
+            }
+        }
+    }
+
+    async function runTask(taskId, { settleWaiters = true } = {}) {
+        const task = tasks.get(taskId);
+        if (!task) {
+            throw new TaskQueueError(`Unknown task "${taskId}".`, "UNKNOWN_TASK", { taskId });
+        }
+        if (task.status !== "running") {
+            throw new TaskQueueError(`Task "${taskId}" has not been claimed.`, "TASK_NOT_CLAIMED", { taskId });
+        }
 
         try {
             task.result = await task.callback({
@@ -428,6 +464,7 @@ function createTaskManagementQueue({ onListenerError = () => {} } = {}) {
         } catch (error) {
             task.status = "failed";
             task.error = serializeError(error);
+            task.failure = error instanceof Error ? error : new Error(String(error));
             task.completedAt = Date.now();
             task.updatedAt = task.completedAt;
             releaseDeduplicationKey(task);
@@ -435,7 +472,44 @@ function createTaskManagementQueue({ onListenerError = () => {} } = {}) {
         }
 
         emitTaskChange(task);
+        if (settleWaiters) settleTaskWaiters(task);
         return publicTask(task);
+    }
+
+    function settleTask(taskId) {
+        const task = tasks.get(taskId);
+        if (!task) {
+            throw new TaskQueueError(`Unknown task "${taskId}".`, "UNKNOWN_TASK", { taskId });
+        }
+        if (!terminalStatuses.has(task.status)) {
+            throw new TaskQueueError(`Task "${taskId}" is not in a terminal state.`, "TASK_NOT_TERMINAL", { taskId });
+        }
+        settleTaskWaiters(task);
+    }
+
+    async function processNextTask(options) {
+        const task = claimNextTask(options);
+        return task ? runTask(task.id) : null;
+    }
+
+    function waitForTask(taskId) {
+        const task = tasks.get(taskId);
+        if (!task) {
+            return Promise.reject(new TaskQueueError(`Unknown task "${taskId}".`, "UNKNOWN_TASK", { taskId }));
+        }
+        if (task.status === "completed") return Promise.resolve(task.result);
+        if (task.status === "failed" || task.status === "blocked") {
+            return Promise.reject(task.failure || new TaskQueueError(
+                task.error?.message || `Task "${taskId}" did not complete.`,
+                task.error?.code || "TASK_FAILED",
+                { taskId },
+            ));
+        }
+
+        return new Promise((resolve, reject) => {
+            if (!taskWaiters.has(taskId)) taskWaiters.set(taskId, new Set());
+            taskWaiters.get(taskId).add({ reject, resolve });
+        });
     }
 
     function updateTaskProgress(taskId, progress) {
@@ -506,6 +580,7 @@ function createTaskManagementQueue({ onListenerError = () => {} } = {}) {
     return {
         enqueueTask,
         enqueueTasks,
+        claimNextTask,
         getActiveTaskByDedupKey,
         getActiveTasksByDedupKey,
         getActiveTasksByLockKey,
@@ -514,8 +589,11 @@ function createTaskManagementQueue({ onListenerError = () => {} } = {}) {
         getTasksForDocument,
         getWorkflow,
         processNextTask,
+        runTask,
+        settleTask,
         subscribe,
         updateTaskProgress,
+        waitForTask,
     };
 }
 

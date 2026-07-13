@@ -389,7 +389,7 @@ export default function AiSettingsDialog({
               />
               <NumberField
                 label="Concurrent images"
-                max={16}
+                max={1000}
                 min={1}
                 onChange={(value) => updateSetting("imageConcurrency", String(value))}
                 value={Number(settings.imageConcurrency)}

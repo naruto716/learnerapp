@@ -21,6 +21,8 @@ export function useMasteryCards({
   const [cardState, setCardState] = useState<DocumentMasteryCards | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [generatingDocumentPath, setGeneratingDocumentPath] = useState<string | null>(null);
+  const [statusDocumentPath, setStatusDocumentPath] = useState<string | null>(null);
   const [isEvaluating, setIsEvaluating] = useState(false);
   const [isDiscussing, setIsDiscussing] = useState(false);
   const [progress, setProgress] = useState<MasteryCardProgress | null>(null);
@@ -36,9 +38,11 @@ export function useMasteryCards({
     if (!status || status.documentPath !== activeDocumentPathRef.current || status.operation !== "flashcard generation") {
       return;
     }
+    setStatusDocumentPath(status.documentPath);
 
     if (status.state === "running") {
       setError(null);
+      setGeneratingDocumentPath(status.documentPath);
       setIsGenerating(true);
       setProgress(status.progress as MasteryCardProgress | null);
       return;
@@ -84,8 +88,13 @@ export function useMasteryCards({
     if (!activeDocumentPath) return;
     let cancelled = false;
 
-    window.learner?.getDocumentMasteryGenerationStatus(activeDocumentPath).then((status) => {
+    window.learner?.getDocumentMasteryGenerationStatuses(activeDocumentPath).then((statuses) => {
       if (cancelled) return;
+      setStatusDocumentPath(activeDocumentPath);
+      const status = statuses.find((candidate) => candidate.operation === "flashcard generation") ?? null;
+      setError(null);
+      setIsGenerating(false);
+      setProgress(null);
       applyGenerationStatus(status);
       if (status?.operation === "flashcard generation" && status.state === "completed") {
         void loadCards();
@@ -143,6 +152,7 @@ export function useMasteryCards({
 
   const generateCards = useCallback(async (preferences: MasteryCardPreferences) => {
     setError(null);
+    setGeneratingDocumentPath(activeDocumentPath);
     setIsGenerating(true);
     setProgress({ completed: 0, label: "Preparing flashcard generation", phase: "planning", total: 1 });
     setCardState((current) => (current ? { ...current, preferences } : current));
@@ -179,6 +189,7 @@ export function useMasteryCards({
 
   const ensureReadyCards = useCallback(async (minimumReadyCards: number, reportError = true) => {
     if (reportError) setError(null);
+    setGeneratingDocumentPath(activeDocumentPath);
     setIsGenerating(true);
     setProgress({ completed: 0, label: "Preparing practice cards", phase: "planning", total: 1 });
 
@@ -294,7 +305,9 @@ export function useMasteryCards({
     generateCards,
     isDiscussing,
     isEvaluating,
-    isGenerating,
+    isGenerating: statusDocumentPath === activeDocumentPath
+      && isGenerating
+      && generatingDocumentPath === activeDocumentPath,
     loadCards,
     progress,
   };

@@ -46,7 +46,7 @@ function normalizeAiSettings(settings = {}) {
     imageQuality: cleanSetting(settings.imageQuality, defaultAiSettings.imageQuality),
     imageBackground: cleanSetting(settings.imageBackground, defaultAiSettings.imageBackground),
     imageOutputFormat: cleanSetting(settings.imageOutputFormat, defaultAiSettings.imageOutputFormat),
-    imageConcurrency: normalizeIntegerSetting(settings.imageConcurrency, defaultAiSettings.imageConcurrency, 1, 16),
+    imageConcurrency: normalizeIntegerSetting(settings.imageConcurrency, defaultAiSettings.imageConcurrency, 1, 1000),
     speechToTextApiKey: cleanSetting(settings.speechToTextApiKey, defaultAiSettings.speechToTextApiKey),
     speechToTextLanguage: cleanSetting(settings.speechToTextLanguage, defaultAiSettings.speechToTextLanguage),
     speechToTextModel: cleanSetting(settings.speechToTextModel, defaultAiSettings.speechToTextModel),

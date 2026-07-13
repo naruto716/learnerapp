@@ -55,7 +55,6 @@ async function generateImage({ prompt, settings = {} } = {}) {
       "Content-Type": "application/json",
     },
     body: JSON.stringify(requestBody),
-    signal: AbortSignal.timeout(180_000),
   });
 
   if (!response.ok) {

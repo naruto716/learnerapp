@@ -81,6 +81,9 @@ contextBridge.exposeInMainWorld("learner", {
   generateDocumentMastery: (request) => {
     return ipcRenderer.invoke("mastery:generateDocumentMastery", request);
   },
+  generateDocumentMasteryAssets: (request) => {
+    return ipcRenderer.invoke("mastery:generateAssets", request);
+  },
   updateDocumentMasteryConceptLevel: (request) => {
     return ipcRenderer.invoke("mastery:updateConceptLevel", request);
   },
@@ -103,6 +106,9 @@ contextBridge.exposeInMainWorld("learner", {
   },
   getDocumentMasteryGenerationStatus: (documentPath) => {
     return ipcRenderer.invoke("mastery:getGenerationStatus", documentPath);
+  },
+  getDocumentMasteryGenerationStatuses: (documentPath) => {
+    return ipcRenderer.invoke("mastery:getGenerationStatuses", documentPath);
   },
   generateDocumentMasteryCards: (request) => {
     return ipcRenderer.invoke("mastery:generateCards", request);

@@ -33,8 +33,6 @@ const { transcribeSpeech } = require("./speechToText");
 const {
   clearDocumentMastery,
   closeMasteryDatabase,
-  generateDocumentMastery,
-  generateDocumentMasteryMetaphor,
   getDocumentMastery,
   updateMasteryConceptLevel,
   updateMasteryConceptScore,
@@ -43,7 +41,6 @@ const {
   clearDocumentMasteryCards,
   continueMasteryCardDiscussion,
   evaluateMasteryCard,
-  generateDocumentMasteryCards,
   getDocumentMasteryCards,
 } = require("./mastery/masteryCards");
 const {
@@ -72,7 +69,7 @@ const {
   semanticSearchIndexedDocuments,
   upsertIndexedDocument,
 } = require("./documentSearchIndex");
-const { extractDocumentGraph, searchRelatedConcepts } = require("./graph/graphExtraction");
+const { searchRelatedConcepts } = require("./graph/graphExtraction");
 const {
   closeGraphDatabase,
   addConceptMentionToDocument,
@@ -86,6 +83,11 @@ const {
   updateConcept,
   updateRelation,
 } = require("./graph/graphDb");
+const {
+  createLearnerGenerationManager,
+  operationLabels: generationOperationLabels,
+  taskTypes: generationTaskTypes,
+} = require("./TaskManagementQueue/learnerGenerationManager");
 
 const appProtocol = "learner";
 const devServerUrl = process.env.NEXT_DEV_SERVER_URL;
@@ -184,7 +186,41 @@ function broadcastAiOperationStatus(status) {
   }
 }
 
+function publicGenerationTaskStatus(task) {
+  if (!task || !generationOperationLabels[task.type]) return null;
+  return {
+    completedAt: task.completedAt,
+    documentPath: task.document,
+    error: task.error?.message || null,
+    key: task.lockKey,
+    operation: generationOperationLabels[task.type],
+    progress: task.progress,
+    startedAt: task.startedAt ?? task.createdAt,
+    state: task.status === "completed"
+      ? "completed"
+      : task.status === "failed" || task.status === "blocked"
+        ? "failed"
+        : "running",
+    updatedAt: task.updatedAt,
+  };
+}
+
+function broadcastGenerationTask(task) {
+  const status = publicGenerationTaskStatus(task);
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (window.isDestroyed()) continue;
+    if (status) window.webContents.send("ai:operationStatus", status);
+    if (task.type === generationTaskTypes.metaphor && task.progress) {
+      window.webContents.send("mastery:metaphorProgress", task.progress);
+    }
+    if (task.type === generationTaskTypes.cards && task.progress) {
+      window.webContents.send("mastery:cardProgress", task.progress);
+    }
+  }
+}
+
 const aiOperationLock = createKeyedOperationLock(broadcastAiOperationStatus);
+const learnerGenerationManager = createLearnerGenerationManager({ onTaskChange: broadcastGenerationTask });
 
 async function runExclusiveAiOperation(key, label, operation) {
   try {
@@ -311,6 +347,7 @@ async function refreshSearchIndex(action) {
 
 app.whenReady().then(() => {
   runMasteryMigrations();
+  learnerGenerationManager.start();
   protocol.handle(appProtocol, (request) => {
     const url = new URL(request.url);
 
@@ -344,10 +381,21 @@ app.on("window-all-closed", () => {
   }
 });
 
-app.on("before-quit", () => {
-  closeSearchDatabase();
-  closeGraphDatabase();
-  closeMasteryDatabase();
+let generationShutdownPromise = null;
+let generationShutdownComplete = false;
+
+app.on("before-quit", (event) => {
+  if (generationShutdownComplete) return;
+  event.preventDefault();
+  if (generationShutdownPromise) return;
+
+  generationShutdownPromise = learnerGenerationManager.stop({ drain: true }).finally(() => {
+    closeSearchDatabase();
+    closeGraphDatabase();
+    closeMasteryDatabase();
+    generationShutdownComplete = true;
+    app.quit();
+  });
 });
 
 ipcMain.handle("document:list", async () => {
@@ -503,11 +551,30 @@ ipcMain.handle("mastery:generateDocumentMastery", async (_event, request) => {
 
   const documentPath = filePathWithExtension(request.documentPath);
   configureAiSettings(request?.settings);
-  return runExclusiveAiOperation(`document:${documentPath}`, "mastery concept generation", () =>
-    generateDocumentMastery({
-      ...request,
+  return learnerGenerationManager.generateConcepts({
+    ...request,
+    documentPath,
+  });
+});
+
+ipcMain.handle("mastery:generateAssets", async (_event, request) => {
+  if (!request?.documentPath) {
+    throw new Error("Document path is required.");
+  }
+  if (!request?.cardRequest) {
+    throw new Error("Flashcard generation settings are required.");
+  }
+
+  const documentPath = filePathWithExtension(request.documentPath);
+  configureAiSettings(request?.settings);
+  return learnerGenerationManager.generateMasteryAssets({
+    ...request,
+    cardRequest: {
+      ...request.cardRequest,
       documentPath,
-    }));
+    },
+    documentPath,
+  });
 });
 
 ipcMain.handle("mastery:updateConceptLevel", async (_event, request) => {
@@ -538,33 +605,11 @@ ipcMain.handle("mastery:generateMetaphor", async (_event, request) => {
   }
 
   const documentPath = filePathWithExtension(request.documentPath);
-  const sendProgress = (progress) => {
-    const nextProgress = {
-      ...progress,
-      documentPath,
-    };
-    aiOperationLock.updateProgress(`document:${documentPath}`, nextProgress);
-    _event.sender.send("mastery:metaphorProgress", nextProgress);
-  };
-
   configureAiSettings(request?.settings);
-  try {
-    return await runExclusiveAiOperation(`document:${documentPath}`, "metaphor generation", () =>
-      generateDocumentMasteryMetaphor({
-        ...request,
-        documentPath,
-        onProgress: sendProgress,
-      }));
-  } catch (error) {
-    sendProgress({
-      completed: 0,
-      failed: 1,
-      label: error instanceof Error ? error.message : "Mastery metaphor generation failed.",
-      phase: "error",
-      total: 1,
-    });
-    throw error;
-  }
+  return learnerGenerationManager.generateMetaphor({
+    ...request,
+    documentPath,
+  });
 });
 
 ipcMain.handle("mastery:clearDocumentMastery", async (_event, request) => {
@@ -584,7 +629,14 @@ ipcMain.handle("mastery:getCards", async (_event, documentPath) => {
 
 ipcMain.handle("mastery:getGenerationStatus", async (_event, documentPath) => {
   const normalizedPath = filePathWithExtension(documentPath);
-  return publicAiOperationStatus(aiOperationLock.getStatus(`document:${normalizedPath}`));
+  return publicGenerationTaskStatus(learnerGenerationManager.latestDocumentTask(normalizedPath));
+});
+
+ipcMain.handle("mastery:getGenerationStatuses", async (_event, documentPath) => {
+  const normalizedPath = filePathWithExtension(documentPath);
+  return learnerGenerationManager.latestDocumentTasks(normalizedPath)
+    .map(publicGenerationTaskStatus)
+    .filter(Boolean);
 });
 
 ipcMain.handle("mastery:generateCards", async (_event, request) => {
@@ -593,32 +645,11 @@ ipcMain.handle("mastery:generateCards", async (_event, request) => {
   }
 
   const documentPath = filePathWithExtension(request.documentPath);
-  const sendProgress = (progress) => {
-    const nextProgress = {
-      ...progress,
-      documentPath,
-    };
-    aiOperationLock.updateProgress(`document:${documentPath}`, nextProgress);
-    _event.sender.send("mastery:cardProgress", nextProgress);
-  };
-
   configureAiSettings(request?.settings);
-  try {
-    return await runExclusiveAiOperation(`document:${documentPath}`, "flashcard generation", () =>
-      generateDocumentMasteryCards({
-        ...request,
-        documentPath,
-        onProgress: sendProgress,
-      }));
-  } catch (error) {
-    sendProgress({
-      completed: 0,
-      label: error instanceof Error ? error.message : "Flashcard generation failed.",
-      phase: "error",
-      total: 1,
-    });
-    throw error;
-  }
+  return learnerGenerationManager.generateCards({
+    ...request,
+    documentPath,
+  });
 });
 
 ipcMain.handle("mastery:continueCardDiscussion", async (_event, request) => {
@@ -706,8 +737,8 @@ ipcMain.handle("mastery:clearCards", async (_event, request) => {
 
 ipcMain.handle("graph:extractDocumentGraph", async (_event, filePath, markdown, settings) => {
   const documentPath = filePathWithExtension(filePath);
-  return runExclusiveAiOperation(`document:${documentPath}`, "knowledge graph generation", async () =>
-    extractDocumentGraph(documentPath, await readDocumentFile(documentPath), markdown, settings));
+  configureAiSettings(settings);
+  return learnerGenerationManager.extractGraph(documentPath, markdown, settings);
 });
 
 ipcMain.handle("graph:getDocumentGraph", async (_event, filePath) => {

@@ -94,6 +94,129 @@ test("joins an exact active prerequisite by immutable task ID", async () => {
   assert.deepEqual(queue.getRunnableTasks().map((task) => task.type), ["metaphor"]);
 });
 
+test("joins equivalent downstream work once its prerequisites have completed", async () => {
+  const queue = createTaskManagementQueue();
+  const batch = queue.enqueueTasks([
+    {
+      artifactKey: "concepts:note-a.json:hash-1",
+      callback: async () => {},
+      dedupKey: "concepts:note-a.json:hash-1",
+      deps: [],
+      document: context.document,
+      key: "concepts",
+      lockKey: "document:note-a.json",
+      type: "concepts",
+    },
+    {
+      artifactKey: "metaphor:note-a.json:hash-1",
+      callback: async () => {},
+      dedupKey: "metaphor:note-a.json:hash-1",
+      deps: ["concepts"],
+      document: context.document,
+      key: "metaphor",
+      lockKey: "document:note-a.json",
+      type: "metaphor",
+    },
+  ]);
+  await queue.processNextTask();
+  const definitions = createDefinitions();
+  const resolver = createTaskDependencyResolver({ definitions, queue });
+
+  const resolution = resolver.resolveAndEnqueue({ context, targets: ["metaphor"] });
+
+  assert.equal(resolution.nodes.metaphor.disposition, "joined");
+  assert.equal(resolution.nodes.metaphor.taskId, batch.taskIds.metaphor);
+  assert.equal(resolution.workflowId, null);
+});
+
+test("joins pending downstream work when only completed prerequisites are omitted", async () => {
+  const queue = createTaskManagementQueue();
+  const batch = queue.enqueueTasks([
+    {
+      artifactKey: "concepts:note-a.json:hash-1",
+      callback: async () => {},
+      dedupKey: "concepts:note-a.json:hash-1",
+      deps: [],
+      document: context.document,
+      key: "concepts",
+      lockKey: "document:note-a.json",
+      type: "concepts",
+    },
+    {
+      artifactKey: "metaphor:note-a.json:hash-1",
+      callback: async () => {},
+      dedupKey: "metaphor:note-a.json:hash-1",
+      deps: ["concepts"],
+      document: context.document,
+      key: "metaphor",
+      lockKey: "document:note-a.json",
+      type: "metaphor",
+    },
+    {
+      artifactKey: "cards:note-a.json:hash-1",
+      callback: async () => {},
+      dedupKey: "cards:note-a.json:hash-1",
+      deps: ["concepts", "metaphor"],
+      document: context.document,
+      key: "cards",
+      lockKey: "document:note-a.json",
+      type: "cards",
+    },
+  ]);
+  await queue.processNextTask();
+  const resolver = createTaskDependencyResolver({
+    definitions: createDefinitions({ satisfied: new Set(["concepts"]) }),
+    queue,
+  });
+
+  const resolution = resolver.resolveAndEnqueue({ context, targets: ["cards"] });
+
+  assert.equal(resolution.nodes.concepts.disposition, "persisted");
+  assert.equal(resolution.nodes.metaphor.disposition, "joined");
+  assert.equal(resolution.nodes.cards.disposition, "joined");
+  assert.equal(resolution.nodes.cards.taskId, batch.taskIds.cards);
+  assert.equal(resolution.workflowId, null);
+});
+
+test("does not join downstream work tied to a different active prerequisite", () => {
+  const queue = createTaskManagementQueue();
+  const oldConcepts = queue.enqueueTask({
+    artifactKey: "concepts:note-a.json:hash-1",
+    callback: async () => {},
+    dedupKey: "concepts:note-a.json:hash-1",
+    deps: [],
+    document: context.document,
+    key: "old-concepts",
+    lockKey: "concepts:note-a.json",
+    type: "concepts",
+  });
+  queue.enqueueTask({
+    artifactKey: "metaphor:note-a.json:hash-1",
+    callback: async () => {},
+    dedupKey: "metaphor:note-a.json:hash-1",
+    deps: [],
+    document: context.document,
+    externalDeps: [oldConcepts.id],
+    key: "old-metaphor",
+    lockKey: "metaphor:note-a.json",
+    type: "metaphor",
+  });
+  const definitions = createDefinitions();
+  definitions.concepts.dedupKey = () => "concepts:note-a.json:hash-2";
+  definitions.concepts.artifactKey = () => "concepts:note-a.json:hash-2";
+  const resolver = createTaskDependencyResolver({ definitions, queue });
+
+  const resolution = resolver.resolveAndEnqueue({ context, targets: ["metaphor"] });
+
+  assert.equal(resolution.nodes.concepts.disposition, "created");
+  assert.equal(resolution.nodes.metaphor.disposition, "created");
+  assert.equal(queue.getTask(resolution.nodes.metaphor.taskId).allowDuplicate, true);
+  assert.deepEqual(
+    queue.getTask(resolution.nodes.metaphor.taskId).dependencies,
+    [resolution.nodes.concepts.taskId],
+  );
+});
+
 test("does not fast-forward downstream persisted state when a prerequisite is created", () => {
   const queue = createTaskManagementQueue();
   const resolver = createTaskDependencyResolver({

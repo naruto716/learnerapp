@@ -696,6 +696,14 @@ declare global {
       generateDocumentMastery: (
         request: DocumentMasteryGenerationRequest,
       ) => Promise<DocumentMasteryGenerationResult>;
+      generateDocumentMasteryAssets: (
+        request: DocumentMasteryGenerationRequest & {
+          cardRequest: Omit<
+            DocumentMasteryCardGenerationRequest,
+            "documentPath" | "markdown" | "settings"
+          >;
+        },
+      ) => Promise<DocumentMasteryGenerationResult>;
       updateDocumentMasteryConceptLevel: (
         request: DocumentMasteryLevelUpdateRequest,
       ) => Promise<DocumentMastery>;
@@ -709,6 +717,7 @@ declare global {
       clearDocumentMastery: (request: DocumentMasteryClearRequest) => Promise<DocumentMastery>;
       getDocumentMasteryCards: (documentPath: string) => Promise<DocumentMasteryCards>;
       getDocumentMasteryGenerationStatus: (documentPath: string) => Promise<LearnerAiOperationStatus | null>;
+      getDocumentMasteryGenerationStatuses: (documentPath: string) => Promise<LearnerAiOperationStatus[]>;
       generateDocumentMasteryCards: (
         request: DocumentMasteryCardGenerationRequest,
       ) => Promise<DocumentMasteryCards>;
