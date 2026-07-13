@@ -4,6 +4,7 @@ const path = require("path");
 const { pathToFileURL } = require("url");
 const { loadLocalEnv } = require("./localEnv");
 const { operationLog } = require("./operationLog");
+const { createKeyedOperationLock } = require("./aiOperationLock");
 
 loadLocalEnv();
 
@@ -167,30 +168,36 @@ function configureMediaPermissions(ses) {
   });
 }
 
-let activeAiOperation = null;
+const aiOperationLock = createKeyedOperationLock();
 
-async function runExclusiveAiOperation(label, operation) {
-  if (activeAiOperation) {
-    operationLog("ai.operation.rejected", { activeOperation: activeAiOperation, requestedOperation: label });
-    throw new Error(`${activeAiOperation} is already running. Wait for it to finish before starting ${label}.`);
-  }
-
-  activeAiOperation = label;
-  const startedAt = Date.now();
-  operationLog("ai.operation.started", { operation: label });
+async function runExclusiveAiOperation(key, label, operation) {
   try {
-    const result = await operation();
-    operationLog("ai.operation.completed", { durationMs: Date.now() - startedAt, operation: label });
-    return result;
-  } catch (error) {
-    operationLog("ai.operation.failed", {
-      durationMs: Date.now() - startedAt,
-      error: error instanceof Error ? error.message : String(error),
-      operation: label,
+    return await aiOperationLock.run(key, label, async () => {
+      const startedAt = Date.now();
+      operationLog("ai.operation.started", { key, operation: label });
+      try {
+        const result = await operation();
+        operationLog("ai.operation.completed", { durationMs: Date.now() - startedAt, key, operation: label });
+        return result;
+      } catch (error) {
+        operationLog("ai.operation.failed", {
+          durationMs: Date.now() - startedAt,
+          error: error instanceof Error ? error.message : String(error),
+          key,
+          operation: label,
+        });
+        throw error;
+      }
     });
+  } catch (error) {
+    if (error?.activeOperation) {
+      operationLog("ai.operation.rejected", {
+        activeOperation: error.activeOperation,
+        key,
+        requestedOperation: label,
+      });
+    }
     throw error;
-  } finally {
-    activeAiOperation = null;
   }
 }
 
@@ -461,7 +468,7 @@ ipcMain.handle("ai:testEmbedding", async (_event, settings) => {
 
 ipcMain.handle("ai:generateImage", async (_event, request) => {
   configureAiSettings(request?.settings);
-  return runExclusiveAiOperation("image generation", () => generateImage(request));
+  return runExclusiveAiOperation("standalone:image", "image generation", () => generateImage(request));
 });
 
 ipcMain.handle("speech:transcribe", async (_event, request) => {
@@ -478,11 +485,12 @@ ipcMain.handle("mastery:generateDocumentMastery", async (_event, request) => {
     throw new Error("Document path is required.");
   }
 
+  const documentPath = filePathWithExtension(request.documentPath);
   configureAiSettings(request?.settings);
-  return runExclusiveAiOperation("mastery concept generation", () =>
+  return runExclusiveAiOperation(`document:${documentPath}`, "mastery concept generation", () =>
     generateDocumentMastery({
       ...request,
-      documentPath: filePathWithExtension(request.documentPath),
+      documentPath,
     }));
 });
 
@@ -523,7 +531,7 @@ ipcMain.handle("mastery:generateMetaphor", async (_event, request) => {
 
   configureAiSettings(request?.settings);
   try {
-    return await runExclusiveAiOperation("metaphor generation", () =>
+    return await runExclusiveAiOperation(`document:${documentPath}`, "metaphor generation", () =>
       generateDocumentMasteryMetaphor({
         ...request,
         documentPath,
@@ -571,7 +579,7 @@ ipcMain.handle("mastery:generateCards", async (_event, request) => {
 
   configureAiSettings(request?.settings);
   try {
-    return await runExclusiveAiOperation("flashcard generation", () =>
+    return await runExclusiveAiOperation(`document:${documentPath}`, "flashcard generation", () =>
       generateDocumentMasteryCards({
         ...request,
         documentPath,
@@ -673,7 +681,7 @@ ipcMain.handle("mastery:clearCards", async (_event, request) => {
 
 ipcMain.handle("graph:extractDocumentGraph", async (_event, filePath, markdown, settings) => {
   const documentPath = filePathWithExtension(filePath);
-  return runExclusiveAiOperation("knowledge graph generation", async () =>
+  return runExclusiveAiOperation(`document:${documentPath}`, "knowledge graph generation", async () =>
     extractDocumentGraph(documentPath, await readDocumentFile(documentPath), markdown, settings));
 });
 

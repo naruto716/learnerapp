@@ -315,7 +315,7 @@ export default function SideBar({
         <p className="px-3 text-xs text-red-300">{error}</p>
       ) : (
         <div
-          className={`min-h-0 flex-1 overflow-y-auto transition-colors ${
+          className={`min-h-0 flex-1 overflow-y-auto px-2 transition-colors ${
             dragTarget?.type === "container" && dragTarget.folderPath === "" ? "bg-white/[0.03]" : ""
           }`}
           onDragOver={(event) => handleContainerDragOver(event, "")}
@@ -326,6 +326,7 @@ export default function SideBar({
           }}
         >
           <FileTree
+            depth={0}
             dragTarget={dragTarget}
             expandedFolders={expandedFolders}
             folderPath=""
@@ -417,6 +418,7 @@ export default function SideBar({
 }
 
 function FileTree({
+  depth,
   dragTarget,
   expandedFolders,
   folderPath,
@@ -431,6 +433,7 @@ function FileTree({
   onToggleFolder,
   selectedPath,
 }: {
+  depth: number;
   dragTarget: DragTarget;
   expandedFolders: Set<string>;
   folderPath: string;
@@ -451,13 +454,14 @@ function FileTree({
     <ul
       onDragOver={(event) => onContainerDragOver(event, folderPath)}
       onDrop={(event) => onDropIntoFolder(event, folderPath)}
-      className={`min-h-8 space-y-0.5 px-2 py-1 transition-colors ${
+      className={`min-h-8 space-y-0.5 py-1 transition-colors ${
         isContainerTarget ? "rounded-md bg-white/[0.04] ring-1 ring-white/10" : ""
       }`}
     >
       {nodes.length === 0 && <li className="px-1 text-xs text-white/50">No documents yet.</li>}
       {nodes.map((node) => (
         <FileTreeItem
+          depth={depth}
           dragTarget={dragTarget}
           expandedFolders={expandedFolders}
           key={node.path}
@@ -478,6 +482,7 @@ function FileTree({
 }
 
 function FileTreeItem({
+  depth,
   dragTarget,
   expandedFolders,
   node,
@@ -491,6 +496,7 @@ function FileTreeItem({
   onToggleFolder,
   selectedPath,
 }: {
+  depth: number;
   dragTarget: DragTarget;
   expandedFolders: Set<string>;
   node: DocumentNode;
@@ -557,10 +563,11 @@ function FileTreeItem({
         onDragOver={handleRowDragOver}
         onDrop={handleDrop}
         onContextMenu={(event) => onContextMenu(event, node)}
-        className={`group flex h-8 items-center gap-1 rounded-md px-2 text-sm transition-colors hover:bg-white/10 ${
+        className={`group flex h-8 w-full items-center gap-1 rounded-md pr-2 text-sm transition-colors hover:bg-white/10 ${
           selectedPath === node.path ? "bg-white/10 text-white" : ""
         } ${rowDropPosition ? "bg-white/[0.06]" : ""
         }`}
+        style={{ paddingLeft: 8 + depth * 20 }}
       >
         {isFolder ? (
           <button
@@ -614,13 +621,14 @@ function FileTreeItem({
         <div
           onDragOver={(event) => onContainerDragOver(event, node.path)}
           onDrop={(event) => onDropIntoFolder(event, node.path)}
-          className={`pl-4 transition-colors ${
+          className={`transition-colors ${
             dragTarget?.type === "container" && dragTarget.folderPath === node.path
               ? "rounded-md bg-white/[0.04] ring-1 ring-white/10"
               : ""
           }`}
         >
           <FileTree
+            depth={depth + 1}
             dragTarget={dragTarget}
             expandedFolders={expandedFolders}
             folderPath={node.path}
