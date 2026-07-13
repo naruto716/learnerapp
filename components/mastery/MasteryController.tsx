@@ -53,13 +53,25 @@ export default function MasteryController({
     onMasteryChanged: refreshMastery,
   });
 
-  const generateAndSyncCards = async (force = false) => {
+  const generateMasteryAssets = async (force = false) => {
     const result = await generateMastery(force);
-    return Boolean(result);
+    if (!result) return false;
+
+    await generateMetaphor(result.mastery, false);
+    await cardsController.generateCards(
+      cardsController.cardState?.preferences ?? { generationPrompt: "", targetProficiency: "proficient" },
+    );
+    return true;
   };
 
   const openAndPrepareMastery = async () => {
     const result = await openMastery();
+    if (result?.generated) {
+      await generateMetaphor(result.mastery, false);
+      await cardsController.generateCards(
+        cardsController.cardState?.preferences ?? { generationPrompt: "", targetProficiency: "proficient" },
+      );
+    }
     return Boolean(result);
   };
 
@@ -115,7 +127,7 @@ export default function MasteryController({
         onForegroundContextChange={onForegroundContextChange}
         onPracticeChanged={syncAfterPractice}
         onMasteryScoreChange={updateConceptMasteryScore}
-        onGenerate={generateAndSyncCards}
+        onGenerate={generateMasteryAssets}
         readCurrentDocumentMarkdown={readCurrentDocumentMarkdown}
         open={isOpen}
       />
