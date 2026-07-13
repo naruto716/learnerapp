@@ -8,7 +8,6 @@ import {
   PaperPlaneRightIcon,
   PlusIcon,
   SpinnerGapIcon,
-  WarningCircleIcon,
 } from "@phosphor-icons/react";
 import {
   forwardRef,
@@ -20,6 +19,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { toast } from "sonner";
 import { readAiSettings } from "@/components/ai/aiSettings";
 import type { AgentForegroundContext } from "@/components/ai/agentForegroundContext";
 import Dialog from "@/components/Dialog";
@@ -44,7 +44,6 @@ type MasteryPracticeWorkspaceProps = {
   documentPath: string | null;
   getCurrentDocumentMarkdown: () => string;
   isGenerating: boolean;
-  onEnsureReadyCards: (minimumReadyCards: number) => Promise<DocumentMasteryCards | null>;
   onForegroundContextChange?: (context: AgentForegroundContext | null) => void;
   onOpenGeneration: () => void;
   onPracticeChanged: () => Promise<unknown>;
@@ -736,7 +735,6 @@ function MasteryPracticeWorkspace({
   documentPath,
   getCurrentDocumentMarkdown,
   isGenerating,
-  onEnsureReadyCards,
   onForegroundContextChange,
   onOpenGeneration,
   onPracticeChanged,
@@ -765,6 +763,10 @@ function MasteryPracticeWorkspace({
   const [selectedCardIds, setSelectedCardIds] = useState<number[]>([]);
   const [session, setSession] = useState<MasteryPracticeSession | null>(suppliedSession);
   const refreshedSessionsRef = useRef(new Set<number>());
+
+  useEffect(() => {
+    if (error) toast.error(error, { id: "mastery-practice-error" });
+  }, [error]);
 
   useEffect(() => {
     onResultsChange(view === "practice" && practiceMode === "results");
@@ -858,25 +860,17 @@ function MasteryPracticeWorkspace({
       return;
     }
     const masterySettings = readMasterySettings();
+    const readyCardCount = cards.filter((card) => card.status === "active").length;
+    if (selectedCardIds.length === 0 && readyCardCount < masterySettings.practiceCardCount) {
+      onOpenGeneration();
+      return;
+    }
     setError(null);
     setIsStarting(true);
     onStartingChange(true);
     try {
-      let practiceCardIds = selectedCardIds;
-      const readyCardCount = cards.filter((card) => card.status === "active").length;
-      if (practiceCardIds.length === 0 && readyCardCount < masterySettings.practiceCardCount) {
-        const generatedState = await onEnsureReadyCards(masterySettings.practiceCardCount);
-        if (!generatedState) throw new Error("Could not prepare enough ready cards for practice.");
-        practiceCardIds = generatedState.cards
-          .filter((card) => card.status === "active")
-          .slice(0, masterySettings.practiceCardCount)
-          .map((card) => card.id);
-        if (practiceCardIds.length < masterySettings.practiceCardCount) {
-          throw new Error("Could not prepare enough ready cards for practice.");
-        }
-      }
       const nextSession = await window.learner?.createMasteryPracticeSession({
-        cardIds: practiceCardIds,
+        cardIds: selectedCardIds,
         desiredCount: masterySettings.practiceCardCount,
         documentPath,
         markdown: getCurrentDocumentMarkdown(),
@@ -1101,12 +1095,6 @@ function MasteryPracticeWorkspace({
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
       {isGenerating && progress && <ProgressStatus progress={progress} />}
-      {error && (
-        <div className="mb-4 flex items-start gap-2 rounded-md bg-red-300/10 px-4 py-3 text-sm text-red-100/80">
-          <WarningCircleIcon className="mt-0.5 shrink-0" size={17} />
-          {error}
-        </div>
-      )}
 
       {cards.length === 0 && view === "deck" ? (
         <div className="mx-auto flex min-h-0 w-full max-w-2xl flex-1 flex-col items-center justify-center text-center">

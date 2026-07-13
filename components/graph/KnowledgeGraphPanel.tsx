@@ -32,7 +32,6 @@ import GraphModal from "./GraphModal";
 import { graphNodeHeight, graphNodeWidth, layoutKnowledgeGraph, type GraphNodePosition } from "./graphLayout";
 
 type KnowledgeGraphPanelProps = {
-  error: string | null;
   isDeleting: boolean;
   graph: KnowledgeDocumentGraph | null;
   getCurrentDocumentMarkdown: () => string | null;
@@ -378,7 +377,6 @@ function GraphMention({
 }
 
 export default function KnowledgeGraphPanel({
-  error,
   getCurrentDocumentMarkdown,
   graph,
   isDeleting,
@@ -753,9 +751,7 @@ export default function KnowledgeGraphPanel({
       </header>
 
       <div className="relative min-h-0 flex-1">
-        {error ? (
-          <div className="m-5 rounded-xl bg-red-300/10 px-4 py-3 text-sm text-red-200">{error}</div>
-        ) : isLoading && !graph ? (
+        {isLoading && !graph ? (
           <div className="flex h-full items-center justify-center text-sm text-white/45">Extracting graph...</div>
         ) : graph && graph.nodes.length > 0 ? (
           <>

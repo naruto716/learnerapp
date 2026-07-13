@@ -61,9 +61,17 @@ export function useDocumentMastery({
   const [mastery, setMastery] = useState<DocumentMastery | null>(null);
   const [error, setError] = useState<string | null>(null);
   const masteryUpdateSequenceRef = useRef(0);
+  const metaphorSequenceRef = useRef(0);
+  const activeDocumentPathRef = useRef(activeDocumentPath);
+
+  useEffect(() => {
+    activeDocumentPathRef.current = activeDocumentPath;
+    metaphorSequenceRef.current += 1;
+  }, [activeDocumentPath]);
 
   useEffect(() => {
     return window.learner?.onMasteryMetaphorProgress?.((progress) => {
+      if (!progress.documentPath || progress.documentPath !== activeDocumentPathRef.current) return;
       setMetaphorProgress(progress);
     });
   }, []);
@@ -244,6 +252,9 @@ export function useDocumentMastery({
     }
 
     setIsMetaphorLoading(true);
+    const metaphorSequence = metaphorSequenceRef.current + 1;
+    metaphorSequenceRef.current = metaphorSequence;
+    const documentPath = validation.snapshot.path;
     setMetaphorProgress({
       completed: 0,
       failed: 0,
@@ -262,15 +273,20 @@ export function useDocumentMastery({
         throw new Error("Mastery metaphor generation is not available in this renderer.");
       }
 
-      setMastery(updatedMastery);
+      if (metaphorSequenceRef.current === metaphorSequence && activeDocumentPathRef.current === documentPath) {
+        setMastery(updatedMastery);
+        setMetaphorProgress(null);
+      }
       return true;
     } catch (metaphorError) {
-      if (reportError) {
+      if (reportError && metaphorSequenceRef.current === metaphorSequence && activeDocumentPathRef.current === documentPath) {
         setError(metaphorError instanceof Error ? metaphorError.message : "Mastery metaphor generation failed.");
       }
       return false;
     } finally {
-      setIsMetaphorLoading(false);
+      if (metaphorSequenceRef.current === metaphorSequence && activeDocumentPathRef.current === documentPath) {
+        setIsMetaphorLoading(false);
+      }
     }
   }, [activeDocumentPath, getCurrentDocumentTools, mastery]);
 

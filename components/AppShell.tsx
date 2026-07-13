@@ -3,6 +3,7 @@
 import { GraphIcon } from "@phosphor-icons/react";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 import FloatingIconButton from "@/components/FloatingIconButton";
 import type { AgentForegroundContext } from "@/components/ai/agentForegroundContext";
 import SideBar from "@/components/sidebar/sidebar";
@@ -17,13 +18,11 @@ import KnowledgeGraphPanel from "@/components/graph/KnowledgeGraphPanel";
 import MasteryController from "@/components/mastery/MasteryController";
 import RevisionDialog from "@/components/mastery/RevisionDialog";
 import AiSettingsDialog from "@/components/settings/AiSettingsDialog";
-import { readAiSettings } from "./ai/aiSettings";
+import { readAiSettings, writeAiSettings } from "./ai/aiSettings";
 import ChatBubble from "./ai/ChatBubble";
 import ChatPanel from "./ai/ChatPanel";
 
 const workspaceStorageKey = "learner.workspace.v1";
-const graphExtractionConcurrency = 3;
-
 type WorkspaceState = {
   openTabs: string[];
   lastActivePath: string | null;
@@ -141,6 +140,10 @@ export default function AppShell() {
   const editorAgentToolsRef = useRef<Record<string, CurrentDocumentAgentTools>>({});
   const pendingEditorToolsRef = useRef<Record<string, Array<(tools: CurrentDocumentAgentTools | null) => void>>>({});
 
+  useEffect(() => {
+    if (knowledgeGraphError) toast.error(knowledgeGraphError, { id: "knowledge-graph-error" });
+  }, [knowledgeGraphError]);
+
   const updateOpenTabs = useCallback((update: (current: string[]) => string[]) => {
     const nextTabs = update(openTabsRef.current);
     openTabsRef.current = nextTabs;
@@ -171,7 +174,11 @@ export default function AppShell() {
   }, [updateOpenTabs]);
 
   useEffect(() => {
-    void window.learner?.configureAi?.(readAiSettings());
+    const localSettings = readAiSettings();
+    void window.learner?.configureAi?.(localSettings).then((effectiveSettings) => {
+      if (!effectiveSettings) return;
+      writeAiSettings({ ...localSettings, ...effectiveSettings });
+    });
   }, []);
 
   useEffect(() => {
@@ -486,25 +493,16 @@ export default function AppShell() {
       total: snapshots.length,
     });
 
-    let nextIndex = 0;
     let completed = 0;
     let failed = 0;
     const activeGraphResultRef: { current: KnowledgeGraphExtractionResult | null } = { current: null };
 
-    async function worker() {
-      while (nextIndex < snapshots.length) {
-        const snapshot = snapshots[nextIndex];
-        nextIndex += 1;
-
+    try {
+      for (const snapshot of snapshots) {
         try {
           const result = await window.learner?.extractDocumentGraph(snapshot.path, snapshot.markdown, readAiSettings());
-          if (!result) {
-            throw new Error("Graph extraction is not available in this renderer.");
-          }
-
-          if (snapshot.path === activeDocumentPath) {
-            activeGraphResultRef.current = result;
-          }
+          if (!result) throw new Error("Graph extraction is not available in this renderer.");
+          if (snapshot.path === activeDocumentPath) activeGraphResultRef.current = result;
         } catch {
           failed += 1;
         } finally {
@@ -517,12 +515,6 @@ export default function AppShell() {
           });
         }
       }
-    }
-
-    try {
-      await Promise.all(
-        Array.from({ length: Math.min(graphExtractionConcurrency, snapshots.length) }, () => worker()),
-      );
 
       if (activeGraphResultRef.current) {
         setKnowledgeGraph(activeGraphResultRef.current.graph);
@@ -651,7 +643,6 @@ export default function AppShell() {
         </main>
       </div>
       <KnowledgeGraphPanel
-        error={knowledgeGraphError}
         getCurrentDocumentMarkdown={getCurrentDocumentMarkdown}
         graph={knowledgeGraph}
         isDeleting={isKnowledgeGraphDeleting}

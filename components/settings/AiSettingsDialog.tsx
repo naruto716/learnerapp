@@ -1,7 +1,7 @@
 "use client";
 
 import { CheckIcon, PlugIcon } from "@phosphor-icons/react";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import {
   readAiSettings,
@@ -38,11 +38,13 @@ const masteryKindLabels: Record<MasteryCardKind, string> = {
 function Field({
   label,
   onChange,
+  placeholder,
   type = "text",
   value,
 }: {
   label: string;
   onChange: (value: string) => void;
+  placeholder?: string;
   type?: "password" | "text";
   value: string;
 }) {
@@ -52,6 +54,7 @@ function Field({
       <input
         className="h-9 w-full rounded-md border border-white/10 bg-white/[0.04] px-3 text-sm text-white outline-none transition focus:border-white/24 focus:bg-white/[0.07]"
         onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
         type={type}
         value={value}
       />
@@ -162,6 +165,25 @@ export default function AiSettingsDialog({
   const [status, setStatus] = useState("");
   const [isTesting, setIsTesting] = useState(false);
 
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    const localSettings = readAiSettings();
+    window.learner?.configureAi?.(localSettings)
+      .then((effectiveSettings) => {
+        if (cancelled || !effectiveSettings) return;
+        const nextSettings = { ...localSettings, ...effectiveSettings } as LearnerAiSettings;
+        writeAiSettings(nextSettings);
+        setSettings(nextSettings);
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setStatus(error instanceof Error ? error.message : "Could not load environment settings.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
   if (!open) return null;
 
   function updateSetting(key: keyof LearnerAiSettings, value: string) {
@@ -172,9 +194,11 @@ export default function AiSettingsDialog({
   }
 
   async function saveSettings(nextSettings = settings) {
-    writeAiSettings(nextSettings);
+    const effectiveSettings = await window.learner?.configureAi?.(nextSettings);
+    const savedSettings = { ...nextSettings, ...effectiveSettings } as LearnerAiSettings;
+    writeAiSettings(savedSettings);
+    setSettings(savedSettings);
     setMasterySettings(writeMasterySettings(masterySettings));
-    await window.learner?.configureAi?.(nextSettings);
     setStatus("Saved.");
   }
 
@@ -183,10 +207,16 @@ export default function AiSettingsDialog({
     setStatus("");
 
     try {
-      const models = await window.learner?.listAiModels?.(settings);
+      const [models, embedding] = await Promise.all([
+        window.learner?.listAiModels?.(settings),
+        window.learner?.testAiEmbedding?.(settings),
+      ]);
       const count = models?.length ?? 0;
       const hasImageModel = models?.some((model) => model.id === settings.imageModel);
-      setStatus(`${count} models available${hasImageModel ? `, including ${settings.imageModel}` : ""}.`);
+      setStatus(
+        `${count} models available${hasImageModel ? `, including ${settings.imageModel}` : ""}. `
+        + `Embedding ${embedding?.model ?? settings.embeddingModel}: ${embedding?.dimensions ?? 0} dimensions.`,
+      );
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Connection test failed.");
     } finally {
@@ -202,8 +232,12 @@ export default function AiSettingsDialog({
   function resetAiDefaults() {
     const nextSettings = resetAiSettings();
     setSettings(nextSettings);
-    void window.learner?.configureAi?.(nextSettings);
-    setStatus("AI defaults restored.");
+    void window.learner?.configureAi?.(nextSettings).then((effectiveSettings) => {
+      const resolvedSettings = { ...nextSettings, ...effectiveSettings } as LearnerAiSettings;
+      writeAiSettings(resolvedSettings);
+      setSettings(resolvedSettings);
+      setStatus("AI defaults restored.");
+    });
   }
 
   function resetScoringDefaults() {
@@ -252,7 +286,7 @@ export default function AiSettingsDialog({
             <>
           <Section title="Connection">
             <p className="text-sm leading-6 text-white/48">
-              Shared endpoint and API key for chat, graph extraction, embeddings, and image generation.
+              Shared endpoint and API key for chat, graph generation, and image generation.
             </p>
             <div className="grid gap-3 sm:grid-cols-[1fr_220px]">
               <Field label="Base URL" onChange={(value) => updateSetting("baseUrl", value)} value={settings.baseUrl} />
@@ -275,23 +309,37 @@ export default function AiSettingsDialog({
           </Section>
           <Section title="Models">
             <p className="text-sm leading-6 text-white/48">
-              Each capability can use a different model on the same configured endpoint.
+              Chat, graph, and image models use the shared endpoint.
             </p>
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label="Chat model" onChange={(value) => updateSetting("chatModel", value)} value={settings.chatModel} />
               <Field label="Graph model" onChange={(value) => updateSetting("graphModel", value)} value={settings.graphModel} />
+              <Field label="Image model" onChange={(value) => updateSetting("imageModel", value)} value={settings.imageModel} />
+            </div>
+          </Section>
+
+          <Section title="OpenAI embeddings">
+            <p className="text-sm leading-6 text-white/48">
+              Used for semantic search, graph identity, and RAG. Defaults from OPENAI_API_KEY in .env.local.
+            </p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field
+                label="OpenAI API key"
+                onChange={(value) => updateSetting("openAiApiKey", value)}
+                type="password"
+                value={settings.openAiApiKey}
+              />
               <Field
                 label="Embedding model"
                 onChange={(value) => updateSetting("embeddingModel", value)}
                 value={settings.embeddingModel}
               />
-              <Field label="Image model" onChange={(value) => updateSetting("imageModel", value)} value={settings.imageModel} />
             </div>
           </Section>
 
           <Section title="Speech to Text">
             <p className="text-sm leading-6 text-white/48">
-              Dictate mastery answers with ElevenLabs Scribe. Use auto to detect the spoken language.
+              Dictate mastery answers with ElevenLabs Scribe. Defaults from ELEVENLABS_API_KEY in .env.local when configured.
             </p>
             <div className="grid gap-3 sm:grid-cols-2">
               <Field

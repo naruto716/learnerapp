@@ -1,5 +1,5 @@
 const { graphError, graphLog, startTimer } = require("./graphLog");
-const { getAiSettings } = require("../aiSettings");
+const { getAiSettings, getEmbeddingSettings } = require("../aiSettings");
 const { embedTexts, requestStructuredOutput } = require("../aiClient");
 
 const graphPipelineVersion = "concept-resolver-v6";
@@ -17,13 +17,7 @@ function getGraphModelConfig(settings = {}) {
 }
 
 function getGraphEmbeddingConfig(settings = {}) {
-  const aiSettings = getAiSettings(settings);
-
-  return {
-    apiKey: aiSettings.apiKey,
-    baseUrl: aiSettings.baseUrl,
-    model: aiSettings.embeddingModel,
-  };
+  return getEmbeddingSettings(settings);
 }
 
 async function requestStructuredJson({ jsonSchema, messages, schemaName, settings, temperature = 0.1, timeoutMs = 120_000 }) {

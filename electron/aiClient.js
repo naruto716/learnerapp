@@ -1,5 +1,5 @@
 const { ChatOpenAI, OpenAIEmbeddings } = require("@langchain/openai");
-const { getAiSettings } = require("./aiSettings");
+const { getAiSettings, getEmbeddingSettings } = require("./aiSettings");
 
 function modelSettings(settings = {}, modelKey = "chatModel") {
   const aiSettings = getAiSettings(settings);
@@ -98,7 +98,7 @@ async function requestStructuredOutput({
 
 function createEmbeddingModel({ model, settings = {}, timeoutMs = 45_000 } = {}) {
   const config = {
-    ...modelSettings(settings, "embeddingModel"),
+    ...getEmbeddingSettings(settings),
     ...(model ? { model } : {}),
   };
 
@@ -125,10 +125,22 @@ async function embedTexts(input, { model, settings = {}, timeoutMs = 45_000 } = 
     timeoutMs,
   });
 
-  return {
-    embeddings: await embeddingModel.embedDocuments(values),
-    model: config.model,
-  };
+  try {
+    return {
+      embeddings: await embeddingModel.embedDocuments(values),
+      model: config.model,
+    };
+  } catch (error) {
+    const status = Number(error?.status || error?.response?.status || 0);
+    const reason = error instanceof Error ? error.message : String(error);
+    const guidance = status === 404
+      ? "The official OpenAI endpoint does not expose the configured embedding model. Check OPENAI_BASE_URL and the embedding model."
+      : "Check OPENAI_API_KEY, OPENAI_BASE_URL, the embedding model, and network availability.";
+    throw new Error(
+      `Embedding request failed for ${config.model} at ${config.baseUrl} (${status || "unknown status"}): ${reason}. ${guidance}`,
+      { cause: error },
+    );
+  }
 }
 
 module.exports = {

@@ -66,6 +66,9 @@ contextBridge.exposeInMainWorld("learner", {
   listAiModels: (settings) => {
     return ipcRenderer.invoke("ai:listModels", settings);
   },
+  testAiEmbedding: (settings) => {
+    return ipcRenderer.invoke("ai:testEmbedding", settings);
+  },
   generateImage: (request) => {
     return ipcRenderer.invoke("ai:generateImage", request);
   },

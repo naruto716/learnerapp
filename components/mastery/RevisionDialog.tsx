@@ -8,6 +8,7 @@ import {
   SpinnerGapIcon,
 } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 import Dialog from "@/components/Dialog";
 import { readAiSettings } from "@/components/ai/aiSettings";
 import type { AgentForegroundContext } from "@/components/ai/agentForegroundContext";
@@ -67,6 +68,10 @@ export default function RevisionDialog({
   const [isLoading, setIsLoading] = useState(false);
   const [overview, setOverview] = useState<MasteryRevisionOverview | null>(null);
   const [session, setSession] = useState<MasteryPracticeSession | null>(null);
+
+  useEffect(() => {
+    if (error) toast.error(error, { id: "revision-error" });
+  }, [error]);
 
   const loadOverview = useCallback(async () => {
     try {
@@ -175,12 +180,6 @@ export default function RevisionDialog({
     <Dialog
       display={
         <div className="flex h-[calc(100vh-7rem)] min-h-0 flex-col overflow-hidden [--results-sticky-bg:#242424]">
-          {error && (
-            <div className="mb-3 rounded-md border border-red-300/15 bg-red-300/10 px-3 py-2 text-sm text-red-100/80">
-              {error}
-            </div>
-          )}
-
           {session ? (
             <div className="flex min-h-0 flex-1 flex-col">
               <MasteryPracticeWorkspace
@@ -188,7 +187,6 @@ export default function RevisionDialog({
                 documentPath={null}
                 getCurrentDocumentMarkdown={() => ""}
                 isGenerating={false}
-                onEnsureReadyCards={async () => null}
                 onForegroundContextChange={open ? onForegroundContextChange : undefined}
                 onOpenGeneration={() => {}}
                 onPracticeChanged={loadOverview}

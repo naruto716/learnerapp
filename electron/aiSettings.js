@@ -3,13 +3,14 @@ const defaultAiSettings = {
   baseUrl: "http://127.0.0.1:8317/v1",
   chatModel: "gpt-5.6-sol",
   graphModel: "gpt-5.3-codex-spark",
+  openAiApiKey: String(process.env.OPENAI_API_KEY || process.env.LEARNER_OPENAI_API_KEY || "").trim(),
   embeddingModel: "text-embedding-3-small",
   imageModel: "gpt-image-2",
   imageSize: "1024x1024",
   imageQuality: "low",
   imageBackground: "opaque",
   imageOutputFormat: "png",
-  speechToTextApiKey: "",
+  speechToTextApiKey: String(process.env.ELEVENLABS_API_KEY || process.env.ELEVEN_LABS_API_KEY || "").trim(),
   speechToTextLanguage: "eng",
   speechToTextModel: "scribe_v2",
   userProfile: "",
@@ -31,6 +32,7 @@ function normalizeAiSettings(settings = {}) {
     baseUrl: normalizeBaseUrl(settings.baseUrl),
     chatModel: cleanSetting(settings.chatModel, defaultAiSettings.chatModel),
     graphModel: cleanSetting(settings.graphModel, defaultAiSettings.graphModel),
+    openAiApiKey: cleanSetting(settings.openAiApiKey, defaultAiSettings.openAiApiKey),
     embeddingModel: cleanSetting(settings.embeddingModel, defaultAiSettings.embeddingModel),
     imageModel: cleanSetting(settings.imageModel, defaultAiSettings.imageModel),
     imageSize: cleanSetting(settings.imageSize, defaultAiSettings.imageSize),
@@ -62,8 +64,18 @@ function getAiSettings(overrides = {}) {
   });
 }
 
+function getEmbeddingSettings(overrides = {}) {
+  const aiSettings = getAiSettings(overrides);
+  return {
+    apiKey: aiSettings.openAiApiKey,
+    baseUrl: String(process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/+$/g, ""),
+    model: String(process.env.LEARNER_GRAPH_EMBEDDING_MODEL || aiSettings.embeddingModel).trim(),
+  };
+}
+
 module.exports = {
   configureAiSettings,
   defaultAiSettings,
   getAiSettings,
+  getEmbeddingSettings,
 };

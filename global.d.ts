@@ -48,6 +48,7 @@ declare global {
     baseUrl?: string;
     chatModel?: string;
     graphModel?: string;
+    openAiApiKey?: string;
     embeddingModel?: string;
     imageModel?: string;
     imageSize?: string;
@@ -671,6 +672,7 @@ declare global {
       rebuildDocumentSearchIndex: () => Promise<void>;
       configureAi: (settings?: LearnerAiSettings) => Promise<LearnerAiSettings>;
       listAiModels: (settings?: LearnerAiSettings) => Promise<LearnerAiModel[]>;
+      testAiEmbedding: (settings?: LearnerAiSettings) => Promise<{ dimensions: number; model: string }>;
       generateImage: (request: LearnerImageGenerationRequest) => Promise<LearnerImageGenerationResult>;
       transcribeSpeech: (request: LearnerSpeechTranscriptionRequest) => Promise<LearnerSpeechTranscriptionResult>;
       getDocumentMastery: (

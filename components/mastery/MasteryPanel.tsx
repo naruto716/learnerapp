@@ -2,13 +2,11 @@
 
 import {
   ArrowsClockwiseIcon,
-  CardsThreeIcon,
   CheckIcon,
   ClockCounterClockwiseIcon,
   CrosshairIcon,
   EyeIcon,
   EyeSlashIcon,
-  GridFourIcon,
   ImageIcon,
   PauseIcon,
   PlayIcon,
@@ -20,6 +18,7 @@ import {
   XIcon,
 } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { toast } from "sonner";
 import type { AgentForegroundContext } from "@/components/ai/agentForegroundContext";
 import MasteryCardCarousel from "./MasteryCardCarousel";
 import MasteryCardGenerationDialog from "./MasteryCardGenerationDialog";
@@ -47,7 +46,6 @@ type MasteryPanelProps = {
   onClear: () => boolean | Promise<boolean>;
   onClearCards: () => boolean | Promise<boolean>;
   onClose: () => void;
-  onEnsureReadyCards: (minimumReadyCards: number) => Promise<DocumentMasteryCards | null>;
   onGenerate: (force?: boolean) => boolean | Promise<boolean>;
   onGenerateCards: (preferences: MasteryCardPreferences) => boolean | Promise<boolean>;
   onGenerateMetaphor: () => boolean | Promise<boolean>;
@@ -383,8 +381,6 @@ function ConceptDeckCarousel({
   showMetaphor: boolean;
   thresholds: MasteryScoringSettings["thresholds"];
 }) {
-  const shouldShowMetaphor = showMetaphor && metaphor !== null;
-
   return (
     <MasteryCardCarousel
       activeIndex={activeIndex}
@@ -426,7 +422,6 @@ export default function MasteryPanel({
   onClear,
   onClearCards,
   onClose,
-  onEnsureReadyCards,
   onGenerate,
   onGenerateCards,
   onGenerateMetaphor,
@@ -454,7 +449,7 @@ export default function MasteryPanel({
   const [practiceResultsOpen, setPracticeResultsOpen] = useState(false);
   const [practiceStarting, setPracticeStarting] = useState(false);
   const [section, setSection] = useState<MasterySection>("concepts");
-  const [showMetaphor, setShowMetaphor] = useState(false);
+  const [showMetaphor, setShowMetaphor] = useState(hasMetaphor);
   const [viewMode, setViewMode] = useState<MasteryViewMode>("focus");
   const masteryThresholds = readMasterySettings().thresholds;
   const safeActiveIndex = hasConcepts ? Math.min(activeIndex, conceptCount - 1) : 0;
@@ -464,6 +459,14 @@ export default function MasteryPanel({
   const completedCardCount = cards.filter((card) => card.status === "done").length;
   const practiceWorkspaceRef = useRef<MasteryPracticeWorkspaceHandle>(null);
   const practiceOpen = flashcardView === "practice";
+
+  useEffect(() => {
+    if (error) toast.error(error, { id: "mastery-error" });
+  }, [error]);
+
+  useEffect(() => {
+    if (cardError) toast.error(cardError, { id: "mastery-card-error" });
+  }, [cardError]);
 
   useEffect(() => {
     if (!open || section !== "concepts" || viewMode !== "focus" || !activeDocumentPath) {
@@ -481,10 +484,6 @@ export default function MasteryPanel({
     });
     return () => onForegroundContextChange?.(null);
   }, [activeDocumentPath, concepts, mastery?.metaphor, onForegroundContextChange, open, safeActiveIndex, section, viewMode]);
-
-  useEffect(() => {
-    setShowMetaphor(hasMetaphor);
-  }, [activeDocumentPath, hasMetaphor, mastery?.metaphor?.id]);
 
   const setFocusedConceptIndex = useCallback((index: number) => {
     if (!hasConcepts) return;
@@ -818,10 +817,6 @@ export default function MasteryPanel({
       </header>
 
       <div className={`flex min-h-0 flex-1 flex-col overflow-hidden px-5 ${section === "concepts" ? "pb-5" : ""}`}>
-        {(error || cardError) && (
-          <div className="mb-4 rounded-lg bg-red-300/10 px-4 py-3 text-sm text-red-200">{error || cardError}</div>
-        )}
-
         {section === "concepts" && isMetaphorLoading && metaphorProgress && <MasteryProgressStatus progress={metaphorProgress} />}
 
         {section === "concepts" && mastery?.stale && hasConcepts && (
@@ -868,7 +863,6 @@ export default function MasteryPanel({
             isGenerating={isCardGenerating}
             key={activeDocumentPath}
             onOpenGeneration={() => setCardGenerationOpen(true)}
-            onEnsureReadyCards={onEnsureReadyCards}
             onForegroundContextChange={onForegroundContextChange}
             onPracticeChanged={onPracticeChanged}
             onResultsChange={setPracticeResultsOpen}

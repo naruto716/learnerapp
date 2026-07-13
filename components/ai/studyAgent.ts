@@ -581,7 +581,7 @@ function createStudyTools({
       {
         name: "open_note_tab",
         description:
-          "Open a note in a background tab without switching the active tab. Use this before create/update operations that need editor-backed Markdown tools.",
+          "Open a note in a background tab without switching the active tab when the user explicitly asks to open it. Do not use this to prepare create, patch, or replacement operations; those tools open their own target tabs.",
         schema: z.object({
           documentPath: z.string().min(1).describe("Note path, without needing the .json extension."),
         }),
@@ -739,7 +739,7 @@ function createStudyTools({
       {
         name: "create_note",
         description:
-          "Create a new note. Optionally write a complete Markdown body into it using the app's Tiptap Markdown converter.",
+          "Create a new note. When the user requests content, include the complete Markdown body in this same call. The tool opens the new note in a background tab and applies the body automatically; do not call open_note_tab or a replacement tool afterward.",
         schema: z.object({
           documentPath: z.string().min(1).describe("New note path without .json, such as Folder/New Note."),
           markdown: z.string().optional().describe("Optional complete Markdown body for the new note."),
@@ -1408,7 +1408,7 @@ function createStudyTools({
       {
         name: "propose_current_document_replacement",
         description:
-          "Propose a full replacement for the currently open note using Markdown. Use this for writing a note from scratch, large rewrites, outlines, study guides, and long generated documents. The UI auto-applies it and keeps undo.",
+          "Propose a full Markdown replacement for the currently active note. Use this only when the intended target is already the active document. The UI auto-applies it and keeps undo.",
         schema: z.object({
           summary: z.string().min(1).describe("Short human-readable summary of the replacement."),
           markdown: z
@@ -1482,15 +1482,16 @@ function createStudyAgent({
       "Create, update, replacement, and graph extraction tools may open the target note in a background tab so editor-backed Markdown tools are available.",
       "Deletion does not need to open a note. If a deleted note is already open, its tab is closed.",
       "Use list_notes and read_note when the user asks you to inspect or edit multiple notes.",
-      "Use open_note_tab only when you specifically need to prepare a note tab before another operation; otherwise mutation tools can open their target tabs themselves.",
-      "Use create_note when the user asks you to create a new note; write Markdown content when useful.",
+      "Use open_note_tab only when the user explicitly asks to open a note. Do not use it to prepare create, patch, replacement, or graph operations; those tools open their own target tabs.",
+      "When creating a new note with content, call create_note once with both documentPath and the complete markdown body. Do not follow it with open_note_tab or a replacement tool.",
+      "For an existing note identified by path, use propose_note_patch or propose_note_replacement; these tools automatically open a closed target in a background tab. Use propose_current_document_patch or propose_current_document_replacement only when the intended target is already active.",
       "Use graph tools to inspect and modify knowledge graph concepts and connections. Search existing graph concepts before creating likely duplicates.",
       "Use read_mastery_state to inspect concepts, flashcards, weaknesses, attempts, and stage scheduling. Use read_mastery_history for completion history and read_mastery_answer_sheet for a complete saved answer/feedback session. These mastery tools are read-only.",
       "Use read_revision_schedule when the user asks what is due, overdue, planned, or scheduled for future review.",
       "Foreground study context, when present, is attached as a system message for the current request only. Treat it as what the user is currently viewing, and do not assume it remains visible in later turns unless it is attached again.",
       "Only use generate_mastery_cards when the user explicitly asks to create flashcards. It is the only mastery write tool and routes through Learner's dedicated card-generation framework.",
       "Before modifying existing note content, read the current document unless the user only asks to insert new content.",
-      "For writing a note from scratch, replacing the whole note, broad rewrites, long outlines, study guides, math-heavy content, Mermaid diagrams, or code-heavy generated content, use propose_current_document_replacement and write the replacement body in Markdown.",
+      "For replacing the whole active note, broad rewrites, long outlines, study guides, math-heavy content, Mermaid diagrams, or code-heavy generated content, use propose_current_document_replacement and write the replacement body in Markdown.",
       "Replacement Markdown should be the complete final document body, not a diff. Do not wrap it in a markdown code fence.",
       "For math in replacement Markdown, prefer inline $...$ and display $$...$$ delimiters. ChatGPT-style \\(...\\) and \\[...\\] are also accepted.",
       "When writing Mermaid diagrams in Markdown, use fenced code blocks like ```mermaid and keep syntax simple and valid. For flowchart node labels, quote labels with brackets like A[\"Type https://example.com\"]. For flowchart edge labels, use -->|Yes| without quotes inside the pipes. For sequenceDiagram, keep each arrow message on one line; do not put message continuations on the next line.",

@@ -1,4 +1,5 @@
 const disabledValues = new Set(["0", "false", "off", "no"]);
+const { operationLog } = require("../operationLog");
 
 function graphLoggingEnabled() {
   return !disabledValues.has(String(process.env.LEARNER_GRAPH_LOG || "1").trim().toLowerCase());
@@ -18,7 +19,9 @@ function sanitizeDetails(details) {
 
 function graphLog(event, details = {}) {
   if (!graphLoggingEnabled()) return;
-  console.info(`[graph] ${event}`, sanitizeDetails(details));
+  const sanitizedDetails = sanitizeDetails(details);
+  console.info(`[graph] ${event}`, sanitizedDetails);
+  operationLog(`graph.${event}`, sanitizedDetails);
 }
 
 function graphDebug(event, details = {}) {
@@ -28,15 +31,19 @@ function graphDebug(event, details = {}) {
 
 function graphWarn(event, details = {}) {
   if (!graphLoggingEnabled()) return;
-  console.warn(`[graph] ${event}`, sanitizeDetails(details));
+  const sanitizedDetails = sanitizeDetails(details);
+  console.warn(`[graph] ${event}`, sanitizedDetails);
+  operationLog(`graph.${event}`, { level: "warning", ...sanitizedDetails });
 }
 
 function graphError(event, error, details = {}) {
   if (!graphLoggingEnabled()) return;
-  console.error(`[graph] ${event}`, {
+  const errorDetails = {
     ...sanitizeDetails(details),
     error: error instanceof Error ? error.message : String(error),
-  });
+  };
+  console.error(`[graph] ${event}`, errorDetails);
+  operationLog(`graph.${event}`, { level: "error", ...errorDetails });
 }
 
 function startTimer() {

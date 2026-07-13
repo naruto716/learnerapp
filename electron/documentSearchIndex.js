@@ -5,7 +5,7 @@ const fs = require("fs/promises");
 const path = require("path");
 const { DatabaseSync } = require("node:sqlite");
 const { embedTexts } = require("./aiClient");
-const { getAiSettings } = require("./aiSettings");
+const { getEmbeddingSettings } = require("./aiSettings");
 
 const databaseFileName = "learner.sqlite";
 const orderFileName = ".documents-order.json";
@@ -398,12 +398,10 @@ function searchIndexedDocuments(query, limit = 20) {
 }
 
 function getEmbeddingConfig(settings) {
-  const aiSettings = getAiSettings(settings);
+  const embeddingSettings = getEmbeddingSettings(settings);
   return {
-    apiKey: aiSettings.apiKey,
-    baseUrl: aiSettings.baseUrl,
-    configured: Boolean(aiSettings.apiKey),
-    model: aiSettings.embeddingModel,
+    ...embeddingSettings,
+    configured: Boolean(embeddingSettings.apiKey),
   };
 }
 

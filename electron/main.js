@@ -3,6 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const { pathToFileURL } = require("url");
 const { loadLocalEnv } = require("./localEnv");
+const { operationLog } = require("./operationLog");
 
 loadLocalEnv();
 
@@ -25,6 +26,7 @@ const {
   saveDocumentFile,
 } = require("./documentUtil");
 const { configureAiSettings } = require("./aiSettings");
+const { embedTexts } = require("./aiClient");
 const { generateImage, listAiModels } = require("./imageGeneration");
 const { transcribeSpeech } = require("./speechToText");
 const {
@@ -163,6 +165,33 @@ function configureMediaPermissions(ses) {
     const origin = details.securityOrigin || details.requestingUrl || "";
     callback(permission === "media" && audioOnly && isTrustedAppOrigin(origin));
   });
+}
+
+let activeAiOperation = null;
+
+async function runExclusiveAiOperation(label, operation) {
+  if (activeAiOperation) {
+    operationLog("ai.operation.rejected", { activeOperation: activeAiOperation, requestedOperation: label });
+    throw new Error(`${activeAiOperation} is already running. Wait for it to finish before starting ${label}.`);
+  }
+
+  activeAiOperation = label;
+  const startedAt = Date.now();
+  operationLog("ai.operation.started", { operation: label });
+  try {
+    const result = await operation();
+    operationLog("ai.operation.completed", { durationMs: Date.now() - startedAt, operation: label });
+    return result;
+  } catch (error) {
+    operationLog("ai.operation.failed", {
+      durationMs: Date.now() - startedAt,
+      error: error instanceof Error ? error.message : String(error),
+      operation: label,
+    });
+    throw error;
+  } finally {
+    activeAiOperation = null;
+  }
 }
 
 ipcMain.handle("window:is-fullscreen", (event) => {
@@ -422,9 +451,17 @@ ipcMain.handle("ai:listModels", async (_event, settings) => {
   return listAiModels(settings);
 });
 
+ipcMain.handle("ai:testEmbedding", async (_event, settings) => {
+  configureAiSettings(settings);
+  const { embeddings, model } = await embedTexts(["Learner embedding capability check"], { settings });
+  const dimensions = embeddings[0]?.length ?? 0;
+  if (dimensions === 0) throw new Error("Embedding provider returned an empty vector.");
+  return { dimensions, model };
+});
+
 ipcMain.handle("ai:generateImage", async (_event, request) => {
   configureAiSettings(request?.settings);
-  return generateImage(request);
+  return runExclusiveAiOperation("image generation", () => generateImage(request));
 });
 
 ipcMain.handle("speech:transcribe", async (_event, request) => {
@@ -442,10 +479,11 @@ ipcMain.handle("mastery:generateDocumentMastery", async (_event, request) => {
   }
 
   configureAiSettings(request?.settings);
-  return generateDocumentMastery({
-    ...request,
-    documentPath: filePathWithExtension(request.documentPath),
-  });
+  return runExclusiveAiOperation("mastery concept generation", () =>
+    generateDocumentMastery({
+      ...request,
+      documentPath: filePathWithExtension(request.documentPath),
+    }));
 });
 
 ipcMain.handle("mastery:updateConceptLevel", async (_event, request) => {
@@ -485,11 +523,12 @@ ipcMain.handle("mastery:generateMetaphor", async (_event, request) => {
 
   configureAiSettings(request?.settings);
   try {
-    return await generateDocumentMasteryMetaphor({
-      ...request,
-      documentPath,
-      onProgress: sendProgress,
-    });
+    return await runExclusiveAiOperation("metaphor generation", () =>
+      generateDocumentMasteryMetaphor({
+        ...request,
+        documentPath,
+        onProgress: sendProgress,
+      }));
   } catch (error) {
     sendProgress({
       completed: 0,
@@ -532,11 +571,12 @@ ipcMain.handle("mastery:generateCards", async (_event, request) => {
 
   configureAiSettings(request?.settings);
   try {
-    return await generateDocumentMasteryCards({
-      ...request,
-      documentPath,
-      onProgress: sendProgress,
-    });
+    return await runExclusiveAiOperation("flashcard generation", () =>
+      generateDocumentMasteryCards({
+        ...request,
+        documentPath,
+        onProgress: sendProgress,
+      }));
   } catch (error) {
     sendProgress({
       completed: 0,
@@ -633,7 +673,8 @@ ipcMain.handle("mastery:clearCards", async (_event, request) => {
 
 ipcMain.handle("graph:extractDocumentGraph", async (_event, filePath, markdown, settings) => {
   const documentPath = filePathWithExtension(filePath);
-  return extractDocumentGraph(documentPath, await readDocumentFile(documentPath), markdown, settings);
+  return runExclusiveAiOperation("knowledge graph generation", async () =>
+    extractDocumentGraph(documentPath, await readDocumentFile(documentPath), markdown, settings));
 });
 
 ipcMain.handle("graph:getDocumentGraph", async (_event, filePath) => {

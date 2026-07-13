@@ -2,12 +2,10 @@
 
 import { SparkleIcon } from "@phosphor-icons/react";
 import { useCallback } from "react";
-import { toast } from "sonner";
 import FloatingIconButton from "@/components/FloatingIconButton";
 import type { AgentForegroundContext } from "@/components/ai/agentForegroundContext";
 import type { CurrentDocumentAgentTools } from "@/components/editor/TiptapEditor";
 import MasteryPanel from "./MasteryPanel";
-import { readMasterySettings } from "./masterySettings";
 import { useDocumentMastery } from "./useDocumentMastery";
 import { useMasteryCards } from "./useMasteryCards";
 
@@ -55,32 +53,14 @@ export default function MasteryController({
     onMasteryChanged: refreshMastery,
   });
 
-  const startInitialMasteryJobs = (result: DocumentMasteryGenerationResult) => {
-    if (!result.generated) return;
-
-    const metaphorJob = generateMetaphor(result.mastery, false).then((generated) => {
-      if (!generated) toast.error("Metaphor generation failed. You can generate it manually from Mastery.");
-    });
-    const cardJob = cardsController.ensureReadyCards(readMasterySettings().practiceCardCount, false).then((state) => {
-      if (!state) {
-        toast.error("Knowledge graph or flashcard generation failed. You can generate cards manually from Mastery.");
-      }
-    });
-    void Promise.allSettled([metaphorJob, cardJob]);
-  };
-
   const generateAndSyncCards = async (force = false) => {
     const result = await generateMastery(force);
-    if (!result) return false;
-    startInitialMasteryJobs(result);
-    return true;
+    return Boolean(result);
   };
 
   const openAndPrepareMastery = async () => {
     const result = await openMastery();
-    if (!result) return false;
-    startInitialMasteryJobs(result);
-    return true;
+    return Boolean(result);
   };
 
   const clearAndSyncCards = async () => {
@@ -124,12 +104,12 @@ export default function MasteryController({
         isMetaphorLoading={isMetaphorLoading}
         isLoading={isLoading}
         isSidebarOpen={isSidebarOpen}
+        key={`${activeDocumentPath ?? "none"}:${isOpen ? "open" : "closed"}`}
         mastery={mastery}
         metaphorProgress={metaphorProgress}
         onClear={clearAndSyncCards}
         onClearCards={cardsController.clearCards}
         onClose={closeMastery}
-        onEnsureReadyCards={cardsController.ensureReadyCards}
         onGenerateCards={cardsController.generateCards}
         onGenerateMetaphor={generateMetaphor}
         onForegroundContextChange={onForegroundContextChange}

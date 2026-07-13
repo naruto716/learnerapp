@@ -5,6 +5,7 @@ export type LearnerAiSettings = {
   baseUrl: string;
   chatModel: string;
   graphModel: string;
+  openAiApiKey: string;
   embeddingModel: string;
   imageModel: string;
   imageSize: string;
@@ -22,6 +23,7 @@ export const aiSettingsStorageKeys = {
   baseUrl: "learner.ai.proxyBaseUrl.v1",
   chatModel: "learner.ai.model.v1",
   graphModel: "learner.ai.graphModel.v1",
+  openAiApiKey: "learner.ai.openAiApiKey.v1",
   embeddingModel: "learner.ai.embeddingModel.v1",
   imageModel: "learner.ai.imageModel.v1",
   imageSize: "learner.ai.imageSize.v1",
@@ -39,6 +41,7 @@ export const defaultAiSettings: LearnerAiSettings = {
   baseUrl: "http://127.0.0.1:8317/v1",
   chatModel: "gpt-5.6-sol",
   graphModel: "gpt-5.3-codex-spark",
+  openAiApiKey: "",
   embeddingModel: "text-embedding-3-small",
   imageModel: "gpt-image-2",
   imageSize: "1024x1024",
@@ -62,6 +65,7 @@ export function readAiSettings(): LearnerAiSettings {
     baseUrl: readSetting("baseUrl"),
     chatModel: readSetting("chatModel"),
     graphModel: readSetting("graphModel"),
+    openAiApiKey: readSetting("openAiApiKey"),
     embeddingModel: readSetting("embeddingModel"),
     imageModel: readSetting("imageModel"),
     imageSize: readSetting("imageSize"),

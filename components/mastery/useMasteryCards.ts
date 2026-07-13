@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { readAiSettings } from "@/components/ai/aiSettings";
 import type { CurrentDocumentAgentTools } from "@/components/editor/TiptapEditor";
 import { readMasterySettings } from "./masterySettings";
@@ -24,9 +24,17 @@ export function useMasteryCards({
   const [isEvaluating, setIsEvaluating] = useState(false);
   const [isDiscussing, setIsDiscussing] = useState(false);
   const [progress, setProgress] = useState<MasteryCardProgress | null>(null);
+  const generationSequenceRef = useRef(0);
+  const activeDocumentPathRef = useRef(activeDocumentPath);
+
+  useEffect(() => {
+    activeDocumentPathRef.current = activeDocumentPath;
+    generationSequenceRef.current += 1;
+  }, [activeDocumentPath]);
 
   useEffect(() => {
     return window.learner?.onMasteryCardProgress?.((nextProgress) => {
+      if (!nextProgress.documentPath || nextProgress.documentPath !== activeDocumentPathRef.current) return;
       setProgress(nextProgress);
     });
   }, []);
@@ -87,12 +95,15 @@ export function useMasteryCards({
     setIsGenerating(true);
     setProgress({ completed: 0, label: "Preparing flashcard generation", phase: "planning", total: 1 });
     setCardState((current) => (current ? { ...current, preferences } : current));
+    const generationSequence = generationSequenceRef.current + 1;
+    generationSequenceRef.current = generationSequence;
 
     try {
       const snapshot = getCurrentDocumentTools()?.read();
       if (!snapshot || !activeDocumentPath) throw new Error("Open a document before generating flashcards.");
+      const documentPath = snapshot.path;
       const state = await window.learner?.generateDocumentMasteryCards({
-        documentPath: snapshot.path,
+        documentPath,
         generationPrompt: preferences.generationPrompt,
         markdown: snapshot.markdown,
         masterySettings: readMasterySettings(),
@@ -100,13 +111,18 @@ export function useMasteryCards({
         targetProficiency: preferences.targetProficiency,
       });
       if (!state) throw new Error("Flashcard generation is not available in this renderer.");
-      setCardState(state);
+      if (generationSequenceRef.current === generationSequence && activeDocumentPathRef.current === documentPath) {
+        setCardState(state);
+        setProgress(null);
+      }
       return true;
     } catch (generationError) {
-      setError(generationError instanceof Error ? generationError.message : "Flashcard generation failed.");
+      if (generationSequenceRef.current === generationSequence) {
+        setError(generationError instanceof Error ? generationError.message : "Flashcard generation failed.");
+      }
       return false;
     } finally {
-      setIsGenerating(false);
+      if (generationSequenceRef.current === generationSequence) setIsGenerating(false);
     }
   }, [activeDocumentPath, getCurrentDocumentTools]);
 
