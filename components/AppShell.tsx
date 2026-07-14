@@ -13,7 +13,7 @@ import TiptapEditor, {
   type CurrentDocumentAgentTools,
   type PersistedEditorState,
 } from "@/components/editor/TiptapEditor";
-import { documentPathToRoute, routeToDocumentPath } from "@/components/documentPaths";
+import { documentPathToRoute, documentTitle, routeToDocumentPath } from "@/components/documentPaths";
 import KnowledgeGraphPanel from "@/components/graph/KnowledgeGraphPanel";
 import MasteryController from "@/components/mastery/MasteryController";
 import RevisionDialog from "@/components/mastery/RevisionDialog";
@@ -405,6 +405,40 @@ export default function AppShell() {
     return getCurrentDocumentTools()?.read().markdown ?? null;
   }, [getCurrentDocumentTools]);
 
+  const editorForegroundContext = useMemo<AgentForegroundContext | null>(() => {
+    if (
+      !activeDocumentPath
+      || isAiSettingsOpen
+      || isDocumentSearchOpen
+      || isKnowledgeGraphOpen
+      || isMasteryOpen
+      || isRevisionOpen
+    ) {
+      return null;
+    }
+
+    const editorState = editorStates[activeDocumentPath];
+    const selectedText = editorState?.selectedText?.trim() ?? "";
+    const selection = editorState?.selection;
+    if (!selectedText || !selection || selection.from === selection.to) return null;
+
+    return {
+      documentPath: activeDocumentPath,
+      key: `selection:${activeDocumentPath}:${selection.from}:${selection.to}`,
+      kind: "selection",
+      label: `Selected text in ${documentTitle(activeDocumentPath)}`,
+      selectedText,
+    };
+  }, [
+    activeDocumentPath,
+    editorStates,
+    isAiSettingsOpen,
+    isDocumentSearchOpen,
+    isKnowledgeGraphOpen,
+    isMasteryOpen,
+    isRevisionOpen,
+  ]);
+
   const openKnowledgeGraph = useCallback(async () => {
     setIsKnowledgeGraphOpen(true);
     setKnowledgeGraphError(null);
@@ -666,7 +700,11 @@ export default function AppShell() {
         getCurrentDocumentTools={getCurrentDocumentTools}
         getDocumentTools={getDocumentTools}
         getOpenDocumentPaths={getOpenDocumentPaths}
-        foregroundContext={isRevisionOpen ? revisionForegroundContext : masteryForegroundContext}
+        foregroundContext={isRevisionOpen
+          ? revisionForegroundContext
+          : isMasteryOpen
+            ? masteryForegroundContext
+            : editorForegroundContext}
         isOpen={isBubbleOpen}
         isSidebarOpen={isSidebarOpen}
         onClose={() => setIsBubbleOpen(false)}

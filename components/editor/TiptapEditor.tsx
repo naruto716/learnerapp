@@ -35,6 +35,7 @@ export type PersistedEditorState = {
     from: number;
     to: number;
   };
+  selectedText?: string;
   scrollTop?: number;
 };
 
@@ -647,7 +648,7 @@ const AiPatchPreviewExtension = Extension.create({
 
   addProseMirrorPlugins() {
     return [
-      new Plugin({
+      new Plugin<AiPatchDecorationState>({
         key: aiPatchPreviewPluginKey,
         props: {
           decorations(state) {
@@ -759,7 +760,7 @@ const DocumentSearchExtension = Extension.create({
 
   addProseMirrorPlugins() {
     return [
-      new Plugin({
+      new Plugin<SearchDecorationState>({
         key: documentSearchPluginKey,
         props: {
           decorations(state) {
@@ -923,6 +924,7 @@ export default function TiptapEditor({
       const { from, to } = editor.state.selection;
       onPersistedStateChange({
         selection: { from, to },
+        selectedText: from === to ? "" : editor.state.doc.textBetween(from, to, "\n\n"),
         scrollTop: editorScrollRef.current?.scrollTop ?? 0,
       });
     },
@@ -932,6 +934,7 @@ export default function TiptapEditor({
       const { from, to } = editor.state.selection;
       onPersistedStateChange({
         selection: { from, to },
+        selectedText: from === to ? "" : editor.state.doc.textBetween(from, to, "\n\n"),
         scrollTop: editorScrollRef.current?.scrollTop ?? 0,
       });
 
@@ -1751,6 +1754,7 @@ export default function TiptapEditor({
           const { from, to } = editor.state.selection;
           onPersistedStateChange({
             selection: { from, to },
+            selectedText: from === to ? "" : editor.state.doc.textBetween(from, to, "\n\n"),
             scrollTop: editorScrollRef.current?.scrollTop ?? 0,
           });
         }}

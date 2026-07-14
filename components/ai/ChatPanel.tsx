@@ -873,11 +873,13 @@ export default function ChatPanel({
       content,
       createdAt: Date.now(),
       images: readyImages.map((image) => image.dataUrl as string),
-      viewingContext: {
-        attached: Boolean(attachedForegroundContext),
-        description: attachedForegroundContext ? foregroundContextDescription(attachedForegroundContext) : null,
-        key: attachedForegroundContext?.key ?? null,
-      },
+      viewingContext: attachedForegroundContext
+        ? {
+            attached: true,
+            description: foregroundContextDescription(attachedForegroundContext),
+            key: attachedForegroundContext.key,
+          }
+        : undefined,
     };
     const messagesForAgent = [...messages, userMessage];
     const nextMessages = [...messages, userMessage];
@@ -1138,11 +1140,9 @@ export default function ChatPanel({
                         ))}
                       </div>
                     )}
-                    {message.role === "user" && message.viewingContext && (
+                    {message.role === "user" && message.viewingContext?.attached && (
                       <p className={`${message.content || message.images?.length ? "mt-2" : ""} text-[11px] text-white/42`}>
-                        {message.viewingContext.attached
-                          ? `Viewing context attached · ${message.viewingContext.description}`
-                          : "No viewing context attached"}
+                        Viewing context attached · {message.viewingContext.description}
                       </p>
                     )}
                     {message.toolCalls?.length ? (
@@ -1276,32 +1276,30 @@ export default function ChatPanel({
                     <ImageIcon size={17} />
                     Add images
                   </DropdownMenu.Item>
-                  <DropdownMenu.CheckboxItem
-                    checked={foregroundContextEnabled}
-                    className="flex cursor-default select-none items-center justify-between gap-3 rounded-lg px-3 py-2 text-left outline-none transition data-[disabled]:opacity-40 data-[highlighted]:bg-white/[0.07]"
-                    disabled={!foregroundContext}
-                    onCheckedChange={(checked) => {
-                      if (!foregroundContext) return;
-                      setDismissedForegroundContextKey(checked ? null : foregroundContext.key);
-                    }}
-                    onSelect={(event) => event.preventDefault()}
-                  >
-                    <span className="min-w-0">
-                      <span className="block text-sm text-white/72">Include viewing context</span>
-                      <span className="block truncate text-[11px] text-white/36">
-                        {foregroundContext
-                          ? foregroundContextDescription(foregroundContext)
-                          : "Nothing relevant is currently visible"}
+                  {foregroundContext && (
+                    <DropdownMenu.CheckboxItem
+                      checked={foregroundContextEnabled}
+                      className="flex cursor-default select-none items-center justify-between gap-3 rounded-lg px-3 py-2 text-left outline-none transition data-[highlighted]:bg-white/[0.07]"
+                      onCheckedChange={(checked) => {
+                        setDismissedForegroundContextKey(checked ? null : foregroundContext.key);
+                      }}
+                      onSelect={(event) => event.preventDefault()}
+                    >
+                      <span className="min-w-0">
+                        <span className="block text-sm text-white/72">Include viewing context</span>
+                        <span className="block truncate text-[11px] text-white/36">
+                          {foregroundContextDescription(foregroundContext)}
+                        </span>
                       </span>
-                    </span>
-                    <span className={`flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition ${
-                      foregroundContextEnabled ? "justify-end bg-white/22" : "justify-start bg-white/[0.08]"
-                    }`}>
-                      <span className="flex h-4 w-4 items-center justify-center rounded-full bg-white text-black">
-                        {foregroundContextEnabled && <CheckIcon size={10} weight="bold" />}
+                      <span className={`flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition ${
+                        foregroundContextEnabled ? "justify-end bg-white/22" : "justify-start bg-white/[0.08]"
+                      }`}>
+                        <span className="flex h-4 w-4 items-center justify-center rounded-full bg-white text-black">
+                          {foregroundContextEnabled && <CheckIcon size={10} weight="bold" />}
+                        </span>
                       </span>
-                    </span>
-                  </DropdownMenu.CheckboxItem>
+                    </DropdownMenu.CheckboxItem>
+                  )}
                 </DropdownMenu.Content>
               </DropdownMenu.Portal>
             </DropdownMenu.Root>
