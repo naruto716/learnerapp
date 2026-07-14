@@ -78,6 +78,7 @@ const {
   deleteDocumentGraph,
   deleteDocumentGraphTree,
   getDocumentGraph,
+  hashContent,
   replaceDocumentGraphPath,
   searchConcepts,
   updateConcept,
@@ -743,6 +744,16 @@ ipcMain.handle("graph:extractDocumentGraph", async (_event, filePath, markdown, 
 
 ipcMain.handle("graph:getDocumentGraph", async (_event, filePath) => {
   return getDocumentGraph(filePathWithExtension(filePath));
+});
+
+ipcMain.handle("graph:getDocumentGraphStatus", async (_event, filePath, markdown) => {
+  const graph = getDocumentGraph(filePathWithExtension(filePath));
+  const status = !graph.extractedAt
+    ? "not-generated"
+    : graph.documentHash === hashContent(String(markdown || "").trim())
+      ? "ready"
+      : "notes-changed";
+  return { graph, status };
 });
 
 ipcMain.handle("graph:deleteDocumentGraph", async (_event, filePath) => {

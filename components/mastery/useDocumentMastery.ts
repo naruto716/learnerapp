@@ -7,6 +7,8 @@ import { readMasterySettings } from "./masterySettings";
 
 type UseDocumentMasteryOptions = {
   activeDocumentPath: string | null;
+  documentContentHash?: string;
+  editorToolsVersion?: number;
   getCurrentDocumentTools: () => CurrentDocumentAgentTools | null;
   onOpenChange?: (open: boolean) => void;
 };
@@ -55,6 +57,8 @@ function readValidSnapshot(
 
 export function useDocumentMastery({
   activeDocumentPath,
+  documentContentHash,
+  editorToolsVersion,
   getCurrentDocumentTools,
   onOpenChange,
 }: UseDocumentMasteryOptions) {
@@ -91,8 +95,12 @@ export function useDocumentMastery({
     [onOpenChange],
   );
 
-  const generateMastery = useCallback(async (force = false, cardRequest?: MasteryAssetsCardRequest) => {
-    setIsOpen(true);
+  const generateMastery = useCallback(async (
+    force = false,
+    cardRequest?: MasteryAssetsCardRequest,
+    openPanel = true,
+  ) => {
+    if (openPanel) setIsOpen(true);
     setError(null);
     setMetaphorProgress(null);
 
@@ -297,6 +305,7 @@ export function useDocumentMastery({
       setMetaphorProgress(null);
       applyStatus(conceptStatus);
       applyStatus(metaphorStatus);
+      void refreshMastery();
     });
     const removeStatusListener = window.learner?.onAiOperationStatus?.(applyStatus);
 
@@ -305,6 +314,21 @@ export function useDocumentMastery({
       removeStatusListener?.();
     };
   }, [activeDocumentPath, refreshMastery]);
+
+  useEffect(() => {
+    if (!activeDocumentPath || !documentContentHash) return;
+    let cancelled = false;
+    const snapshot = getCurrentDocumentTools()?.read();
+    if (!snapshot || snapshot.path !== activeDocumentPath) return;
+
+    window.learner?.getDocumentMastery(snapshot.path, snapshot.markdown).then((refreshed) => {
+      if (!cancelled && refreshed) setMastery(refreshed);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeDocumentPath, documentContentHash, editorToolsVersion, getCurrentDocumentTools]);
 
   const generateMetaphor = useCallback(async (sourceMastery?: DocumentMastery, reportError = true) => {
     if (reportError) setError(null);

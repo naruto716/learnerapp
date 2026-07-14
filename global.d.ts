@@ -222,6 +222,11 @@ declare global {
     graph: KnowledgeDocumentGraph;
   };
 
+  type KnowledgeGraphArtifactStatus = {
+    graph: KnowledgeDocumentGraph;
+    status: "not-generated" | "ready" | "notes-changed";
+  };
+
   type KnowledgeGraphProgress = {
     completed: number;
     failed: number;
@@ -778,6 +783,7 @@ declare global {
         settings?: LearnerAiSettings,
       ) => Promise<KnowledgeGraphExtractionResult>;
       getDocumentGraph: (filePath: string) => Promise<KnowledgeDocumentGraph>;
+      getDocumentGraphStatus: (filePath: string, markdown: string) => Promise<KnowledgeGraphArtifactStatus>;
       deleteDocumentGraph: (filePath: string) => Promise<KnowledgeDocumentGraph>;
       searchGraphConcepts: (query: string, limit?: number) => Promise<KnowledgeConceptSearchResult[]>;
       searchRelatedGraphConcepts: (

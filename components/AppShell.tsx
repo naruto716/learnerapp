@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import FloatingIconButton from "@/components/FloatingIconButton";
+import type { FloatingIconButtonStatus } from "@/components/FloatingIconButton";
 import type { AgentForegroundContext } from "@/components/ai/agentForegroundContext";
 import SideBar from "@/components/sidebar/sidebar";
 import DocumentSearchDialog from "@/components/sidebar/DocumentSearchDialog";
@@ -72,6 +73,14 @@ function readWorkspaceState(): WorkspaceState {
   }
 }
 
+function persistableEditorState(state: PersistedEditorState) {
+  return {
+    contentHash: state.contentHash,
+    scrollTop: state.scrollTop,
+    selection: state.selection,
+  };
+}
+
 function replacePath(paths: string[], oldPath: string, newPath: string) {
   return paths.map((path) => {
     if (path === oldPath) return newPath;
@@ -121,6 +130,8 @@ export default function AppShell() {
   const [isAiSettingsOpen, setIsAiSettingsOpen] = useState(false);
   const [isKnowledgeGraphOpen, setIsKnowledgeGraphOpen] = useState(false);
   const [isKnowledgeGraphLoading, setIsKnowledgeGraphLoading] = useState(false);
+  const [knowledgeGraphStatus, setKnowledgeGraphStatus] = useState<Exclude<FloatingIconButtonStatus, "checking">>("not-generated");
+  const [knowledgeGraphStatusDocumentPath, setKnowledgeGraphStatusDocumentPath] = useState<string | null>(null);
   const [isKnowledgeGraphDeleting, setIsKnowledgeGraphDeleting] = useState(false);
   const [knowledgeGraph, setKnowledgeGraph] = useState<KnowledgeDocumentGraph | null>(null);
   const [knowledgeGraphError, setKnowledgeGraphError] = useState<string | null>(null);
@@ -132,6 +143,7 @@ export default function AppShell() {
   const [revisionForegroundContext, setRevisionForegroundContext] = useState<AgentForegroundContext | null>(null);
   const [revisionRefreshKey, setRevisionRefreshKey] = useState(0);
   const [editorStates, setEditorStates] = useState<Record<string, PersistedEditorState>>({});
+  const [editorToolsVersion, setEditorToolsVersion] = useState(0);
   const [documentsVersion, setDocumentsVersion] = useState(0);
   const [workspaceLoaded, setWorkspaceLoaded] = useState(false);
   const restoredWorkspaceRef = useRef(false);
@@ -210,7 +222,12 @@ export default function AppShell() {
       JSON.stringify({
         openTabs,
         lastActivePath: activeDocumentPath ?? previousWorkspace.lastActivePath,
-        editorStates,
+        editorStates: Object.fromEntries(
+          Object.entries(editorStates).map(([documentPath, state]) => [
+            documentPath,
+            persistableEditorState(state),
+          ]),
+        ),
       }),
     );
   }, [activeDocumentPath, editorStates, openTabs, workspaceLoaded]);
@@ -329,7 +346,10 @@ export default function AppShell() {
   function updateEditorState(documentPath: string, state: PersistedEditorState) {
     setEditorStates((current) => ({
       ...current,
-      [documentPath]: state,
+      [documentPath]: {
+        ...current[documentPath],
+        ...state,
+      },
     }));
   }
 
@@ -360,6 +380,7 @@ export default function AppShell() {
     } else {
       delete editorAgentToolsRef.current[normalizedPath];
     }
+    setEditorToolsVersion((version) => version + 1);
   }, []);
 
   const getCurrentDocumentTools = useCallback(() => {
@@ -405,6 +426,64 @@ export default function AppShell() {
     return getCurrentDocumentTools()?.read().markdown ?? null;
   }, [getCurrentDocumentTools]);
 
+  const currentDocumentContentHash = activeDocumentPath
+    ? editorStates[activeDocumentPath]?.contentHash
+    : undefined;
+
+  useEffect(() => {
+    if (!activeDocumentPath || !currentDocumentContentHash) return;
+    let cancelled = false;
+    const snapshot = getCurrentDocumentTools()?.read();
+    if (!snapshot || snapshot.path !== activeDocumentPath) return;
+
+    Promise.all([
+      window.learner?.getDocumentGraphStatus(snapshot.path, snapshot.markdown),
+      window.learner?.getDocumentMasteryGenerationStatuses(snapshot.path),
+    ]).then(([artifactStatus, generationStatuses]) => {
+      if (cancelled || !artifactStatus) return;
+      const graphGeneration = generationStatuses?.find(
+        (status) => status.operation === "knowledge graph generation" && status.state === "running",
+      );
+      setKnowledgeGraph(artifactStatus.graph);
+      setKnowledgeGraphStatus(graphGeneration ? "generating" : artifactStatus.status);
+      setKnowledgeGraphStatusDocumentPath(snapshot.path);
+      setIsKnowledgeGraphLoading(Boolean(graphGeneration));
+    });
+
+    const removeStatusListener = window.learner?.onAiOperationStatus?.((status) => {
+      if (
+        status.documentPath !== activeDocumentPath
+        || status.operation !== "knowledge graph generation"
+      ) {
+        return;
+      }
+
+      setKnowledgeGraphStatusDocumentPath(activeDocumentPath);
+      if (status.state === "running") {
+        setKnowledgeGraphStatus("generating");
+        setIsKnowledgeGraphLoading(true);
+        return;
+      }
+
+      setIsKnowledgeGraphLoading(false);
+      const currentSnapshot = getCurrentDocumentTools()?.read();
+      if (!currentSnapshot || currentSnapshot.path !== activeDocumentPath) return;
+      window.learner?.getDocumentGraphStatus(currentSnapshot.path, currentSnapshot.markdown).then((nextStatus) => {
+        if (cancelled || !nextStatus) return;
+        setKnowledgeGraph(nextStatus.graph);
+        setKnowledgeGraphStatus(nextStatus.status);
+        if (status.state === "failed") {
+          setKnowledgeGraphError(status.error || "Knowledge graph generation failed.");
+        }
+      });
+    });
+
+    return () => {
+      cancelled = true;
+      removeStatusListener?.();
+    };
+  }, [activeDocumentPath, currentDocumentContentHash, editorToolsVersion, getCurrentDocumentTools]);
+
   const editorForegroundContext = useMemo<AgentForegroundContext | null>(() => {
     if (
       !activeDocumentPath
@@ -439,8 +518,8 @@ export default function AppShell() {
     isRevisionOpen,
   ]);
 
-  const openKnowledgeGraph = useCallback(async () => {
-    setIsKnowledgeGraphOpen(true);
+  const generateKnowledgeGraph = useCallback(async ({ openPanel = false } = {}) => {
+    if (openPanel) setIsKnowledgeGraphOpen(true);
     setKnowledgeGraphError(null);
     setLastKnowledgeGraphExtractionChanged(null);
 
@@ -465,6 +544,8 @@ export default function AppShell() {
     }
 
     setKnowledgeGraph((current) => (current?.documentPath === documentSnapshot.path ? current : null));
+    setKnowledgeGraphStatus("generating");
+    setKnowledgeGraphStatusDocumentPath(documentSnapshot.path);
     setIsKnowledgeGraphLoading(true);
     setKnowledgeGraphProgress({
       completed: 0,
@@ -483,7 +564,13 @@ export default function AppShell() {
         throw new Error("Graph extraction is not available in this renderer.");
       }
 
-      setKnowledgeGraph(result.graph);
+      const currentSnapshot = getCurrentDocumentTools()?.read();
+      const nextStatus = currentSnapshot?.path === documentSnapshot.path
+        ? await window.learner?.getDocumentGraphStatus(currentSnapshot.path, currentSnapshot.markdown)
+        : null;
+      setKnowledgeGraph(nextStatus?.graph ?? result.graph);
+      setKnowledgeGraphStatus(nextStatus?.status ?? "ready");
+      setKnowledgeGraphStatusDocumentPath(documentSnapshot.path);
       setLastKnowledgeGraphExtractionChanged(result.extracted);
       setKnowledgeGraphProgress({
         completed: 1,
@@ -506,6 +593,39 @@ export default function AppShell() {
       }, 900);
     }
   }, [activeDocumentPath, getCurrentDocumentTools]);
+
+  const openKnowledgeGraph = useCallback(() => {
+    setIsKnowledgeGraphOpen(true);
+  }, []);
+
+  const effectiveKnowledgeGraphStatus: FloatingIconButtonStatus = knowledgeGraphStatusDocumentPath === activeDocumentPath
+    ? knowledgeGraphStatus
+    : "checking";
+  const knowledgeGraphStatusLabel = {
+    checking: "Checking status",
+    "not-generated": "Not generated",
+    generating: "Generating",
+    ready: "Ready",
+    "notes-changed": "Notes changed",
+  }[effectiveKnowledgeGraphStatus];
+
+  const handleKnowledgeGraphButton = () => {
+    if (effectiveKnowledgeGraphStatus === "ready" || effectiveKnowledgeGraphStatus === "notes-changed") {
+      openKnowledgeGraph();
+      return;
+    }
+    if (effectiveKnowledgeGraphStatus === "generating") {
+      toast.info("Knowledge graph generation is already in progress.", { id: "knowledge-graph-generation-status" });
+      return;
+    }
+    if (effectiveKnowledgeGraphStatus === "checking") {
+      toast.info("Checking knowledge graph status.", { id: "knowledge-graph-generation-status" });
+      return;
+    }
+
+    toast.info("Knowledge graph generation started.", { id: "knowledge-graph-generation-status" });
+    void generateKnowledgeGraph();
+  };
 
   const extractOpenTabGraphs = useCallback(async () => {
     const snapshots = openTabs
@@ -645,28 +765,17 @@ export default function AppShell() {
             <FloatingIconButton
               ariaLabel="View knowledge graph"
               className="right-5 top-15"
-              disabled={isKnowledgeGraphLoading}
-              icon={<GraphIcon size={16} className={isKnowledgeGraphLoading ? "animate-pulse" : ""} />}
-              onClick={() => {
-                if (isKnowledgeGraphOpen) {
-                  setIsKnowledgeGraphOpen(false);
-                  return;
-                }
-
-                void openKnowledgeGraph();
-              }}
+              icon={<GraphIcon size={16} className={effectiveKnowledgeGraphStatus === "generating" ? "animate-pulse" : ""} />}
+              onClick={handleKnowledgeGraphButton}
               size={8}
-              tooltip={
-                isKnowledgeGraphLoading
-                  ? "Building graph"
-                  : isKnowledgeGraphOpen
-                    ? "Close graph"
-                    : "View graph"
-              }
+              status={effectiveKnowledgeGraphStatus}
+              tooltip={`Knowledge graph · ${knowledgeGraphStatusLabel}`}
             />
           )}
           <MasteryController
             activeDocumentPath={activeDocumentPath}
+            documentContentHash={currentDocumentContentHash}
+            editorToolsVersion={editorToolsVersion}
             getCurrentDocumentTools={getCurrentDocumentTools}
             hidden={isKnowledgeGraphOpen}
             isSidebarOpen={isSidebarOpen}
@@ -687,7 +796,7 @@ export default function AppShell() {
         onDeleteGraph={deleteKnowledgeGraph}
         onGraphChange={setKnowledgeGraph}
         onOpenDocument={openDocument}
-        onRefresh={openKnowledgeGraph}
+        onRefresh={() => generateKnowledgeGraph({ openPanel: true })}
         onRefreshOpenTabs={extractOpenTabGraphs}
         open={isKnowledgeGraphOpen}
         progress={knowledgeGraphProgress}

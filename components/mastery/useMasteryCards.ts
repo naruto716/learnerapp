@@ -96,6 +96,7 @@ export function useMasteryCards({
       setIsGenerating(false);
       setProgress(null);
       applyGenerationStatus(status);
+      void loadCards();
       if (status?.operation === "flashcard generation" && status.state === "completed") {
         void loadCards();
       }

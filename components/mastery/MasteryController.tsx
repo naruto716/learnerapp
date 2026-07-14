@@ -2,7 +2,9 @@
 
 import { SparkleIcon } from "@phosphor-icons/react";
 import { useCallback } from "react";
+import { toast } from "sonner";
 import FloatingIconButton from "@/components/FloatingIconButton";
+import type { FloatingIconButtonStatus } from "@/components/FloatingIconButton";
 import type { AgentForegroundContext } from "@/components/ai/agentForegroundContext";
 import type { CurrentDocumentAgentTools } from "@/components/editor/TiptapEditor";
 import MasteryPanel from "./MasteryPanel";
@@ -12,6 +14,8 @@ import { useMasteryCards } from "./useMasteryCards";
 
 type MasteryControllerProps = {
   activeDocumentPath: string | null;
+  documentContentHash?: string;
+  editorToolsVersion?: number;
   getCurrentDocumentTools: () => CurrentDocumentAgentTools | null;
   hidden?: boolean;
   isSidebarOpen: boolean;
@@ -21,6 +25,8 @@ type MasteryControllerProps = {
 
 export default function MasteryController({
   activeDocumentPath,
+  documentContentHash,
+  editorToolsVersion,
   getCurrentDocumentTools,
   hidden = false,
   isSidebarOpen,
@@ -29,6 +35,8 @@ export default function MasteryController({
 }: MasteryControllerProps) {
   const masteryController = useDocumentMastery({
     activeDocumentPath,
+    documentContentHash,
+    editorToolsVersion,
     getCurrentDocumentTools,
     onOpenChange,
   });
@@ -71,7 +79,46 @@ export default function MasteryController({
   };
 
   const openAndPrepareMastery = async () => {
-    return Boolean(await openMastery(masteryAssetsCardRequest()));
+    return Boolean(await openMastery());
+  };
+
+  const masteryIsCurrentDocument = mastery?.documentPath === activeDocumentPath;
+  const cardState = cardsController.cardState;
+  const cardsAreCurrentDocument = cardState?.documentPath === activeDocumentPath;
+  const masteryIsGenerating = isLoading || isMetaphorLoading || cardsController.isGenerating;
+  const masteryStatus: FloatingIconButtonStatus = masteryIsGenerating
+    ? "generating"
+    : !masteryIsCurrentDocument || !cardsAreCurrentDocument
+      ? "checking"
+      : mastery.stale || Boolean(mastery.metaphor?.stale)
+        ? "notes-changed"
+        : mastery.concepts.length > 0 && Boolean(mastery.metaphor) && cardState.cards.length > 0
+          ? "ready"
+          : "not-generated";
+  const masteryStatusLabel = {
+    checking: "Checking status",
+    "not-generated": "Not generated",
+    generating: "Generating",
+    ready: "Ready",
+    "notes-changed": "Notes changed",
+  }[masteryStatus];
+
+  const handleMasteryButton = () => {
+    if (masteryStatus === "ready" || masteryStatus === "notes-changed") {
+      void openAndPrepareMastery();
+      return;
+    }
+    if (masteryStatus === "generating") {
+      toast.info("Mastery generation is already in progress.", { id: "mastery-generation-status" });
+      return;
+    }
+    if (masteryStatus === "checking") {
+      toast.info("Checking Mastery status.", { id: "mastery-generation-status" });
+      return;
+    }
+
+    toast.info("Mastery generation started.", { id: "mastery-generation-status" });
+    void generateMastery(false, masteryAssetsCardRequest(), false);
   };
 
   const clearAndSyncCards = async () => {
@@ -96,13 +143,11 @@ export default function MasteryController({
         <FloatingIconButton
           ariaLabel="Open mastery"
           className="right-16 top-15"
-          disabled={isLoading}
-          icon={<SparkleIcon size={16} className={isLoading ? "animate-pulse" : ""} />}
-          onClick={() => {
-            void openAndPrepareMastery();
-          }}
+          icon={<SparkleIcon size={16} className={masteryStatus === "generating" ? "animate-pulse" : ""} />}
+          onClick={handleMasteryButton}
           size={8}
-          tooltip={isLoading ? "Building mastery" : "Mastery"}
+          status={masteryStatus}
+          tooltip={`Mastery · ${masteryStatusLabel}`}
         />
       )}
       <MasteryPanel

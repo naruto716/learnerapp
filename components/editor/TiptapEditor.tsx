@@ -31,6 +31,7 @@ import EditMathDialog, { type EditableMath } from "./EditMathDialog";
 import { LatexDelimiters } from "./LatexDelimiters";
 
 export type PersistedEditorState = {
+  contentHash?: string;
   selection?: {
     from: number;
     to: number;
@@ -847,8 +848,13 @@ export default function TiptapEditor({
   const activePatchPreviewRef = useRef<ActivePatchPreview | null>(null);
   const agentUndoSnapshotsRef = useRef<Record<string, JSONContent>>({});
   const pendingPatchPreviewRef = useRef<PendingPatchPreview | null>(null);
+  const persistedStateChangeRef = useRef(onPersistedStateChange);
   const searchActiveIndexRef = useRef(0);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    persistedStateChangeRef.current = onPersistedStateChange;
+  }, [onPersistedStateChange]);
 
   const editor = useEditor({
     extensions: [
@@ -922,7 +928,9 @@ export default function TiptapEditor({
     },
     onSelectionUpdate({ editor }) {
       const { from, to } = editor.state.selection;
-      onPersistedStateChange({
+      const patchableMarkdown = getPatchableMarkdown(editor);
+      persistedStateChangeRef.current({
+        contentHash: hashDocumentPatchBase(patchableMarkdown),
         selection: { from, to },
         selectedText: from === to ? "" : editor.state.doc.textBetween(from, to, "\n\n"),
         scrollTop: editorScrollRef.current?.scrollTop ?? 0,
@@ -932,7 +940,9 @@ export default function TiptapEditor({
       if (!loadedRef.current) return;
 
       const { from, to } = editor.state.selection;
-      onPersistedStateChange({
+      const patchableMarkdown = getPatchableMarkdown(editor);
+      persistedStateChangeRef.current({
+        contentHash: hashDocumentPatchBase(patchableMarkdown),
         selection: { from, to },
         selectedText: from === to ? "" : editor.state.doc.textBetween(from, to, "\n\n"),
         scrollTop: editorScrollRef.current?.scrollTop ?? 0,
@@ -1102,6 +1112,15 @@ export default function TiptapEditor({
             if (editorScrollRef.current && typeof initialStateRef.current?.scrollTop === "number") {
               editorScrollRef.current.scrollTop = initialStateRef.current.scrollTop;
             }
+
+            const { from, to } = editor.state.selection;
+            const patchableMarkdown = getPatchableMarkdown(editor);
+            persistedStateChangeRef.current({
+              contentHash: hashDocumentPatchBase(patchableMarkdown),
+              selection: { from, to },
+              selectedText: from === to ? "" : editor.state.doc.textBetween(from, to, "\n\n"),
+              scrollTop: editorScrollRef.current?.scrollTop ?? 0,
+            });
 
             loadedRef.current = true;
             setLoadedDocumentPath(documentPath);
@@ -1752,7 +1771,9 @@ export default function TiptapEditor({
         onScroll={() => {
           if (!editor) return;
           const { from, to } = editor.state.selection;
-          onPersistedStateChange({
+          const patchableMarkdown = getPatchableMarkdown(editor);
+          persistedStateChangeRef.current({
+            contentHash: hashDocumentPatchBase(patchableMarkdown),
             selection: { from, to },
             selectedText: from === to ? "" : editor.state.doc.textBetween(from, to, "\n\n"),
             scrollTop: editorScrollRef.current?.scrollTop ?? 0,

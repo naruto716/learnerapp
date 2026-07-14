@@ -177,6 +177,9 @@ contextBridge.exposeInMainWorld("learner", {
   getDocumentGraph: (filePath) => {
     return ipcRenderer.invoke("graph:getDocumentGraph", filePath);
   },
+  getDocumentGraphStatus: (filePath, markdown) => {
+    return ipcRenderer.invoke("graph:getDocumentGraphStatus", filePath, markdown);
+  },
   deleteDocumentGraph: (filePath) => {
     return ipcRenderer.invoke("graph:deleteDocumentGraph", filePath);
   },
