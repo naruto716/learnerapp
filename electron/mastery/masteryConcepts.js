@@ -6,6 +6,7 @@ const { DatabaseSync } = require("node:sqlite");
 const { z } = require("zod");
 const { requestStructuredOutput } = require("../aiClient");
 const { getAiSettings } = require("../aiSettings");
+const { operationLog } = require("../operationLog");
 const { resolveDocumentAssetPath, saveDocumentImage } = require("../documentUtil");
 const { generateImage } = require("../imageGeneration");
 const { normalizeMasteryScoringSettings } = require("./masteryScoring");
@@ -979,7 +980,16 @@ async function generateMetaphorImages({ concepts, documentPath, metaphor, settin
     total: totalImages,
   });
 
-  const imageResults = await mapWithConcurrency(imageJobs, imageConcurrency, async (job) => {
+  const imageResults = await mapWithConcurrency(imageJobs, imageConcurrency, async (job, index) => {
+    const startedAt = Date.now();
+    operationLog("image.generation.started", {
+      documentPath,
+      index,
+      kind: job.kind,
+      label: job.label,
+      prompt: job.prompt,
+    }, { includePrompts: true });
+
     try {
       const generated = await generateAndSaveMasteryImage({
         documentPath,
@@ -996,6 +1006,15 @@ async function generateMetaphorImages({ concepts, documentPath, metaphor, settin
         phase: "images",
         total: totalImages,
       });
+      operationLog("image.generation.completed", {
+        documentPath,
+        durationMs: Date.now() - startedAt,
+        imagePath: generated.imagePath,
+        index,
+        kind: job.kind,
+        label: job.label,
+        model: generated.image.model,
+      });
 
       return {
         ...job,
@@ -1010,11 +1029,25 @@ async function generateMetaphorImages({ concepts, documentPath, metaphor, settin
         phase: "images",
         total: totalImages,
       });
-      throw error;
+      operationLog("image.generation.failed", {
+        documentPath,
+        durationMs: Date.now() - startedAt,
+        error: error instanceof Error ? error.message : String(error),
+        index,
+        kind: job.kind,
+        label: job.label,
+        prompt: job.prompt,
+      }, { includePrompts: true });
+
+      return {
+        ...job,
+        generated: null,
+      };
     }
   });
 
   const overviewImage = imageResults[0].generated;
+  const firstGeneratedImage = imageResults.find((imageResult) => imageResult.generated)?.generated ?? null;
   const scenes = metaphor.conceptScenes.map((scene, index) => {
     const imageResult = imageResults[index + 1];
     const concept = concepts.find((candidate) => candidate.id === scene.conceptId);
@@ -1022,14 +1055,22 @@ async function generateMetaphorImages({ concepts, documentPath, metaphor, settin
     return {
       ...scene,
       conceptName: concept?.name || "",
-      imagePath: imageResult.generated.imagePath,
+      imagePath: imageResult.generated?.imagePath ?? null,
       imagePrompt: imageResult.prompt,
     };
   });
 
+  operationLog("image.generation.batch_completed", {
+    documentPath,
+    failed: failedImages,
+    succeeded: completedImages,
+    total: totalImages,
+  });
+
   return {
-    imageModel: overviewImage.image.model,
-    imagePath: overviewImage.imagePath,
+    failedImages,
+    imageModel: firstGeneratedImage?.image.model ?? null,
+    imagePath: overviewImage?.imagePath ?? null,
     imagePrompt: imageResults[0].prompt,
     scenes,
   };
@@ -1311,7 +1352,7 @@ async function generateDocumentMasteryMetaphor({ documentPath, markdown = "", se
 
   reportMetaphorProgress(onProgress, {
     completed: 0,
-    failed: 0,
+    failed: images.failedImages,
     label: "Saving metaphor",
     phase: "saving",
     total: 1,
@@ -1333,8 +1374,10 @@ async function generateDocumentMasteryMetaphor({ documentPath, markdown = "", se
 
   reportMetaphorProgress(onProgress, {
     completed: 1,
-    failed: 0,
-    label: "Metaphor ready",
+    failed: images.failedImages,
+    label: images.failedImages > 0
+      ? `Metaphor ready with ${images.failedImages} omitted image${images.failedImages === 1 ? "" : "s"}`
+      : "Metaphor ready",
     phase: "done",
     total: 1,
   });

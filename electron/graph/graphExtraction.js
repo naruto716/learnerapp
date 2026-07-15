@@ -208,6 +208,7 @@ async function requestCandidateConcepts({ documentPath, markdown, settings }) {
           "A bad concept name is a raw implementation detail with no broader study value.",
           "Choose the number of concepts based on the note's length and density. Short focused notes may need only a few concepts; long dense notes may need many more.",
           "Do not pad the graph with weak concepts, but do not omit important high-level ideas just because there are many of them.",
+          "Extract each underlying concept only once per note. If several sections discuss the same idea, combine them into one candidate with the clearest representative excerpt and one unified noteContribution.",
           "Example: a short note only defining TCP vs UDP might extract TCP reliability, UDP best-effort delivery, and reliability-latency tradeoff.",
           "Example: a long networking note covering TCP setup, reliability, flow control, congestion control, teardown, UDP, checksums, and HTTP should extract each of those reusable study topics when the note gives meaningful detail.",
           "Example: a long math note with definitions, theorems, proof techniques, worked examples, and applications should extract the reusable definitions, theorem ideas, proof methods, and application concepts that a learner would review or connect across notes.",
@@ -256,23 +257,39 @@ async function requestCandidateConcepts({ documentPath, markdown, settings }) {
   return concepts;
 }
 
-function formatResolutionCandidates(candidates) {
+function formatResolutionCandidates(candidates, currentDocumentPath) {
   if (candidates.length === 0) return "No existing concept candidates were retrieved.";
 
   return candidates
-    .map((candidate) =>
-      [
+    .map((candidate) => {
+      const priorMentions = (candidate.mentions || []).filter(
+        (mention) => mention.documentPath !== currentDocumentPath,
+      );
+
+      return [
         `ID: ${candidate.id}`,
         `Name: ${candidate.name}`,
         candidate.aliases?.length ? `Aliases: ${candidate.aliases.join(", ")}` : "",
         candidate.type ? `Type: ${candidate.type}` : "",
         candidate.summary ? `Summary: ${candidate.summary}` : "",
         candidate.explanation ? `Explanation: ${candidate.explanation}` : "",
+        priorMentions.length
+          ? [
+              "Existing note perspectives:",
+              priorMentions
+                .map((mention) => {
+                  const perspective = String(mention.contribution || "").trim()
+                    || compactMarkdown(mention.excerptMarkdown, 500);
+                  return `- ${mention.documentPath}: ${perspective}`;
+                })
+                .join("\n"),
+            ].join("\n")
+          : "",
         `Match: ${candidate.matchReason}, score ${Number(candidate.score ?? 0).toFixed(3)}`,
       ]
         .filter(Boolean)
-        .join("\n"),
-    )
+        .join("\n");
+    })
     .join("\n\n---\n\n");
 }
 
@@ -295,7 +312,7 @@ function defaultResolutionForNewConcept(candidate) {
   };
 }
 
-async function resolveConcept({ candidate, candidates, settings }) {
+async function resolveConcept({ candidate, candidates, documentPath, settings }) {
   const elapsed = startTimer();
 
   if (candidates.length === 0) {
@@ -349,12 +366,15 @@ async function resolveConcept({ candidate, candidates, settings }) {
           "explanation should help study: define the concept, compare/contrast related ideas, explain examples, and call out useful distinctions.",
           "If existing concept profiles are provided, preserve the broader concept meaning instead of replacing it with only the current note's angle.",
           "contribution is displayed under the source note as study details.",
-          "contribution should be 2-4 concrete sentences teaching the mechanism, definition, example, or comparison from the current note.",
-          "contribution should be detailed enough that a learner can review the idea without opening the original note.",
+          "If existing note perspectives are provided, contribution should be 1-3 plain-language sentences comparing the current note with them: state what overlaps, then what the current note adds, changes, or applies differently.",
+          "When comparing notes, do not repeat the full generic definition. Focus on the specific difference in framing, example, rule, or tradeoff.",
+          "If there are no existing note perspectives, contribution should be 2-4 concrete sentences teaching the current note's definition, mechanism, example, or comparison.",
+          "Define unavoidable technical terms in ordinary language when they first appear. Do not compress several unexplained labels into one sentence.",
+          "Prefer a concrete sentence such as 'Embed an address when it belongs only to one customer record; reference a product when many orders share it' over abstract phrases such as 'lifecycle-coupled data' or 'independently evolving entities'.",
           "Do not write contribution as a justification of why the note belongs to a concept.",
           "Do not start contribution with phrases like 'The note describes', 'The note states', 'This note says', 'This note shows', 'The note provides', or 'This note contributes'. Start with the concept itself.",
           "If the note provides a definition, say what the definition is. If it provides an example, say what the example demonstrates. If it compares ideas, state the comparison.",
-          "If two notes cover the same concept from different angles, explain the difference between those angles.",
+          "If two notes cover the same concept from different angles, explicitly explain that difference instead of listing both notes' terminology.",
           "Use concrete, human language. Prefer named steps, packets, components, failure modes, and tradeoffs over abstract labels.",
           "Avoid vague academic phrases like orderly teardown, graceful handling, broad abstraction, reusable umbrella, or protocol-specific instance.",
           "Bad contribution: This node can collect examples from many contexts under one decision axis.",
@@ -371,7 +391,7 @@ async function resolveConcept({ candidate, candidates, settings }) {
           JSON.stringify(candidate, null, 2),
           "",
           "Existing concept candidates:",
-          formatResolutionCandidates(candidates),
+          formatResolutionCandidates(candidates, documentPath),
           "",
           "Resolve the candidate to the best canonical concept.",
         ].join("\n"),
@@ -429,7 +449,7 @@ async function resolveConcept({ candidate, candidates, settings }) {
   };
 }
 
-async function resolveCandidateConcepts(candidates, settings) {
+async function resolveCandidateConcepts(candidates, documentPath, settings) {
   const embeddingConfig = getGraphEmbeddingConfig(settings);
   const elapsed = startTimer();
   graphLog("concept_resolution.batch_start", {
@@ -451,6 +471,7 @@ async function resolveCandidateConcepts(candidates, settings) {
     return resolveConcept({
       candidate,
       candidates: resolutionCandidates,
+      documentPath,
       settings,
     });
   });
@@ -467,6 +488,40 @@ async function resolveCandidateConcepts(candidates, settings) {
   });
 
   return resolvedConcepts;
+}
+
+function collapseResolvedConcepts(concepts) {
+  const conceptsByTarget = new Map();
+
+  for (const concept of concepts) {
+    const conceptId = Number(concept.conceptId);
+    const targetKey = Number.isFinite(conceptId)
+      ? `id:${conceptId}`
+      : `name:${String(concept.name || "").trim().toLowerCase()}`;
+    const existing = conceptsByTarget.get(targetKey);
+
+    if (!existing) {
+      conceptsByTarget.set(targetKey, {
+        ...concept,
+        absorbConceptIds: [...new Set(concept.absorbConceptIds || [])],
+        aliases: [...new Set(concept.aliases || [])],
+        candidateKeys: [concept.candidateKey].filter(Boolean),
+      });
+      continue;
+    }
+
+    const useCurrent = Number(concept.confidence || 0) > Number(existing.confidence || 0);
+    const primary = useCurrent ? concept : existing;
+    conceptsByTarget.set(targetKey, {
+      ...existing,
+      ...primary,
+      absorbConceptIds: [...new Set([...(existing.absorbConceptIds || []), ...(concept.absorbConceptIds || [])])],
+      aliases: [...new Set([...(existing.aliases || []), ...(concept.aliases || [])])],
+      candidateKeys: [...new Set([...(existing.candidateKeys || []), concept.candidateKey].filter(Boolean))],
+    });
+  }
+
+  return [...conceptsByTarget.values()];
 }
 
 async function searchRelatedConcepts({ aliases = [], name, summary = "", type = "" }, limit = maxResolutionCandidates, settings) {
@@ -682,7 +737,15 @@ async function extractDocumentGraph(documentPath, document, markdown, settings) 
 
   try {
     const candidates = await requestCandidateConcepts({ documentPath, markdown: extractionMarkdown, settings });
-    const resolvedConcepts = await resolveCandidateConcepts(candidates, settings);
+    const resolvedCandidates = await resolveCandidateConcepts(candidates, documentPath, settings);
+    const resolvedConcepts = collapseResolvedConcepts(resolvedCandidates);
+    if (resolvedConcepts.length !== resolvedCandidates.length) {
+      graphLog("concept_resolution.collapsed_duplicates", {
+        documentPath,
+        inputCount: resolvedCandidates.length,
+        outputCount: resolvedConcepts.length,
+      });
+    }
     const relations = await requestResolvedRelations({
       concepts: resolvedConcepts,
       documentPath,

@@ -123,6 +123,7 @@ const autosaveDelayMs = 800;
 const aiPatchPreviewPluginKey = new PluginKey<AiPatchDecorationState>("aiPatchPreview");
 const aiPatchPreviewActionEvent = "learner-ai-patch-preview-action";
 const documentSearchPluginKey = new PluginKey<SearchDecorationState>("documentSearch");
+const unfocusedSelectionPluginKey = new PluginKey<boolean>("unfocusedSelection");
 
 const emptyDocument: JSONContent = {
   type: "doc",
@@ -817,6 +818,56 @@ const DocumentSearchExtension = Extension.create({
   },
 });
 
+const UnfocusedSelectionExtension = Extension.create({
+  name: "unfocusedSelection",
+
+  addProseMirrorPlugins() {
+    return [
+      new Plugin<boolean>({
+        key: unfocusedSelectionPluginKey,
+        props: {
+          decorations(state) {
+            const focused = unfocusedSelectionPluginKey.getState(state);
+            if (focused || state.selection.empty) return null;
+
+            return DecorationSet.create(state.doc, [
+              Decoration.inline(state.selection.from, state.selection.to, {
+                class: "editor-unfocused-selection",
+              }),
+            ]);
+          },
+          handleDOMEvents: {
+            blur(view) {
+              view.dispatch(
+                view.state.tr
+                  .setMeta(unfocusedSelectionPluginKey, false)
+                  .setMeta("addToHistory", false),
+              );
+              return false;
+            },
+            focus(view) {
+              view.dispatch(
+                view.state.tr
+                  .setMeta(unfocusedSelectionPluginKey, true)
+                  .setMeta("addToHistory", false),
+              );
+              return false;
+            },
+          },
+        },
+        state: {
+          init() {
+            return false;
+          },
+          apply(transaction, focused) {
+            return transaction.getMeta(unfocusedSelectionPluginKey) ?? focused;
+          },
+        },
+      }),
+    ];
+  },
+});
+
 export default function TiptapEditor({
   active,
   documentPath,
@@ -875,6 +926,7 @@ export default function TiptapEditor({
       AiDiffPreviewBlock,
       AiPatchPreviewExtension,
       DocumentSearchExtension,
+      UnfocusedSelectionExtension,
       Mathematics.configure({
         inlineOptions: {
           onClick: (node, pos) => {

@@ -10,6 +10,7 @@ import {
   PlusIcon,
   SparkleIcon,
   StopIcon,
+  TextAaIcon,
   TrashIcon,
   XIcon,
 } from "@phosphor-icons/react";
@@ -22,13 +23,22 @@ import {
 } from "./agentForegroundContext";
 import type { ChangeEvent, DragEvent, FormEvent, KeyboardEvent, ClipboardEvent } from "react";
 import { runStudyAgentLoop, type AgentContextState, type AgentSource, type AgentToolCall } from "./studyAgent";
+import Dialog from "@/components/Dialog";
 import type { CurrentDocumentAgentTools } from "@/components/editor/TiptapEditor";
 import RichMarkdown from "@/components/markdown/RichMarkdown";
 
 const sessionsStorageKey = "learner.ai.sessions.v2";
 const currentSessionStorageKey = "learner.ai.currentSession.v2";
+const responseInstructionsStorageKey = "learner.ai.responseInstructions.v1";
 const legacyChatStorageKey = "learner.ai.chat.v1";
 const oldSessionStorageKeys = ["learner.ai.sessions.v1", "learner.ai.currentSession.v1", legacyChatStorageKey];
+const defaultResponseInstructions = [
+  "Explain ideas in plain language instead of only naming technical terminology.",
+  "Define important terms when they first appear and explain why they matter in context.",
+  "Prefer concrete examples, worked examples, and comparisons before or alongside abstract explanations.",
+  "When writing or rewriting notes, make them self-contained, explanatory, and explicit about assumptions so the reader does not have to guess missing connections.",
+  "Connect ideas step by step. Include relevant tradeoffs and practical implications without padding the answer with unnecessary jargon.",
+].join("\n");
 
 const maxImages = 5;
 const maxImageSize = 4 * 1024 * 1024;
@@ -531,6 +541,9 @@ export default function ChatPanel({
   const [isDragOver, setIsDragOver] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [responseInstructions, setResponseInstructions] = useState(defaultResponseInstructions);
+  const [responseInstructionsDraft, setResponseInstructionsDraft] = useState(defaultResponseInstructions);
+  const [responseInstructionsOpen, setResponseInstructionsOpen] = useState(false);
   const [storageLoaded, setStorageLoaded] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const messagesRef = useRef<ChatMessage[]>([]);
@@ -538,6 +551,7 @@ export default function ChatPanel({
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const imagesRef = useRef<PendingImage[]>([]);
+  const latestMessage = messages[messages.length - 1];
   const foregroundContextEnabled = Boolean(
     foregroundContext && foregroundContext.key !== dismissedForegroundContextKey,
   );
@@ -556,6 +570,10 @@ export default function ChatPanel({
       setCurrentSessionId(nextSessionId);
       setMessages(activeSession?.messages ?? []);
       setAgentContextState(activeSession?.agentContextState ?? {});
+      const storedInstructions = localStorage.getItem(responseInstructionsStorageKey);
+      const nextInstructions = storedInstructions === null ? defaultResponseInstructions : storedInstructions;
+      setResponseInstructions(nextInstructions);
+      setResponseInstructionsDraft(nextInstructions);
       setStorageLoaded(true);
     }, 0);
 
@@ -579,7 +597,12 @@ export default function ChatPanel({
   useEffect(() => {
     if (!isOpen) return;
     messagesEndRef.current?.scrollIntoView({ block: "end" });
-  }, [isOpen, messages]);
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen || latestMessage?.role !== "user") return;
+    messagesEndRef.current?.scrollIntoView({ block: "end" });
+  }, [isOpen, latestMessage?.id, latestMessage?.role]);
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -630,6 +653,14 @@ export default function ChatPanel({
       return [];
     });
     setHistoryOpen(false);
+  }
+
+  function saveResponseInstructions() {
+    const nextInstructions = responseInstructionsDraft.trim();
+    localStorage.setItem(responseInstructionsStorageKey, nextInstructions);
+    setResponseInstructions(nextInstructions);
+    setResponseInstructionsDraft(nextInstructions);
+    setResponseInstructionsOpen(false);
   }
 
   function loadSession(session: ChatSession) {
@@ -919,6 +950,7 @@ export default function ChatPanel({
             images: message.images,
           })),
         onDocumentsChanged,
+        responseInstructions,
         signal: abortController.signal,
       })) {
         if (chunk.type === "tool_call") {
@@ -1063,6 +1095,18 @@ export default function ChatPanel({
         </div>
 
         <div className="flex items-center gap-1">
+          <button
+            type="button"
+            aria-label="Response instructions"
+            className="flex h-8 w-8 items-center justify-center rounded-full text-white/50 transition-colors hover:bg-white/[0.08] hover:text-white/85"
+            onClick={() => {
+              setResponseInstructionsDraft(responseInstructions);
+              setResponseInstructionsOpen(true);
+            }}
+            title="Response instructions"
+          >
+            <TextAaIcon size={17} />
+          </button>
           <button
             type="button"
             aria-label="Chat history"
@@ -1409,6 +1453,42 @@ export default function ChatPanel({
           <img alt="" className="max-h-full max-w-full rounded-xl object-contain shadow-2xl" src={previewImage} />
         </button>
       )}
+
+      <Dialog
+        display={
+          <label className="block">
+            <span className="text-xs font-medium text-white/48">System prompt</span>
+            <textarea
+              autoFocus
+              className="mt-2 min-h-64 w-full resize-y rounded-md bg-black/20 px-3 py-3 text-sm leading-6 text-white outline-none ring-1 ring-white/[0.09] placeholder:text-white/24 focus:ring-white/[0.22]"
+              onChange={(event) => setResponseInstructionsDraft(event.target.value)}
+              value={responseInstructionsDraft}
+            />
+          </label>
+        }
+        footer={
+          <>
+            <button
+              className="rounded-md px-3 py-2 text-sm text-white/55 transition hover:bg-white/[0.07] hover:text-white/85"
+              onClick={() => setResponseInstructionsDraft(defaultResponseInstructions)}
+              type="button"
+            >
+              Restore default
+            </button>
+            <button
+              className="rounded-md bg-white px-4 py-2 text-sm font-semibold text-black transition hover:bg-white/88"
+              onClick={saveResponseInstructions}
+              type="button"
+            >
+              Save
+            </button>
+          </>
+        }
+        onClose={() => setResponseInstructionsOpen(false)}
+        open={responseInstructionsOpen}
+        panelClassName="max-w-xl"
+        title="Response instructions"
+      />
     </section>
   );
 }

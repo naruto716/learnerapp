@@ -17,7 +17,7 @@ export function MasteryCardFrame({
 }) {
   return (
     <article
-      className={`mx-auto flex h-[min(640px,calc(100vh-190px))] min-h-[460px] w-full ${maxWidthClassName} flex-col rounded-2xl bg-[#202020]/94 p-5 shadow-[0_18px_52px_rgba(0,0,0,0.22)] ring-1 ring-white/[0.08]`}
+      className={`mx-auto flex h-full max-h-[640px] min-h-0 w-full ${maxWidthClassName} flex-col rounded-2xl bg-[#202020]/94 p-5 shadow-[0_18px_52px_rgba(0,0,0,0.22)] ring-1 ring-white/[0.08]`}
     >
       {children}
     </article>

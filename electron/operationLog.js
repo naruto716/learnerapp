@@ -2,22 +2,24 @@ const { app } = require("electron");
 const fs = require("fs");
 const path = require("path");
 
-function sanitize(value) {
-  if (Array.isArray(value)) return value.map(sanitize);
+function sanitize(value, { includePrompts = false } = {}) {
+  if (Array.isArray(value)) return value.map((entry) => sanitize(entry, { includePrompts }));
   if (!value || typeof value !== "object") return value;
 
   return Object.fromEntries(
     Object.entries(value)
-      .filter(([key]) => !/api[-_]?key|authorization|token|secret|prompt|markdown/i.test(key))
-      .map(([key, entry]) => [key, sanitize(entry)]),
+      .filter(([key]) => !/api[-_]?key|authorization|token|secret/i.test(key))
+      .filter(([key]) => !/markdown/i.test(key))
+      .filter(([key]) => includePrompts || !/prompt/i.test(key))
+      .map(([key, entry]) => [key, sanitize(entry, { includePrompts })]),
   );
 }
 
-function operationLog(event, details = {}) {
+function operationLog(event, details = {}, { includePrompts = false } = {}) {
   const record = {
     at: new Date().toISOString(),
     event,
-    ...sanitize(details),
+    ...sanitize(details, { includePrompts }),
   };
 
   try {

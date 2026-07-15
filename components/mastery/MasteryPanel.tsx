@@ -448,6 +448,7 @@ export default function MasteryPanel({
   const [hasResumablePractice, setHasResumablePractice] = useState(false);
   const [practiceResultsOpen, setPracticeResultsOpen] = useState(false);
   const [practiceStarting, setPracticeStarting] = useState(false);
+  const [isRegeneratingAll, setIsRegeneratingAll] = useState(false);
   const [section, setSection] = useState<MasterySection>("concepts");
   const [hiddenMetaphorId, setHiddenMetaphorId] = useState<number | null>(null);
   const [viewMode, setViewMode] = useState<MasteryViewMode>("focus");
@@ -460,6 +461,8 @@ export default function MasteryPanel({
   const completedCardCount = cards.filter((card) => card.status === "done").length;
   const practiceWorkspaceRef = useRef<MasteryPracticeWorkspaceHandle>(null);
   const practiceOpen = flashcardView === "practice";
+  const masteryContentIsStale = Boolean(mastery?.stale || metaphorIsStale);
+  const generationIsBusy = isLoading || isMetaphorLoading || isCardGenerating || isRegeneratingAll;
 
   useEffect(() => {
     if (error) toast.error(error, { id: "mastery-error" });
@@ -500,6 +503,16 @@ export default function MasteryPanel({
     const generated = await onGenerateMetaphor();
     if (generated) {
       setHiddenMetaphorId(null);
+    }
+  };
+
+  const handleRegenerateAll = async () => {
+    if (generationIsBusy) return;
+    setIsRegeneratingAll(true);
+    try {
+      await onGenerate(true);
+    } finally {
+      setIsRegeneratingAll(false);
     }
   };
 
@@ -613,11 +626,6 @@ export default function MasteryPanel({
                 ? `${conceptCount} concept${conceptCount === 1 ? "" : "s"} · ${formatGeneratedAt(mastery?.generatedAt ?? null)}`
                 : "Extract detailed mastery concepts"}
           </p>
-          {mastery?.stale && (
-            <span className="rounded-full bg-amber-200/10 px-2 py-1 text-[11px] font-medium text-amber-100/72">
-              note changed
-            </span>
-          )}
         </div>
 
         {section === "flashcards" ? (
@@ -820,23 +828,23 @@ export default function MasteryPanel({
       <div className={`flex min-h-0 flex-1 flex-col overflow-hidden px-5 ${section === "concepts" ? "pb-5" : ""}`}>
         {section === "concepts" && isMetaphorLoading && metaphorProgress && <MasteryProgressStatus progress={metaphorProgress} />}
 
-        {section === "concepts" && mastery?.stale && hasConcepts && (
-          <div className="mb-4 flex items-start gap-3 rounded-xl bg-amber-200/[0.08] px-4 py-3 text-sm text-amber-50/74 ring-1 ring-amber-100/[0.12]">
-            <WarningCircleIcon className="mt-0.5 shrink-0" size={18} />
-            <div className="min-w-0">
-              <p className="font-medium text-amber-50/88">This note changed since the last mastery generation.</p>
-              <p className="mt-1 text-amber-50/58">Regenerate when you want the concepts to reflect the current note.</p>
-            </div>
-          </div>
-        )}
-
-        {section === "concepts" && metaphorIsStale && hasMetaphor && (
-          <div className="mb-4 flex items-start gap-3 rounded-xl bg-amber-200/[0.07] px-4 py-3 text-sm text-amber-50/70 ring-1 ring-amber-100/[0.1]">
-            <WarningCircleIcon className="mt-0.5 shrink-0" size={18} />
-            <div className="min-w-0">
-              <p className="font-medium text-amber-50/86">The metaphor is stale.</p>
-              <p className="mt-1 text-amber-50/56">Regenerate metaphor images when you want them to match the current concepts.</p>
-            </div>
+        {section === "concepts" && masteryContentIsStale && hasConcepts && (
+          <div className="mb-3 flex shrink-0 items-center gap-3 rounded-lg bg-amber-200/[0.07] px-3 py-2 text-sm text-amber-50/72 ring-1 ring-amber-100/[0.1]">
+            <WarningCircleIcon className="shrink-0" size={17} />
+            <p className="min-w-0 flex-1 truncate">
+              <span className="font-medium text-amber-50/88">This note changed.</span>
+              <span className="ml-2 text-amber-50/52">Regenerate all mastery content to match the current note.</span>
+            </p>
+            <button
+              className="shrink-0 rounded-md bg-amber-50 px-3 py-1.5 text-xs font-semibold text-[#27251c] transition hover:bg-white disabled:cursor-default disabled:opacity-45"
+              disabled={generationIsBusy}
+              onClick={() => {
+                void handleRegenerateAll();
+              }}
+              type="button"
+            >
+              {isRegeneratingAll ? "Regenerating..." : "Regenerate all"}
+            </button>
           </div>
         )}
 

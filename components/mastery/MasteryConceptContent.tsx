@@ -49,7 +49,7 @@ export function MasteryMetaphorContent({
   metaphor: MasteryMetaphor;
 }) {
   const scene = metaphor.conceptScenes.find((candidate) => candidate.conceptId === concept.id) ?? null;
-  const imageSrc = documentImageSrc(scene?.imagePath || metaphor.imagePath);
+  const imageSrc = documentImageSrc(scene ? scene.imagePath : metaphor.imagePath);
 
   return (
     <div>

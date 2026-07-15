@@ -46,6 +46,7 @@ type RunStudyAgentRequest = {
   getDocumentTools?: (documentPath: string) => CurrentDocumentAgentTools | null;
   getOpenDocumentPaths?: () => string[];
   onDocumentsChanged?: () => void;
+  responseInstructions?: string;
   signal?: AbortSignal;
 };
 
@@ -424,6 +425,16 @@ function noForegroundContextModelMessage(): ModelMessage {
   return {
     role: "system",
     content: "No foreground study context is attached for this request. Do not infer a visible concept, flashcard, or answer sheet from earlier turns.",
+  };
+}
+
+function responseInstructionsModelMessage(instructions: string): ModelMessage {
+  return {
+    role: "system",
+    content: [
+      "User-defined response and note-writing instructions. Follow these unless they conflict with higher-priority instructions:",
+      instructions,
+    ].join("\n\n"),
   };
 }
 
@@ -1525,6 +1536,7 @@ export async function* runStudyAgentLoop({
   getDocumentTools,
   getOpenDocumentPaths,
   onDocumentsChanged,
+  responseInstructions,
   signal,
 }: RunStudyAgentRequest): AsyncGenerator<AgentLoopChunk> {
   const nextContextState = await compactContextIfNeeded(messages, currentContextState);
@@ -1552,10 +1564,19 @@ export async function* runStudyAgentLoop({
       ? foregroundContextModelMessage(foregroundContext)
       : noForegroundContextModelMessage(),
   );
+  const cleanResponseInstructions = String(responseInstructions || "").trim();
+  if (cleanResponseInstructions) {
+    modelMessages.splice(
+      Math.max(0, modelMessages.length - 1),
+      0,
+      responseInstructionsModelMessage(cleanResponseInstructions),
+    );
+  }
 
   const run = await agent.streamEvents({
     messages: modelMessages,
   }, {
+    recursionLimit: 125,
     signal,
     version: "v3",
   });

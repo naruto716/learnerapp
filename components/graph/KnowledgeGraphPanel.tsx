@@ -185,7 +185,7 @@ function buildFlowNodes(
             : "dim"
         : getNodeVisualState(graph, node, selectedNodeId);
     const colors = nodeColors(visualState, node.inCurrentDocument);
-    const noteCount = node.mentions.length;
+    const noteCount = new Set(node.mentions.map((mention) => mention.documentPath)).size;
 
     return {
       id: String(node.id),
@@ -293,6 +293,19 @@ function mentionStudyText(mention: KnowledgeConceptMention) {
   return excerpt.length > 320 ? `${excerpt.slice(0, 320).trim()}...` : excerpt;
 }
 
+function latestMentionPerDocument(mentions: KnowledgeConceptMention[]) {
+  const mentionsByDocument = new Map<string, KnowledgeConceptMention>();
+
+  for (const mention of mentions) {
+    const existing = mentionsByDocument.get(mention.documentPath);
+    if (!existing || mention.updatedAt > existing.updatedAt) {
+      mentionsByDocument.set(mention.documentPath, mention);
+    }
+  }
+
+  return [...mentionsByDocument.values()];
+}
+
 function ConceptAcrossNotes({
   mentions,
   node,
@@ -302,7 +315,7 @@ function ConceptAcrossNotes({
   node: KnowledgeGraphNode;
   onOpenDocument: (documentPath: string) => void;
 }) {
-  const usefulMentions = mentions.filter((mention) => mentionStudyText(mention));
+  const usefulMentions = latestMentionPerDocument(mentions).filter((mention) => mentionStudyText(mention));
 
   if (usefulMentions.length > 1) {
     return (
@@ -318,11 +331,6 @@ function ConceptAcrossNotes({
               >
                 {documentTitle(mention.documentPath)}
               </button>
-              {mention.mentionType && (
-                <span className="shrink-0 rounded-full bg-white/[0.06] px-2 py-0.5 text-[10px] uppercase tracking-wide text-white/34">
-                  {mention.mentionType.replace(/_/g, " ")}
-                </span>
-              )}
             </div>
             <p className="text-sm leading-6 text-white/62">{mentionStudyText(mention)}</p>
           </div>
@@ -454,7 +462,7 @@ export default function KnowledgeGraphPanel({
   const selectedEdgeTarget = graph?.nodes.find((node) => node.id === selectedEdge?.target) ?? null;
   const progressPercent = progress?.total ? Math.round((progress.completed / progress.total) * 100) : 0;
   const selectedNodeMentions = selectedNode
-    ? [...selectedNode.mentions].sort((first, second) => {
+    ? latestMentionPerDocument(selectedNode.mentions).sort((first, second) => {
         if (first.documentPath === graph?.documentPath && second.documentPath !== graph?.documentPath) return -1;
         if (second.documentPath === graph?.documentPath && first.documentPath !== graph?.documentPath) return 1;
         return second.updatedAt - first.updatedAt;

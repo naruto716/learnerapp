@@ -365,6 +365,10 @@ function insertConceptMention(conceptId, documentPath, documentHash, mention, no
   const excerptMarkdown = String(mention.excerptMarkdown || mention.excerpt || "").trim();
   if (!excerptMarkdown) return false;
 
+  getGraphDatabase()
+    .prepare("DELETE FROM concept_mentions WHERE concept_id = ? AND document_path = ?")
+    .run(conceptId, documentPath);
+
   getGraphDatabase().prepare(
     `
       INSERT INTO concept_mentions(
@@ -512,6 +516,32 @@ function getConceptAliases(conceptId) {
     .map((row) => row.alias);
 }
 
+function getConceptMentionProfiles(conceptId, limit = 6) {
+  const rows = getGraphDatabase()
+    .prepare(
+      `
+        SELECT
+          document_path AS documentPath,
+          contribution,
+          excerpt_markdown AS excerptMarkdown,
+          updated_at AS updatedAt
+        FROM concept_mentions
+        WHERE concept_id = ?
+        ORDER BY updated_at DESC
+      `,
+    )
+    .all(conceptId);
+  const mentionsByDocument = new Map();
+
+  for (const row of rows) {
+    if (!mentionsByDocument.has(row.documentPath)) {
+      mentionsByDocument.set(row.documentPath, row);
+    }
+  }
+
+  return [...mentionsByDocument.values()].slice(0, Math.max(1, Number(limit) || 6));
+}
+
 function buildConceptProfile(concept, aliases = []) {
   return [
     `Name: ${concept.name}`,
@@ -537,6 +567,7 @@ function getConceptProfiles(conceptIds) {
         confidence: concept.confidence,
         explanation: concept.explanation,
         id: concept.id,
+        mentions: getConceptMentionProfiles(concept.id),
         name: concept.name,
         normalizedName: concept.normalized_name,
         profile: buildConceptProfile(concept, aliases),
@@ -955,6 +986,7 @@ function saveResolvedDocumentGraph({ documentHash, documentPath, graphBuild, mod
       const keys = [
         concept.key,
         concept.candidateKey,
+        ...(Array.isArray(concept.candidateKeys) ? concept.candidateKeys : []),
         concept.name,
         ...(Array.isArray(concept.aliases) ? concept.aliases : []),
       ];
