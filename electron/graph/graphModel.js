@@ -2,7 +2,7 @@ const { graphError, graphLog, startTimer } = require("./graphLog");
 const { getAiSettings, getEmbeddingSettings } = require("../aiSettings");
 const { embedTexts, requestStructuredOutput } = require("../aiClient");
 
-const graphPipelineVersion = "concept-resolver-v7";
+const graphPipelineVersion = "concept-resolver-v8";
 
 function getGraphModelConfig(settings = {}) {
   const aiSettings = getAiSettings(settings);

@@ -297,7 +297,12 @@ function upsertConcept(concept, now) {
   return result.lastInsertRowid;
 }
 
-function updateConceptDetails(conceptId, concept, now, { allowRename = false, overwriteExistingDetails = false } = {}) {
+function updateConceptDetails(
+  conceptId,
+  concept,
+  now,
+  { allowRename = false, overwriteExistingDetails = false, overwriteExplanation = false } = {},
+) {
   const existingConcept = getConceptById(conceptId);
   if (!existingConcept) return null;
 
@@ -331,7 +336,7 @@ function updateConceptDetails(conceptId, concept, now, { allowRename = false, ov
     overwriteExistingDetails ? 1 : 0,
     String(concept.summary || ""),
     String(concept.summary || ""),
-    overwriteExistingDetails ? 1 : 0,
+    overwriteExistingDetails || overwriteExplanation ? 1 : 0,
     String(concept.explanation || ""),
     String(concept.explanation || ""),
     clampConfidence(concept.confidence),
@@ -971,6 +976,7 @@ function saveResolvedDocumentGraph({ documentHash, documentPath, graphBuild, mod
       updateConceptDetails(targetConceptId, concept, now, {
         allowRename: !usesExistingConcept,
         overwriteExistingDetails: !usesExistingConcept,
+        overwriteExplanation: usesExistingConcept,
       });
       mergeConcepts(
         targetConceptId,

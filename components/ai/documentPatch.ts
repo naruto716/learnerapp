@@ -52,6 +52,10 @@ const beginPatch = "*** Begin Patch";
 const endPatch = "*** End Patch";
 const updateDocumentPrefix = "*** Update Document: ";
 
+function normalizeDocumentPatchPath(documentPath: string) {
+  return documentPath.trim().replace(/^\/+/, "").replace(/\.json$/i, "");
+}
+
 export function formatHtmlForDocumentPatch(html: string) {
   return html
     .replace(/(<\/li>)(<li\b)/g, "$1\n$2")
@@ -177,7 +181,7 @@ function resolvePatchHunks({
   const parsedPatch = parseDocumentPatch(patchText);
   const failures: string[] = [];
 
-  if (parsedPatch.documentPath !== expectedDocumentPath) {
+  if (normalizeDocumentPatchPath(parsedPatch.documentPath) !== normalizeDocumentPatchPath(expectedDocumentPath)) {
     return {
       appliedOperations: 0,
       failures: [`Patch targets ${parsedPatch.documentPath}, but ${expectedDocumentPath} is currently open.`],

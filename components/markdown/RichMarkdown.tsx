@@ -1,6 +1,6 @@
 "use client";
 
-import { Children, isValidElement, useEffect, useId, useMemo, useState, type ReactNode } from "react";
+import { Children, isValidElement, memo, useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import rehypeKatex from "rehype-katex";
@@ -81,7 +81,7 @@ function MarkdownPre({ children }: { children?: ReactNode }) {
   return <pre>{children}</pre>;
 }
 
-export default function RichMarkdown({
+const RichMarkdown = memo(function RichMarkdown({
   children,
   className = "",
   components,
@@ -106,4 +106,6 @@ export default function RichMarkdown({
       </ReactMarkdown>
     </div>
   );
-}
+});
+
+export default RichMarkdown;

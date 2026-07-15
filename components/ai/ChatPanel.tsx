@@ -15,7 +15,7 @@ import {
   XIcon,
 } from "@phosphor-icons/react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ProposedDocumentPatch } from "./documentPatch";
 import {
   foregroundContextDescription,
@@ -405,7 +405,7 @@ function sourcesForMessage(messages: ChatMessage[], messageIndex: number) {
   return [...sourcesById.values()].sort((left, right) => left.id - right.id);
 }
 
-function MessageContent({
+const MessageContent = memo(function MessageContent({
   message,
   onOpenSource,
   sources,
@@ -414,41 +414,48 @@ function MessageContent({
   onOpenSource: (source: AgentSource) => void;
   sources: AgentSource[];
 }) {
+  const markdown = useMemo(
+    () => contentWithSourceLinks(normalizeMathDelimiters(message.content)),
+    [message.content],
+  );
+  const markdownComponents = useMemo(
+    () => ({
+      a: ({ children, href }: { children?: React.ReactNode; href?: string }) => {
+        const source = sourceFromHref(href, sources);
+
+        if (source) {
+          return (
+            <button
+              type="button"
+              className="mx-0.5 inline-flex translate-y-[-1px] items-center rounded-full bg-sky-300/12 px-1.5 py-0.5 text-[0.75em] font-medium text-sky-100/90 transition hover:bg-sky-300/20"
+              onClick={() => onOpenSource(source)}
+              title={`${source.path}\n\n${source.excerpt}`}
+            >
+              {truncateSourceTitle(source.title)}
+            </button>
+          );
+        }
+
+        return (
+          <a href={href} rel="noreferrer" target="_blank">
+            {children}
+          </a>
+        );
+      },
+    }),
+    [onOpenSource, sources],
+  );
+
   if (message.role === "user") {
     return <p className="whitespace-pre-wrap">{message.content}</p>;
   }
 
   return (
-      <RichMarkdown
-        components={{
-          a: ({ children, href }) => {
-            const source = sourceFromHref(href, sources);
-
-            if (source) {
-              return (
-                <button
-                  type="button"
-                  className="mx-0.5 inline-flex translate-y-[-1px] items-center rounded-full bg-sky-300/12 px-1.5 py-0.5 text-[0.75em] font-medium text-sky-100/90 transition hover:bg-sky-300/20"
-                  onClick={() => onOpenSource(source)}
-                  title={`${source.path}\n\n${source.excerpt}`}
-                >
-                  {truncateSourceTitle(source.title)}
-                </button>
-              );
-            }
-
-            return (
-              <a href={href} rel="noreferrer" target="_blank">
-                {children}
-              </a>
-            );
-          },
-        }}
-      >
-        {contentWithSourceLinks(normalizeMathDelimiters(message.content))}
-      </RichMarkdown>
+    <RichMarkdown components={markdownComponents}>
+      {markdown}
+    </RichMarkdown>
   );
-}
+});
 
 function ChatLoadingSkeleton() {
   return (
@@ -554,6 +561,10 @@ export default function ChatPanel({
   const latestMessage = messages[messages.length - 1];
   const foregroundContextEnabled = Boolean(
     foregroundContext && foregroundContext.key !== dismissedForegroundContextKey,
+  );
+  const messageSources = useMemo(
+    () => messages.map((_message, messageIndex) => sourcesForMessage(messages, messageIndex)),
+    [messages],
   );
 
   useEffect(() => {
@@ -881,9 +892,9 @@ export default function ChatPanel({
     }));
   }
 
-  function openSource(source: AgentSource) {
+  const openSource = useCallback((source: AgentSource) => {
     onOpenDocument(source.path);
-  }
+  }, [onOpenDocument]);
 
   function stopAgent() {
     abortControllerRef.current?.abort();
@@ -1200,7 +1211,7 @@ export default function ChatPanel({
                         <MessageContent
                           message={message}
                           onOpenSource={openSource}
-                          sources={sourcesForMessage(messages, messageIndex)}
+                          sources={messageSources[messageIndex]}
                         />
                       )
                     )}

@@ -274,25 +274,6 @@ function GraphHeaderButton({
   );
 }
 
-function markdownTextPreview(markdown: string) {
-  return markdown
-    .replace(/```[\s\S]*?```/g, " ")
-    .replace(/`([^`]+)`/g, "$1")
-    .replace(/!\[[^\]]*]\([^)]*\)/g, " ")
-    .replace(/\[([^\]]+)]\([^)]*\)/g, "$1")
-    .replace(/[#>*_\-]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function mentionStudyText(mention: KnowledgeConceptMention) {
-  const contribution = mention.contribution?.trim();
-  if (contribution) return contribution;
-
-  const excerpt = markdownTextPreview(mention.excerptMarkdown);
-  return excerpt.length > 320 ? `${excerpt.slice(0, 320).trim()}...` : excerpt;
-}
-
 function latestMentionPerDocument(mentions: KnowledgeConceptMention[]) {
   const mentionsByDocument = new Map<string, KnowledgeConceptMention>();
 
@@ -304,44 +285,6 @@ function latestMentionPerDocument(mentions: KnowledgeConceptMention[]) {
   }
 
   return [...mentionsByDocument.values()];
-}
-
-function ConceptAcrossNotes({
-  mentions,
-  node,
-  onOpenDocument,
-}: {
-  mentions: KnowledgeConceptMention[];
-  node: KnowledgeGraphNode;
-  onOpenDocument: (documentPath: string) => void;
-}) {
-  const usefulMentions = latestMentionPerDocument(mentions).filter((mention) => mentionStudyText(mention));
-
-  if (usefulMentions.length > 1) {
-    return (
-      <section className="space-y-3 border-l border-white/12 pl-3">
-        <p className="text-[11px] font-semibold uppercase tracking-wide text-white/35">Across notes</p>
-        {usefulMentions.map((mention, index) => (
-          <div className="space-y-1.5" key={`${mention.documentPath}-${mention.updatedAt}-${index}`}>
-            <div className="flex min-w-0 items-center gap-2">
-              <button
-                className="truncate text-left text-sm font-medium text-white/78 transition hover:text-white"
-                onClick={() => onOpenDocument(mention.documentPath)}
-                type="button"
-              >
-                {documentTitle(mention.documentPath)}
-              </button>
-            </div>
-            <p className="text-sm leading-6 text-white/62">{mentionStudyText(mention)}</p>
-          </div>
-        ))}
-      </section>
-    );
-  }
-
-  if (!node.explanation) return null;
-
-  return <p className="border-l border-white/12 pl-3 text-sm leading-6 text-white/56">{node.explanation}</p>;
 }
 
 function GraphMention({
@@ -679,26 +622,28 @@ export default function KnowledgeGraphPanel({
             <GraphIcon size={18} />
           </span>
           <div className="min-w-0">
-            <p className="truncate text-sm font-semibold">Knowledge Graph</p>
+            <div className="flex min-w-0 items-center gap-3">
+              <p className="shrink-0 text-sm font-semibold">Knowledge Graph</p>
+              {progress && (
+                <div className="flex min-w-0 items-center gap-2">
+                  <div className="h-1 w-24 shrink-0 overflow-hidden rounded-full bg-white/[0.08]">
+                    <div
+                      className="h-full rounded-full bg-white/55 transition-[width] duration-200"
+                      style={{ width: `${progressPercent}%` }}
+                    />
+                  </div>
+                  <p className="truncate text-[11px] text-white/38">
+                    {progress.label} · {progress.completed}/{progress.total}
+                    {progress.failed > 0 ? ` · ${progress.failed} failed` : ""}
+                  </p>
+                </div>
+              )}
+            </div>
             <p className="truncate text-xs text-white/42">
               {graph
                 ? `${graph.nodes.length} concepts, ${graph.edges.length} relations`
                 : "Extract concepts and relations from this note"}
             </p>
-            {progress && (
-              <div className="mt-1.5 w-[220px] max-w-full">
-                <div className="h-1 overflow-hidden rounded-full bg-white/[0.08]">
-                  <div
-                    className="h-full rounded-full bg-white/55 transition-[width] duration-200"
-                    style={{ width: `${progressPercent}%` }}
-                  />
-                </div>
-                <p className="mt-1 truncate text-[11px] text-white/38">
-                  {progress.label} · {progress.completed}/{progress.total}
-                  {progress.failed > 0 ? ` · ${progress.failed} failed` : ""}
-                </p>
-              </div>
-            )}
           </div>
           {lastExtractionChanged !== null && (
             <span className="rounded-full bg-white/[0.07] px-2 py-1 text-[11px] text-white/46">
@@ -842,11 +787,9 @@ export default function KnowledgeGraphPanel({
                         ) : (
                           <p className="text-sm text-white/42">No summary yet.</p>
                         )}
-                        <ConceptAcrossNotes
-                          mentions={selectedNodeMentions}
-                          node={selectedNode}
-                          onOpenDocument={onOpenDocument}
-                        />
+                        {selectedNode.explanation && selectedNode.explanation !== selectedNode.summary && (
+                          <p className="text-sm leading-6 text-white/62">{selectedNode.explanation}</p>
+                        )}
                         <div className="flex flex-wrap gap-2">
                           <button className={textButtonClassName} onClick={openEditConceptDialog} type="button">
                             <PencilSimpleIcon size={15} />

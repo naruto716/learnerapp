@@ -49,7 +49,7 @@ export default function FloatingIconButton({
   const statusStyle = status ? statusStyles[status] : null;
 
   return (
-    <div className={`app-no-drag group fixed z-50 ${className}`}>
+    <div className={`app-no-drag group fixed z-20 ${className}`}>
       <button
         type="button"
         aria-label={ariaLabel}
