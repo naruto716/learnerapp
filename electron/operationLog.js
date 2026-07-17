@@ -17,9 +17,9 @@ function sanitize(value, { includePrompts = false } = {}) {
 
 function operationLog(event, details = {}, { includePrompts = false } = {}) {
   const record = {
+    ...sanitize(details, { includePrompts }),
     at: new Date().toISOString(),
     event,
-    ...sanitize(details, { includePrompts }),
   };
 
   try {

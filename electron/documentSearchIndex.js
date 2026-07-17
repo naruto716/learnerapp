@@ -6,6 +6,7 @@ const path = require("path");
 const { DatabaseSync } = require("node:sqlite");
 const { embedTexts } = require("./aiClient");
 const { getEmbeddingSettings } = require("./aiSettings");
+const { operationLog } = require("./operationLog");
 
 const databaseFileName = "learner.sqlite";
 const orderFileName = ".documents-order.json";
@@ -604,41 +605,79 @@ function rebuildDocumentEmbeddings(settings) {
   return getDocumentEmbeddingStatus(settings);
 }
 
-async function semanticSearchIndexedDocuments(query, limit = 10, settings) {
+async function semanticSearchIndexedDocuments(query, limit = 10, settings, diagnostics = {}) {
   const normalizedQuery = String(query || "").trim();
   if (!normalizedQuery) return [];
 
   const safeLimit = Math.min(Math.max(Number(limit) || 10, 1), 30);
   const config = getEmbeddingConfig(settings);
-  const [queryEmbedding] = await requestEmbeddings([normalizedQuery], settings);
-  const rows = getSearchDatabase()
-    .prepare(
-      `
-        SELECT
-          c.path,
-          d.title,
-          c.chunk_index AS chunkIndex,
-          c.text,
-          e.embedding
-        FROM document_chunks c
-        INNER JOIN documents d ON d.path = c.path
-        INNER JOIN chunk_embeddings e
-          ON e.chunk_hash = c.chunk_hash
-          AND e.model = ?
-      `,
-    )
-    .all(config.model);
+  const requestId = typeof diagnostics.requestId === "string" ? diagnostics.requestId : null;
+  const startedAt = Date.now();
+  let stage = "query_embedding";
+  operationLog("document.semantic_search.started", {
+    limit: safeLimit,
+    model: config.model,
+    requestId,
+  });
 
-  return rows
-    .map((row) => ({
-      path: row.path,
-      title: row.title,
-      chunkIndex: row.chunkIndex,
-      text: row.text,
-      score: cosineSimilarity(queryEmbedding, bufferToVector(row.embedding)),
-    }))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, safeLimit);
+  try {
+    const [queryEmbedding] = await requestEmbeddings([normalizedQuery], settings);
+    operationLog("document.semantic_search.embedding_completed", {
+      dimensions: queryEmbedding.length,
+      durationMs: Date.now() - startedAt,
+      requestId,
+    });
+
+    stage = "database_read";
+    const rows = getSearchDatabase()
+      .prepare(
+        `
+          SELECT
+            c.path,
+            d.title,
+            c.chunk_index AS chunkIndex,
+            c.text,
+            e.embedding
+          FROM document_chunks c
+          INNER JOIN documents d ON d.path = c.path
+          INNER JOIN chunk_embeddings e
+            ON e.chunk_hash = c.chunk_hash
+            AND e.model = ?
+        `,
+      )
+      .all(config.model);
+    operationLog("document.semantic_search.rows_loaded", {
+      durationMs: Date.now() - startedAt,
+      requestId,
+      rowCount: rows.length,
+    });
+
+    stage = "ranking";
+    const results = rows
+      .map((row) => ({
+        path: row.path,
+        title: row.title,
+        chunkIndex: row.chunkIndex,
+        text: row.text,
+        score: cosineSimilarity(queryEmbedding, bufferToVector(row.embedding)),
+      }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, safeLimit);
+    operationLog("document.semantic_search.completed", {
+      durationMs: Date.now() - startedAt,
+      requestId,
+      resultCount: results.length,
+    });
+    return results;
+  } catch (error) {
+    operationLog("document.semantic_search.failed", {
+      durationMs: Date.now() - startedAt,
+      error: error instanceof Error ? error.message : String(error),
+      requestId,
+      stage,
+    });
+    throw error;
+  }
 }
 
 function closeSearchDatabase() {

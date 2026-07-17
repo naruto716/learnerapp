@@ -14,6 +14,8 @@ const maxHistoryInputTokens = 200_000;
 const summarizeWhenHistoryExceedsTokens = 140_000;
 const recentHistoryTargetTokens = 60_000;
 const estimatedTokensPerImage = 1_000;
+const chatRequestTimeoutMs = 60_000;
+const agentRecursionLimit = 20;
 const tokenEncoding = getEncoding("o200k_base");
 
 export type AgentChatMessage = {
@@ -97,7 +99,104 @@ type ModelMessage = {
       >;
 };
 
-function createLearnerModel() {
+function normalizeToolCallSseLine(line: string) {
+  const match = line.match(/^(data:\s*)(.*?)(\r?)$/);
+  if (!match || match[2] === "[DONE]") return { line, normalizedCount: 0 };
+
+  try {
+    const payload = JSON.parse(match[2]) as {
+      choices?: Array<{
+        delta?: {
+          tool_calls?: Array<{
+            function?: { name?: unknown };
+          }>;
+        };
+      }>;
+    };
+    let normalizedCount = 0;
+
+    for (const choice of payload.choices ?? []) {
+      for (const toolCall of choice.delta?.tool_calls ?? []) {
+        if (toolCall.function?.name === "") {
+          delete toolCall.function.name;
+          normalizedCount += 1;
+        }
+      }
+    }
+
+    return {
+      line: normalizedCount > 0 ? `${match[1]}${JSON.stringify(payload)}${match[3]}` : line,
+      normalizedCount,
+    };
+  } catch {
+    return { line, normalizedCount: 0 };
+  }
+}
+
+function createProxyCompatibleFetch(requestId?: string): typeof fetch {
+  return async (input, init) => {
+    const response = await fetch(input, init);
+    if (!response.body || !response.headers.get("content-type")?.includes("text/event-stream")) {
+      return response;
+    }
+
+    const decoder = new TextDecoder();
+    const encoder = new TextEncoder();
+    let bufferedText = "";
+    let normalizedCount = 0;
+    let loggedActivation = false;
+
+    function processText(text: string, controller: TransformStreamDefaultController<Uint8Array>) {
+      bufferedText += text;
+      const lines = bufferedText.split("\n");
+      bufferedText = lines.pop() ?? "";
+
+      for (const line of lines) {
+        const normalized = normalizeToolCallSseLine(line);
+        normalizedCount += normalized.normalizedCount;
+        if (normalized.normalizedCount > 0 && !loggedActivation) {
+          loggedActivation = true;
+          logChatEvent("transport.empty_tool_name_normalized", { requestId });
+        }
+        controller.enqueue(encoder.encode(`${normalized.line}\n`));
+      }
+    }
+
+    const body = response.body.pipeThrough(
+      new TransformStream<Uint8Array, Uint8Array>({
+        transform(chunk, controller) {
+          processText(decoder.decode(chunk, { stream: true }), controller);
+        },
+        flush(controller) {
+          processText(decoder.decode(), controller);
+          if (bufferedText) {
+            const normalized = normalizeToolCallSseLine(bufferedText);
+            normalizedCount += normalized.normalizedCount;
+            controller.enqueue(encoder.encode(normalized.line));
+          }
+          if (normalizedCount > 0) {
+            logChatEvent("transport.empty_tool_name_normalization_completed", {
+              normalizedCount,
+              requestId,
+            });
+          }
+        },
+      }),
+    );
+
+    const headers = new Headers(response.headers);
+    headers.delete("content-encoding");
+    headers.delete("content-length");
+
+    return new Response(body, {
+      headers,
+      status: response.status,
+      statusText: response.statusText,
+    });
+  };
+}
+
+function createLearnerModel(requestId?: string) {
   const settings = readAiSettings();
 
   return new ChatOpenAI({
@@ -106,13 +205,20 @@ function createLearnerModel() {
     reasoning: {
       effort: "xhigh",
     },
+    maxRetries: 0,
     temperature: 0.25,
     streamUsage: false,
+    timeout: chatRequestTimeoutMs,
     configuration: {
       baseURL: settings.baseUrl,
       dangerouslyAllowBrowser: true,
+      fetch: createProxyCompatibleFetch(requestId),
     },
   });
+}
+
+function logChatEvent(eventName: string, details: Record<string, unknown> = {}) {
+  window.learner?.logAiChatEvent?.(eventName, details);
 }
 
 function messageContentToText(content: unknown): string {
@@ -446,6 +552,7 @@ function createStudyTools({
   getOpenDocumentPaths,
   onDocumentsChanged,
   registerSources,
+  requestId,
 }: {
   closeDocumentTab?: (documentPath: string, documentType?: DocumentNode["type"]) => void;
   ensureDocumentTools?: (documentPath: string) => Promise<CurrentDocumentAgentTools | null>;
@@ -454,6 +561,7 @@ function createStudyTools({
   getOpenDocumentPaths?: () => string[];
   onDocumentsChanged?: () => void;
   registerSources: (results: DocumentSemanticSearchResult[]) => AgentSource[];
+  requestId: string;
 }) {
   function getTools() {
     return getCurrentDocumentTools();
@@ -492,16 +600,38 @@ function createStudyTools({
     tool(
       async ({ limit = 6, query }) => {
         if (!window.learner?.semanticSearchDocuments) {
-          return "Semantic note search is not available in this environment.";
+          const message = "Semantic note search is not available in this environment.";
+          logChatEvent("search_notes.failed", {
+            error: message,
+            requestId,
+            stage: "availability",
+          });
+          return JSON.stringify({
+            type: "search_notes_error",
+            retryable: false,
+            message,
+          });
         }
+
+        const startedAt = Date.now();
+        logChatEvent("search_notes.started", {
+          limit: Math.min(Math.max(limit, 1), 8),
+          requestId,
+        });
 
         try {
           const results = await window.learner.semanticSearchDocuments(
             query,
             Math.min(Math.max(limit, 1), 8),
             readAiSettings(),
+            { requestId },
           );
           const sources = registerSources(results);
+          logChatEvent("search_notes.completed", {
+            durationMs: Date.now() - startedAt,
+            requestId,
+            sourceCount: sources.length,
+          });
 
           if (sources.length === 0) {
             const status = await window.learner.getDocumentEmbeddingStatus?.(readAiSettings());
@@ -529,7 +659,24 @@ function createStudyTools({
             2,
           );
         } catch (error) {
-          return error instanceof Error ? `Semantic note search failed: ${error.message}` : "Semantic note search failed.";
+          const message = error instanceof Error ? error.message : "Semantic note search failed.";
+          logChatEvent("search_notes.failed", {
+            durationMs: Date.now() - startedAt,
+            error: message,
+            requestId,
+            stage: "semantic_search",
+          });
+          return JSON.stringify(
+            {
+              type: "search_notes_error",
+              retryable: false,
+              message: `Saved-note search failed: ${message}`,
+              instructions:
+                "Do not call search_notes again for this request. Tell the user that saved-note search failed and include this error.",
+            },
+            null,
+            2,
+          );
         }
       },
       {
@@ -1462,6 +1609,7 @@ function createStudyAgent({
   getOpenDocumentPaths,
   onDocumentsChanged,
   registerSources,
+  requestId,
 }: {
   closeDocumentTab?: (documentPath: string, documentType?: DocumentNode["type"]) => void;
   ensureDocumentTools?: (documentPath: string) => Promise<CurrentDocumentAgentTools | null>;
@@ -1470,9 +1618,10 @@ function createStudyAgent({
   getOpenDocumentPaths?: () => string[];
   onDocumentsChanged?: () => void;
   registerSources: (results: DocumentSemanticSearchResult[]) => AgentSource[];
+  requestId: string;
 }) {
   return createAgent({
-    model: createLearnerModel(),
+    model: createLearnerModel(requestId),
     tools: createStudyTools({
       closeDocumentTab,
       ensureDocumentTools,
@@ -1481,11 +1630,13 @@ function createStudyAgent({
       getOpenDocumentPaths,
       onDocumentsChanged,
       registerSources,
+      requestId,
     }),
     systemPrompt: [
       "You are the built-in AI study assistant for Learner, a local note-taking app.",
       "Help the user write, improve, summarize, and study their notes.",
       "When the user asks about saved notes, study material, related concepts, or asks a question that should be grounded in their note library, use search_notes before answering.",
+      "Call search_notes at most once per user request. After it returns, use that result to answer; never retry search_notes in the same request, including when semantic search is unavailable or no sources are found.",
       "When you use search_notes, cite sourced claims inline with the exact marker format <source N>, where N is the source number returned by the tool.",
       "If note search returns no useful source, say that the answer is not grounded in saved notes before giving a general answer.",
       "When editing notes, use patch/replacement tools. The app auto-applies accepted tool patches and keeps undo available.",
@@ -1539,7 +1690,38 @@ export async function* runStudyAgentLoop({
   responseInstructions,
   signal,
 }: RunStudyAgentRequest): AsyncGenerator<AgentLoopChunk> {
-  const nextContextState = await compactContextIfNeeded(messages, currentContextState);
+  const requestId = crypto.randomUUID();
+  const startedAt = Date.now();
+  const elapsedMs = () => Date.now() - startedAt;
+  const settings = readAiSettings();
+  const streamState = {
+    messages: "not_started",
+    output: "not_started",
+    protocol: "not_started",
+    tools: "not_started",
+  };
+
+  logChatEvent("request.started", {
+    hasForegroundContext: Boolean(foregroundContext),
+    hasResponseInstructions: Boolean(String(responseInstructions || "").trim()),
+    messageCount: messages.length,
+    model: settings.chatModel,
+    requestId,
+  });
+
+  let nextContextState: AgentContextState;
+  try {
+    nextContextState = await compactContextIfNeeded(messages, currentContextState);
+    logChatEvent("context.ready", { durationMs: elapsedMs(), requestId });
+  } catch (error) {
+    logChatEvent("request.failed", {
+      durationMs: elapsedMs(),
+      error: error instanceof Error ? error.message : String(error),
+      requestId,
+      stage: "context_compaction",
+    });
+    throw error;
+  }
   const retrievedSources: AgentSource[] = [];
 
   function registerSources(results: DocumentSemanticSearchResult[]) {
@@ -1554,6 +1736,7 @@ export async function* runStudyAgentLoop({
     getOpenDocumentPaths,
     onDocumentsChanged,
     registerSources,
+    requestId,
   });
 
   const modelMessages = buildModelMessages(messages, nextContextState);
@@ -1573,18 +1756,51 @@ export async function* runStudyAgentLoop({
     );
   }
 
-  const run = await agent.streamEvents({
-    messages: modelMessages,
-  }, {
-    recursionLimit: 125,
-    signal,
-    version: "v3",
+  logChatEvent("stream.requested", {
+    durationMs: elapsedMs(),
+    modelMessageCount: modelMessages.length,
+    requestId,
   });
+
+  async function openStream() {
+    try {
+      const stream = await agent.streamEvents({
+        messages: modelMessages,
+      }, {
+        recursionLimit: agentRecursionLimit,
+        signal,
+        version: "v3",
+      });
+      logChatEvent("stream.opened", { durationMs: elapsedMs(), requestId });
+      return stream;
+    } catch (error) {
+      logChatEvent("request.failed", {
+        durationMs: elapsedMs(),
+        error: error instanceof Error ? error.message : String(error),
+        requestId,
+        stage: "stream_open",
+      });
+      throw error;
+    }
+  }
+  const run = await openStream();
 
   const pendingChunks: AgentLoopChunk[] = [];
   let notifyChunkAvailable: (() => void) | null = null;
   let finished = false;
   let failure: unknown;
+  const heartbeat = window.setInterval(() => {
+    logChatEvent("request.running", {
+      durationMs: elapsedMs(),
+      pendingChunkCount: pendingChunks.length,
+      requestId,
+      streams: { ...streamState },
+    });
+  }, 15_000);
+  const onAbort = () => {
+    logChatEvent("request.aborted", { durationMs: elapsedMs(), requestId });
+  };
+  signal?.addEventListener("abort", onAbort, { once: true });
 
   function pushChunk(chunk: AgentLoopChunk) {
     pendingChunks.push(chunk);
@@ -1593,50 +1809,155 @@ export async function* runStudyAgentLoop({
   }
 
   async function consumeMessageStreams() {
-    for await (const message of run.messages) {
-      let emittedText = false;
+    streamState.messages = "running";
+    logChatEvent("messages.started", { durationMs: elapsedMs(), requestId });
+    let messageCount = 0;
+    let textCharacterCount = 0;
 
-      for await (const delta of message.text) {
-        if (!delta) continue;
-        emittedText = true;
-        pushChunk({
-          type: "text_delta",
-          content: delta,
-        });
-      }
+    try {
+      for await (const message of run.messages) {
+        messageCount += 1;
+        let emittedText = false;
 
-      if (emittedText) {
-        pushChunk({
-          type: "text_done",
-        });
+        for await (const delta of message.text) {
+          if (!delta) continue;
+          emittedText = true;
+          textCharacterCount += delta.length;
+          pushChunk({
+            type: "text_delta",
+            content: delta,
+          });
+        }
+
+        if (emittedText) {
+          pushChunk({
+            type: "text_done",
+          });
+        }
       }
+      streamState.messages = "completed";
+      logChatEvent("messages.completed", {
+        durationMs: elapsedMs(),
+        messageCount,
+        requestId,
+        textCharacterCount,
+      });
+    } catch (error) {
+      streamState.messages = "failed";
+      throw error;
     }
   }
 
   async function consumeToolStreams() {
-    for await (const call of run.toolCalls) {
-      pushChunk({
-        type: "tool_call",
-        toolCall: {
-          id: call.callId,
+    streamState.tools = "running";
+    logChatEvent("tools.started", { durationMs: elapsedMs(), requestId });
+    let toolCallCount = 0;
+
+    try {
+      for await (const call of run.toolCalls) {
+        toolCallCount += 1;
+        const toolStartedAt = Date.now();
+        logChatEvent("tool.started", {
+          callId: call.callId,
           name: call.name,
-          args: call.input,
-        },
-      });
+          requestId,
+        });
+        pushChunk({
+          type: "tool_call",
+          toolCall: {
+            id: call.callId,
+            name: call.name,
+            args: call.input,
+          },
+        });
 
-      const result = await call.output;
+        const result = await call.output;
+        logChatEvent("tool.completed", {
+          callId: call.callId,
+          durationMs: Date.now() - toolStartedAt,
+          name: call.name,
+          requestId,
+        });
 
-      pushChunk({
-        type: "tool_result",
-        toolCallId: call.callId,
-        toolName: call.name,
-        result,
+        pushChunk({
+          type: "tool_result",
+          toolCallId: call.callId,
+          toolName: call.name,
+          result,
+        });
+      }
+      streamState.tools = "completed";
+      logChatEvent("tools.completed", {
+        durationMs: elapsedMs(),
+        requestId,
+        toolCallCount,
       });
+    } catch (error) {
+      streamState.tools = "failed";
+      throw error;
     }
   }
 
-  Promise.all([consumeMessageStreams(), consumeToolStreams(), run.output])
+  async function consumeProtocolEvents() {
+    streamState.protocol = "running";
+    let protocolEventCount = 0;
+
+    try {
+      for await (const event of run) {
+        protocolEventCount += 1;
+        if (event.method !== "messages" && event.method !== "tools") continue;
+
+        const data = event.params.data as {
+          content?: { args?: unknown; id?: unknown; name?: unknown; type?: unknown };
+          event?: unknown;
+          tool_call_id?: unknown;
+          tool_name?: unknown;
+        };
+        const protocolEvent = data.event == null ? "unknown" : String(data.event);
+        if (protocolEvent === "content-block-delta") continue;
+
+        const contentBlock = data.content;
+        logChatEvent("protocol.event", {
+          contentBlockArgsType: contentBlock?.args == null ? undefined : typeof contentBlock.args,
+          contentBlockId: contentBlock?.id == null ? undefined : String(contentBlock.id),
+          contentBlockName: contentBlock?.name == null ? undefined : String(contentBlock.name),
+          contentBlockType: contentBlock?.type == null ? undefined : String(contentBlock.type),
+          method: event.method,
+          namespaceDepth: event.params.namespace.length,
+          protocolEvent,
+          requestId,
+          toolCallId: data.tool_call_id == null ? undefined : String(data.tool_call_id),
+          toolName: data.tool_name == null ? undefined : String(data.tool_name),
+        });
+      }
+      streamState.protocol = "completed";
+      logChatEvent("protocol.completed", {
+        durationMs: elapsedMs(),
+        protocolEventCount,
+        requestId,
+      });
+    } catch (error) {
+      streamState.protocol = "failed";
+      throw error;
+    }
+  }
+
+  async function consumeOutput() {
+    streamState.output = "running";
+    logChatEvent("output.started", { durationMs: elapsedMs(), requestId });
+    try {
+      await run.output;
+      streamState.output = "completed";
+      logChatEvent("output.completed", { durationMs: elapsedMs(), requestId });
+    } catch (error) {
+      streamState.output = "failed";
+      throw error;
+    }
+  }
+
+  Promise.all([consumeMessageStreams(), consumeToolStreams(), consumeProtocolEvents(), consumeOutput()])
     .then(() => {
+      logChatEvent("request.completed", { durationMs: elapsedMs(), requestId });
       pushChunk({
         type: "done",
         contextState: nextContextState,
@@ -1644,6 +1965,12 @@ export async function* runStudyAgentLoop({
     })
     .catch((error) => {
       failure = error;
+      logChatEvent("request.failed", {
+        durationMs: elapsedMs(),
+        error: error instanceof Error ? error.message : String(error),
+        requestId,
+        streams: { ...streamState },
+      });
     })
     .finally(() => {
       finished = true;
@@ -1664,6 +1991,9 @@ export async function* runStudyAgentLoop({
       yield nextChunk;
     }
   }
+
+  window.clearInterval(heartbeat);
+  signal?.removeEventListener("abort", onAbort);
 
   if (failure) {
     throw failure;

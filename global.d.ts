@@ -689,6 +689,7 @@ declare global {
       searchDocuments: (query: string, limit?: number) => Promise<DocumentSearchResult[]>;
       rebuildDocumentSearchIndex: () => Promise<void>;
       configureAi: (settings?: LearnerAiSettings) => Promise<LearnerAiSettings>;
+      logAiChatEvent: (eventName: string, details?: Record<string, unknown>) => void;
       listAiModels: (settings?: LearnerAiSettings) => Promise<LearnerAiModel[]>;
       testAiEmbedding: (settings?: LearnerAiSettings) => Promise<{ dimensions: number; model: string }>;
       generateImage: (request: LearnerImageGenerationRequest) => Promise<LearnerImageGenerationResult>;
@@ -776,6 +777,7 @@ declare global {
         query: string,
         limit?: number,
         settings?: LearnerAiSettings,
+        diagnostics?: { requestId?: string },
       ) => Promise<DocumentSemanticSearchResult[]>;
       extractDocumentGraph: (
         filePath: string,

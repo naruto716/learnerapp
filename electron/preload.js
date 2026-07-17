@@ -63,6 +63,9 @@ contextBridge.exposeInMainWorld("learner", {
   configureAi: (settings) => {
     return ipcRenderer.invoke("ai:configure", settings);
   },
+  logAiChatEvent: (eventName, details) => {
+    ipcRenderer.send("ai:chatLog", eventName, details);
+  },
   listAiModels: (settings) => {
     return ipcRenderer.invoke("ai:listModels", settings);
   },
@@ -168,8 +171,8 @@ contextBridge.exposeInMainWorld("learner", {
   rebuildDocumentEmbeddings: (settings) => {
     return ipcRenderer.invoke("document:rebuildEmbeddings", settings);
   },
-  semanticSearchDocuments: (query, limit, settings) => {
-    return ipcRenderer.invoke("document:semanticSearch", query, limit, settings);
+  semanticSearchDocuments: (query, limit, settings, diagnostics) => {
+    return ipcRenderer.invoke("document:semanticSearch", query, limit, settings, diagnostics);
   },
   extractDocumentGraph: (filePath, markdown, settings) => {
     return ipcRenderer.invoke("graph:extractDocumentGraph", filePath, markdown, settings);

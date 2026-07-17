@@ -510,12 +510,22 @@ ipcMain.handle("document:rebuildEmbeddings", async (_event, settings) => {
   return rebuildDocumentEmbeddings(settings);
 });
 
-ipcMain.handle("document:semanticSearch", async (_event, query, limit, settings) => {
-  return semanticSearchIndexedDocuments(query, limit, settings);
+ipcMain.handle("document:semanticSearch", async (_event, query, limit, settings, diagnostics) => {
+  return semanticSearchIndexedDocuments(query, limit, settings, diagnostics);
 });
 
 ipcMain.handle("ai:configure", async (_event, settings) => {
   return configureAiSettings(settings);
+});
+
+ipcMain.on("ai:chatLog", (_event, eventName, details) => {
+  const normalizedEventName = String(eventName || "").trim();
+  if (!/^[a-z0-9_.-]+$/i.test(normalizedEventName)) return;
+
+  operationLog(
+    `ai.chat.${normalizedEventName}`,
+    details && typeof details === "object" && !Array.isArray(details) ? details : {},
+  );
 });
 
 ipcMain.handle("ai:listModels", async (_event, settings) => {
