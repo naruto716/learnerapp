@@ -23,6 +23,7 @@ export function useMasteryCards({
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatingDocumentPath, setGeneratingDocumentPath] = useState<string | null>(null);
   const [statusDocumentPath, setStatusDocumentPath] = useState<string | null>(null);
+  const [statusCheckedDocumentPath, setStatusCheckedDocumentPath] = useState<string | null>(null);
   const [isEvaluating, setIsEvaluating] = useState(false);
   const [isDiscussing, setIsDiscussing] = useState(false);
   const [progress, setProgress] = useState<MasteryCardProgress | null>(null);
@@ -88,19 +89,25 @@ export function useMasteryCards({
     if (!activeDocumentPath) return;
     let cancelled = false;
 
-    window.learner?.getDocumentMasteryGenerationStatuses(activeDocumentPath).then((statuses) => {
-      if (cancelled) return;
-      setStatusDocumentPath(activeDocumentPath);
-      const status = statuses.find((candidate) => candidate.operation === "flashcard generation") ?? null;
-      setError(null);
-      setIsGenerating(false);
-      setProgress(null);
-      applyGenerationStatus(status);
-      void loadCards();
-      if (status?.operation === "flashcard generation" && status.state === "completed") {
-        void loadCards();
+    void (async () => {
+      try {
+        const statuses = await window.learner?.getDocumentMasteryGenerationStatuses(activeDocumentPath) ?? [];
+        if (cancelled) return;
+        setStatusDocumentPath(activeDocumentPath);
+        const status = statuses.find((candidate) => candidate.operation === "flashcard generation") ?? null;
+        setError(null);
+        setIsGenerating(false);
+        setProgress(null);
+        applyGenerationStatus(status);
+        await loadCards();
+      } catch (statusError) {
+        if (!cancelled) {
+          setError(statusError instanceof Error ? statusError.message : "Could not check flashcard status.");
+        }
+      } finally {
+        if (!cancelled) setStatusCheckedDocumentPath(activeDocumentPath);
       }
-    });
+    })();
     const removeStatusListener = window.learner?.onAiOperationStatus?.((status) => {
       applyGenerationStatus(status);
       if (
@@ -304,6 +311,7 @@ export function useMasteryCards({
     ensureReadyCards,
     evaluateCard,
     generateCards,
+    hasCheckedStatus: statusCheckedDocumentPath === activeDocumentPath,
     isDiscussing,
     isEvaluating,
     isGenerating: statusDocumentPath === activeDocumentPath

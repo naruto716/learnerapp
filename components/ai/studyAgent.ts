@@ -1,6 +1,7 @@
 "use client";
 
-import { ChatOpenAI } from "@langchain/openai";
+import { ChatOpenAI, tools as openAiTools } from "@langchain/openai";
+import type { ClientTool, ServerTool } from "@langchain/core/tools";
 import { getEncoding } from "js-tiktoken";
 import { createAgent, tool } from "langchain";
 import { z } from "zod";
@@ -202,6 +203,7 @@ function createLearnerModel(requestId?: string) {
   return new ChatOpenAI({
     model: settings.chatModel,
     apiKey: settings.apiKey,
+    useResponsesApi: true,
     reasoning: {
       effort: "xhigh",
     },
@@ -1620,21 +1622,32 @@ function createStudyAgent({
   registerSources: (results: DocumentSemanticSearchResult[]) => AgentSource[];
   requestId: string;
 }) {
+  const studyTools = createStudyTools({
+    closeDocumentTab,
+    ensureDocumentTools,
+    getCurrentDocumentTools,
+    getDocumentTools,
+    getOpenDocumentPaths,
+    onDocumentsChanged,
+    registerSources,
+    requestId,
+  });
+  const agentTools: (ClientTool | ServerTool)[] = [
+    ...studyTools,
+    openAiTools.webSearch({
+      search_context_size: "medium",
+    }),
+  ];
+
   return createAgent({
     model: createLearnerModel(requestId),
-    tools: createStudyTools({
-      closeDocumentTab,
-      ensureDocumentTools,
-      getCurrentDocumentTools,
-      getDocumentTools,
-      getOpenDocumentPaths,
-      onDocumentsChanged,
-      registerSources,
-      requestId,
-    }),
+    responseFormat: undefined,
+    tools: agentTools,
     systemPrompt: [
       "You are the built-in AI study assistant for Learner, a local note-taking app.",
       "Help the user write, improve, summarize, and study their notes.",
+      "Use web search when the user asks for current, recent, or public information that may require up-to-date sources. Do not use web search for questions that can be answered from the conversation or the user's saved notes.",
+      "When web search is used, include the source URLs returned by the search in the answer. Do not invent or infer URLs that were not returned.",
       "When the user asks about saved notes, study material, related concepts, or asks a question that should be grounded in their note library, use search_notes before answering.",
       "Call search_notes at most once per user request. After it returns, use that result to answer; never retry search_notes in the same request, including when semantic search is unavailable or no sources are found.",
       "When you use search_notes, cite sourced claims inline with the exact marker format <source N>, where N is the source number returned by the tool.",

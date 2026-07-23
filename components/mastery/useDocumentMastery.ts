@@ -68,6 +68,7 @@ export function useDocumentMastery({
   const [isMetaphorLoading, setIsMetaphorLoading] = useState(false);
   const [metaphorLoadingDocumentPath, setMetaphorLoadingDocumentPath] = useState<string | null>(null);
   const [statusDocumentPath, setStatusDocumentPath] = useState<string | null>(null);
+  const [statusCheckedDocumentPath, setStatusCheckedDocumentPath] = useState<string | null>(null);
   const [metaphorProgress, setMetaphorProgress] = useState<MasteryMetaphorProgress | null>(null);
   const [mastery, setMastery] = useState<DocumentMastery | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -294,19 +295,28 @@ export function useDocumentMastery({
       if (status.state === "completed") void refreshMastery();
     };
 
-    window.learner?.getDocumentMasteryGenerationStatuses(activeDocumentPath).then((statuses) => {
-      if (cancelled) return;
-      setStatusDocumentPath(activeDocumentPath);
-      const conceptStatus = statuses.find((status) => status.operation === "mastery concept generation") ?? null;
-      const metaphorStatus = statuses.find((status) => status.operation === "metaphor generation") ?? null;
-      setError(null);
-      setIsLoading(false);
-      setIsMetaphorLoading(false);
-      setMetaphorProgress(null);
-      applyStatus(conceptStatus);
-      applyStatus(metaphorStatus);
-      void refreshMastery();
-    });
+    void (async () => {
+      try {
+        const statuses = await window.learner?.getDocumentMasteryGenerationStatuses(activeDocumentPath) ?? [];
+        if (cancelled) return;
+        setStatusDocumentPath(activeDocumentPath);
+        const conceptStatus = statuses.find((status) => status.operation === "mastery concept generation") ?? null;
+        const metaphorStatus = statuses.find((status) => status.operation === "metaphor generation") ?? null;
+        setError(null);
+        setIsLoading(false);
+        setIsMetaphorLoading(false);
+        setMetaphorProgress(null);
+        applyStatus(conceptStatus);
+        applyStatus(metaphorStatus);
+        await refreshMastery();
+      } catch (statusError) {
+        if (!cancelled) {
+          setError(statusError instanceof Error ? statusError.message : "Could not check Mastery status.");
+        }
+      } finally {
+        if (!cancelled) setStatusCheckedDocumentPath(activeDocumentPath);
+      }
+    })();
     const removeStatusListener = window.learner?.onAiOperationStatus?.(applyStatus);
 
     return () => {
@@ -428,6 +438,7 @@ export function useDocumentMastery({
     error,
     generateMastery,
     generateMetaphor,
+    hasCheckedStatus: statusCheckedDocumentPath === activeDocumentPath,
     isLoading: statusDocumentPath === activeDocumentPath && isLoading && loadingDocumentPath === activeDocumentPath,
     isMetaphorLoading: statusDocumentPath === activeDocumentPath
       && isMetaphorLoading

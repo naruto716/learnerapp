@@ -720,6 +720,7 @@ async function requestMasteryConcepts({ documentPath, existingConcepts, markdown
           "If a technical term is necessary, define it directly in the explanation before relying on it.",
           "explanationMarkdown must explain the concept itself. Do not include review instructions, practice tasks, quizzes, meta commentary, or phrases like 'To review this'.",
           "sourceExcerptMarkdown should contain the most relevant note excerpt for grounding. It is evidence, not the main teaching text.",
+          "Keep sourceExcerptMarkdown as ordinary readable Markdown. Never wrap the source excerpt in triple-backtick code fences, even when the excerpt contains code or technical syntax.",
           "If existing concepts are supplied, decide whether each should stay, be updated, be merged into a better concept, or disappear.",
           "When a generated concept continues an existing concept, set previousConceptId to that existing ID.",
           "For new concepts, set masteryLevel to new because there is no practice evidence yet.",

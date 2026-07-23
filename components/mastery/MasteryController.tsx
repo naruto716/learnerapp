@@ -88,11 +88,15 @@ export default function MasteryController({
   const masteryIsGenerating = isLoading || isMetaphorLoading || cardsController.isGenerating;
   const masteryStatus: FloatingIconButtonStatus = masteryIsGenerating
     ? "generating"
-    : !masteryIsCurrentDocument || !cardsAreCurrentDocument
+    : !masteryController.hasCheckedStatus || !cardsController.hasCheckedStatus
       ? "checking"
-      : mastery.stale || Boolean(mastery.metaphor?.stale)
+      : masteryIsCurrentDocument && (mastery.stale || Boolean(mastery.metaphor?.stale))
         ? "notes-changed"
-        : mastery.concepts.length > 0 && Boolean(mastery.metaphor) && cardState.cards.length > 0
+        : masteryIsCurrentDocument
+            && cardsAreCurrentDocument
+            && mastery.concepts.length > 0
+            && Boolean(mastery.metaphor)
+            && cardState.cards.length > 0
           ? "ready"
           : "not-generated";
   const masteryStatusLabel = {

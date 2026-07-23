@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useEffectEvent,
   useLayoutEffect,
   useRef,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -49,7 +50,8 @@ export default function MasteryCardCarousel<T>({
     startX: 0,
     startY: 0,
   });
-  const wheelLockRef = useRef(0);
+  const wheelGestureLockedRef = useRef(false);
+  const wheelGestureEndTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const positionTrack = useCallback((index: number, dragOffset = 0, animate = true) => {
     const viewport = viewportRef.current;
@@ -76,6 +78,12 @@ export default function MasteryCardCarousel<T>({
 
   const previous = useCallback(() => moveBy(-1), [moveBy]);
   const next = useCallback(() => moveBy(1), [moveBy]);
+  const navigateFromWheel = useEffectEvent((deltaX: number) => {
+    if (items.length === 0) return;
+    const delta = deltaX > 0 ? 1 : -1;
+    const nextIndex = Math.max(0, Math.min(items.length - 1, safeActiveIndex + delta));
+    if (nextIndex !== safeActiveIndex) onActiveIndexChange(nextIndex);
+  });
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (isInteractiveTarget(event.target) || event.button !== 0) return;
@@ -149,16 +157,28 @@ export default function MasteryCardCarousel<T>({
       if (!horizontalSwipe) return;
       event.preventDefault();
 
-      const now = Date.now();
-      if (now - wheelLockRef.current < 520) return;
-      wheelLockRef.current = now;
-      if (event.deltaX > 0) next();
-      else previous();
+      if (wheelGestureEndTimerRef.current !== null) {
+        clearTimeout(wheelGestureEndTimerRef.current);
+      }
+      wheelGestureEndTimerRef.current = setTimeout(() => {
+        wheelGestureLockedRef.current = false;
+        wheelGestureEndTimerRef.current = null;
+      }, 180);
+
+      if (wheelGestureLockedRef.current) return;
+      wheelGestureLockedRef.current = true;
+      navigateFromWheel(event.deltaX);
     };
 
     viewport.addEventListener("wheel", handleWheel, { passive: false });
-    return () => viewport.removeEventListener("wheel", handleWheel);
-  }, [next, previous]);
+    return () => {
+      viewport.removeEventListener("wheel", handleWheel);
+      if (wheelGestureEndTimerRef.current !== null) {
+        clearTimeout(wheelGestureEndTimerRef.current);
+        wheelGestureEndTimerRef.current = null;
+      }
+    };
+  }, []);
 
   return (
     <div
