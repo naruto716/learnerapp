@@ -270,6 +270,16 @@ export function useDocumentMastery({
   }, [activeDocumentPath, getCurrentDocumentTools]);
 
   useEffect(() => {
+    const reloadChangedConcepts = (event: Event) => {
+      const changedPath = (event as CustomEvent<{ documentPath?: string }>).detail?.documentPath;
+      if (!activeDocumentPath || changedPath !== activeDocumentPath) return;
+      void refreshMastery();
+    };
+    window.addEventListener("learner:mastery-concepts-changed", reloadChangedConcepts);
+    return () => window.removeEventListener("learner:mastery-concepts-changed", reloadChangedConcepts);
+  }, [activeDocumentPath, refreshMastery]);
+
+  useEffect(() => {
     if (!activeDocumentPath) return;
     let cancelled = false;
 

@@ -34,6 +34,7 @@ const {
   clearDocumentMastery,
   closeMasteryDatabase,
   getDocumentMastery,
+  updateMasteryConcept,
   updateMasteryConceptLevel,
   updateMasteryConceptScore,
 } = require("./mastery/masteryConcepts");
@@ -594,6 +595,17 @@ ipcMain.handle("mastery:updateConceptLevel", async (_event, request) => {
   }
 
   return updateMasteryConceptLevel({
+    ...request,
+    documentPath: filePathWithExtension(request.documentPath),
+  });
+});
+
+ipcMain.handle("mastery:updateConcept", async (_event, request) => {
+  if (!request?.documentPath) {
+    throw new Error("Document path is required.");
+  }
+
+  return updateMasteryConcept({
     ...request,
     documentPath: filePathWithExtension(request.documentPath),
   });

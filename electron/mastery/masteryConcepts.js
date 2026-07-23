@@ -1403,6 +1403,93 @@ function updateMasteryConceptLevel({ conceptId, documentPath, markdown = "", mas
   });
 }
 
+function updateMasteryConcept({
+  conceptId,
+  documentPath,
+  explanationMarkdown,
+  markdown = "",
+  name,
+  sourceExcerptMarkdown,
+  type,
+}) {
+  const normalizedPath = normalizeDocumentPath(documentPath);
+  const numericConceptId = Number(conceptId);
+  if (!normalizedPath) {
+    throw new Error("Document path is required.");
+  }
+  if (!Number.isInteger(numericConceptId) || numericConceptId <= 0) {
+    throw new Error("Concept ID is required.");
+  }
+
+  const suppliedValues = { explanationMarkdown, name, sourceExcerptMarkdown, type };
+  if (Object.values(suppliedValues).every((value) => value === undefined)) {
+    throw new Error("At least one mastery concept field must be updated.");
+  }
+
+  const db = getMasteryDatabase();
+  const existing = db
+    .prepare("SELECT * FROM mastery_concepts WHERE id = ? AND document_path = ? AND status = 'active'")
+    .get(numericConceptId, normalizedPath);
+  if (!existing) {
+    throw new Error("Mastery concept was not found.");
+  }
+
+  function requiredValue(value, fallback, label) {
+    if (value === undefined) return fallback;
+    const normalized = String(value).trim();
+    if (!normalized) throw new Error(`${label} cannot be empty.`);
+    return normalized;
+  }
+
+  const nextName = requiredValue(name, existing.name, "Concept name");
+  const nextStableKey = name === undefined ? existing.stable_key : normalizeStableKey(nextName);
+  if (!nextStableKey) {
+    throw new Error("Concept name must contain letters or numbers.");
+  }
+  const conflictingConcept = db
+    .prepare("SELECT id FROM mastery_concepts WHERE document_path = ? AND stable_key = ? AND id != ?")
+    .get(normalizedPath, nextStableKey, numericConceptId);
+  if (conflictingConcept) {
+    throw new Error("Another mastery concept already uses that name.");
+  }
+
+  const nextExplanation = explanationMarkdown === undefined
+    ? existing.explanation_markdown
+    : cleanExplanationMarkdown(requiredValue(explanationMarkdown, "", "Concept explanation"));
+  const nextSourceExcerpt = requiredValue(
+    sourceExcerptMarkdown,
+    existing.source_excerpt_markdown,
+    "Source excerpt",
+  );
+  const nextType = requiredValue(type, existing.type, "Concept type");
+
+  db
+    .prepare(
+      `
+        UPDATE mastery_concepts
+        SET stable_key = ?,
+            name = ?,
+            type = ?,
+            explanation_markdown = ?,
+            source_excerpt_markdown = ?,
+            updated_at = ?
+        WHERE id = ? AND document_path = ? AND status = 'active'
+      `,
+    )
+    .run(
+      nextStableKey,
+      nextName,
+      nextType,
+      nextExplanation,
+      nextSourceExcerpt,
+      Date.now(),
+      numericConceptId,
+      normalizedPath,
+    );
+
+  return getDocumentMastery(normalizedPath, markdown);
+}
+
 function masteryLevelForStageStates(stageStates, masterySettings = {}) {
   const thresholds = normalizeMasteryScoringSettings(masterySettings).thresholds;
   const scores = stageStates.map((state) => Number(state.score || 0));
@@ -1490,6 +1577,7 @@ module.exports = {
   masteryStages,
   normalizeDocumentPath,
   tableExists,
+  updateMasteryConcept,
   updateMasteryConceptLevel,
   updateMasteryConceptScore,
 };

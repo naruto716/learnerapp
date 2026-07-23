@@ -87,6 +87,9 @@ contextBridge.exposeInMainWorld("learner", {
   generateDocumentMasteryAssets: (request) => {
     return ipcRenderer.invoke("mastery:generateAssets", request);
   },
+  updateDocumentMasteryConcept: (request) => {
+    return ipcRenderer.invoke("mastery:updateConcept", request);
+  },
   updateDocumentMasteryConceptLevel: (request) => {
     return ipcRenderer.invoke("mastery:updateConceptLevel", request);
   },

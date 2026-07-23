@@ -1370,12 +1370,11 @@ function createStudyTools({
         const openTools = getToolsForPath(normalizedPath);
         const markdown = openTools?.read().markdown ?? "";
         const [mastery, cards] = await Promise.all([
-          window.learner.getDocumentMastery(normalizedPath, markdown),
-                    window.learner.getDocumentMastery(
-                      normalizedPath,
-                      markdown,
-                      { checkFreshness: Boolean(openTools) },
-                    ),
+          window.learner.getDocumentMastery(
+            normalizedPath,
+            markdown,
+            { checkFreshness: Boolean(openTools) },
+          ),
           window.learner.getDocumentMasteryCards(normalizedPath),
         ]);
         return JSON.stringify({ type: "mastery_state", mastery, cards }, null, 2);
@@ -1387,6 +1386,53 @@ function createStudyTools({
         schema: z.object({
           documentPath: z.string().optional().describe("Note path. Omit for the current open note."),
         }),
+      },
+    ),
+    tool(
+      async ({ conceptId, documentPath, explanationMarkdown, name, sourceExcerptMarkdown, type }) => {
+        const normalizedPath = normalizeDocumentPath(documentPath ?? getTools()?.path ?? "");
+        if (!normalizedPath) return "No document path was provided and no document is currently open.";
+        if (!window.learner?.updateDocumentMasteryConcept) {
+          return "Mastery concept editing is not available in this environment.";
+        }
+
+        const openTools = getToolsForPath(normalizedPath);
+        const mastery = await window.learner.updateDocumentMasteryConcept({
+          conceptId,
+          documentPath: normalizedPath,
+          explanationMarkdown,
+          markdown: openTools?.read().markdown ?? "",
+          name,
+          sourceExcerptMarkdown,
+          type,
+        });
+        const concept = mastery.concepts.find((candidate) => candidate.id === conceptId) ?? null;
+        window.dispatchEvent(new CustomEvent("learner:mastery-concepts-changed", {
+          detail: { documentPath: normalizedPath },
+        }));
+        return JSON.stringify({
+          type: "updated_mastery_concept",
+          documentPath: normalizedPath,
+          concept,
+          metaphorIsStale: Boolean(mastery.metaphor?.stale),
+        }, null, 2);
+      },
+      {
+        name: "edit_mastery_concept",
+        description:
+          "Edit an existing mastery concept's name, type, teaching explanation, or source excerpt while preserving its mastery score, review schedule, flashcards, and practice history. Use read_mastery_state first to obtain the concept ID and current content.",
+        schema: z.object({
+          documentPath: z.string().optional().describe("Note path. Omit for the current open note."),
+          conceptId: z.number().int().positive().describe("Mastery concept ID from read_mastery_state."),
+          name: z.string().min(1).optional().describe("Replacement concept name."),
+          type: z.string().min(1).optional().describe("Replacement concept type or category."),
+          explanationMarkdown: z.string().min(1).optional().describe("Replacement standalone teaching explanation in Markdown."),
+          sourceExcerptMarkdown: z.string().min(1).optional().describe("Replacement grounding excerpt in readable Markdown without surrounding code fences."),
+        }).refine(
+          ({ explanationMarkdown, name, sourceExcerptMarkdown, type }) =>
+            [explanationMarkdown, name, sourceExcerptMarkdown, type].some((value) => value !== undefined),
+          { message: "Provide at least one mastery concept field to update." },
+        ),
       },
     ),
     tool(
@@ -1661,10 +1707,11 @@ function createStudyAgent({
       "When creating a new note with content, call create_note once with both documentPath and the complete markdown body. Do not follow it with open_note_tab or a replacement tool.",
       "For an existing note identified by path, use propose_note_patch or propose_note_replacement; these tools automatically open a closed target in a background tab. Use propose_current_document_patch or propose_current_document_replacement only when the intended target is already active.",
       "Use graph tools to inspect and modify knowledge graph concepts and connections. Search existing graph concepts before creating likely duplicates.",
-      "Use read_mastery_state to inspect concepts, flashcards, weaknesses, attempts, and stage scheduling. Use read_mastery_history for completion history and read_mastery_answer_sheet for a complete saved answer/feedback session. These mastery tools are read-only.",
+      "Use read_mastery_state to inspect concepts, flashcards, weaknesses, attempts, and stage scheduling. Use read_mastery_history for completion history and read_mastery_answer_sheet for a complete saved answer/feedback session.",
+      "Use edit_mastery_concept only when the user explicitly asks to change an existing mastery concept. Read the current mastery state first, preserve fields the user did not ask to change, and do not use note-editing tools for mastery concept content.",
       "Use read_revision_schedule when the user asks what is due, overdue, planned, or scheduled for future review.",
       "Foreground study context, when present, is attached as a system message for the current request only. Treat it as what the user is currently viewing, and do not assume it remains visible in later turns unless it is attached again.",
-      "Only use generate_mastery_cards when the user explicitly asks to create flashcards. It is the only mastery write tool and routes through Learner's dedicated card-generation framework.",
+      "Only use generate_mastery_cards when the user explicitly asks to create flashcards. It routes through Learner's dedicated card-generation framework.",
       "Before modifying existing note content, read the current document unless the user only asks to insert new content.",
       "For replacing the whole active note, broad rewrites, long outlines, study guides, math-heavy content, Mermaid diagrams, or code-heavy generated content, use propose_current_document_replacement and write the replacement body in Markdown.",
       "Replacement Markdown should be the complete final document body, not a diff. Do not wrap it in a markdown code fence.",

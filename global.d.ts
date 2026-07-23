@@ -325,6 +325,16 @@ declare global {
     mastery: DocumentMastery;
   };
 
+  type DocumentMasteryConceptUpdateRequest = {
+    conceptId: number;
+    documentPath: string;
+    explanationMarkdown?: string;
+    markdown?: string;
+    name?: string;
+    sourceExcerptMarkdown?: string;
+    type?: string;
+  };
+
   type DocumentMasteryLevelUpdateRequest = {
     conceptId: number;
     documentPath: string;
@@ -710,6 +720,9 @@ declare global {
           >;
         },
       ) => Promise<DocumentMasteryGenerationResult>;
+      updateDocumentMasteryConcept: (
+        request: DocumentMasteryConceptUpdateRequest,
+      ) => Promise<DocumentMastery>;
       updateDocumentMasteryConceptLevel: (
         request: DocumentMasteryLevelUpdateRequest,
       ) => Promise<DocumentMastery>;
