@@ -1,5 +1,6 @@
 "use client";
 
+// AppToaster mounts the global notification surface used by feature controllers.
 import { Toaster } from "sonner";
 
 export default function AppToaster() {

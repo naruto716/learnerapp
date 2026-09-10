@@ -1,3 +1,7 @@
+/* File-system boundary for learner documents. All user paths are resolved
+ * beneath Electron's user-data documents directory; the order sidecar is
+ * maintained per folder and the reserved images directory is hidden from the
+ * document tree but remains available to the editor. */
 const { app } = require("electron");
 const fs = require("fs/promises");
 const path = require("path");
@@ -49,6 +53,8 @@ function resolveInsideDocumentRoot(relativePath, options = {}) {
     throw new Error("Path is required.");
   }
 
+  // Resolve before checking the relative path so traversal and absolute-path
+  // inputs are rejected consistently on every supported platform.
   const fullPath = path.resolve(documentRoot, normalizedPath);
   const relativeToRoot = path.relative(documentRoot, fullPath);
 
@@ -122,6 +128,8 @@ async function writeOrder(folderFullPath, children) {
 async function sortAndNormalizeNodes(folderFullPath, nodes) {
   const existingNames = nodes.map((node) => node.name);
   const order = await readOrder(folderFullPath);
+  // Preserve known entries in their saved order, then append new entries. This
+  // also repairs stale sidecars without exposing the sidecar as content.
   const normalizedOrder = [
     ...order.filter((name) => existingNames.includes(name)),
     ...existingNames.filter((name) => !order.includes(name)),
@@ -369,6 +377,7 @@ async function writeImageFile(fileName, data) {
   let destinationPath = path.join(imageFolderPath, destinationName);
   let index = 1;
 
+  // Never overwrite an existing asset; suffix collisions create a new file.
   while (await pathExists(destinationPath)) {
     destinationName = `${baseName}-${index}${extension}`;
     destinationPath = path.join(imageFolderPath, destinationName);
@@ -405,6 +414,7 @@ module.exports = {
   getDocumentRoot,
   listDocumentTree,
   readDocumentFile,
+  resolveInsideDocumentRoot,
   resolveDocumentAssetPath,
   saveDocumentImage,
   saveDocumentFile,

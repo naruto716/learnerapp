@@ -1,3 +1,6 @@
+/* Defines the learner generation DAG and maps task results to persisted
+ * concepts, graph, metaphor, and card artifacts. Fingerprints make deduplication
+ * sensitive to source content and relevant model/settings changes. */
 const crypto = require("crypto");
 const { getAiSettings } = require("../aiSettings");
 const { operationLog } = require("../operationLog");
@@ -46,6 +49,8 @@ function latestTasksByType(tasks) {
 }
 
 function generationDependencies(type, context = {}) {
+  // Manual requests use the smallest required closure; the full asset workflow
+  // opts into concept and metaphor prerequisites explicitly.
   if (type === taskTypes.concepts) return [];
   if (type === taskTypes.graph) {
     return context.requireConceptsForGraph ? [taskTypes.concepts] : [];
@@ -286,6 +291,7 @@ function createLearnerGenerationManager({ onTaskChange = () => {}, workerConcurr
 
   function documentContext({ documentPath, markdown = "", settings = {}, ...rest }) {
     const normalizedMarkdown = String(markdown || "");
+    // Hash the exact editor Markdown passed to downstream generators.
     return {
       ...rest,
       document: documentPath,

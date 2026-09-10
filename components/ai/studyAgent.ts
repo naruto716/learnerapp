@@ -19,6 +19,7 @@ const chatRequestTimeoutMs = 60_000;
 const agentRecursionLimit = 20;
 const tokenEncoding = getEncoding("o200k_base");
 
+// The renderer streams this agent's tool calls and text deltas back to the chat panel.
 export type AgentChatMessage = {
   role: "user" | "assistant";
   content: string;
@@ -135,52 +136,9 @@ function normalizeToolCallSseLine(line: string) {
 }
 
 function createProxyCompatibleFetch(requestId?: string): typeof fetch {
+  // Normalize empty tool names in streamed SSE payloads before LangChain parses them.
   return async (input, init) => {
-    try {
-      logChatEvent("transport.request_start", {
-        requestId,
-        url: String(input),
-        method: init?.method || "GET",
-        headersPresent: Boolean(init?.headers),
-        settings: readAiSettings(),
-      });
-      console.debug("[studyAgent] transport.request_start", { requestId, url: String(input), method: init?.method });
-    } catch {
-      // ignore logging errors
-    }
-    if (!window.learner?.fetchAi) {
-      throw new Error("AI transport is not available in this environment.");
-    }
-
-    const transportRequestId = `${requestId || "chat"}_${crypto.randomUUID()}`;
-    const requestHeaders = Array.from(new Headers(input instanceof Request ? input.headers : init?.headers).entries());
-    const bodySource = init?.body ?? (input instanceof Request ? input.body : null);
-    const requestBody = bodySource == null
-      ? undefined
-      : new Uint8Array(await new Response(bodySource).arrayBuffer());
-    const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
-    const abortRequest = () => window.learner?.abortAiFetch?.(transportRequestId);
-    signal?.addEventListener("abort", abortRequest, { once: true });
-
-    let transportResponse: LearnerAiFetchResponse;
-    try {
-      transportResponse = await window.learner.fetchAi({
-        body: requestBody,
-        headers: requestHeaders,
-        method: init?.method ?? (input instanceof Request ? input.method : "GET"),
-        requestId: transportRequestId,
-        settings: readAiSettings(),
-        url: input instanceof Request ? input.url : String(input),
-      });
-    } finally {
-      signal?.removeEventListener("abort", abortRequest);
-    }
-
-    const response = new Response(transportResponse.body, {
-      headers: transportResponse.headers,
-      status: transportResponse.status,
-      statusText: transportResponse.statusText,
-    });
+    const response = await fetch(input, init);
     if (!response.body || !response.headers.get("content-type")?.includes("text/event-stream")) {
       return response;
     }
@@ -242,19 +200,8 @@ function createProxyCompatibleFetch(requestId?: string): typeof fetch {
 }
 
 function createLearnerModel(requestId?: string) {
+  // Read provider and model choices from the persisted renderer settings.
   const settings = readAiSettings();
-
-  try {
-    logChatEvent("model.created", {
-      requestId,
-      baseUrl: settings.baseUrl,
-      chatModel: settings.chatModel,
-      apiKeyPresent: Boolean(settings.apiKey),
-    });
-    console.debug("[studyAgent] model.created", { requestId, baseUrl: settings.baseUrl, chatModel: settings.chatModel });
-  } catch {
-    // ignore logging errors
-  }
 
   return new ChatOpenAI({
     model: settings.chatModel,
@@ -380,6 +327,7 @@ async function summarizeChatHistory({
   existingSummary: string;
   messages: AgentChatMessage[];
 }) {
+  // Compact older turns while preserving goals, decisions, and unresolved editing work.
   const model = createLearnerModel();
   const response = await model.invoke([
     {
@@ -437,6 +385,7 @@ async function compactContextIfNeeded(messages: AgentChatMessage[], contextState
 }
 
 function buildModelMessages(messages: AgentChatMessage[], contextState: AgentContextState): ModelMessage[] {
+  // Combine the retained summary with the newest messages inside the model context budget.
   const summarizedThroughMessageIndex = Math.min(contextState.summarizedThroughMessageIndex ?? 0, messages.length);
   const modelMessages: ModelMessage[] = [];
   let remainingTokens = maxHistoryInputTokens;
@@ -574,6 +523,7 @@ function summarizeGraph(graph: KnowledgeDocumentGraph) {
 }
 
 function foregroundContextModelMessage(context: AgentForegroundContext): ModelMessage {
+  // Foreground context is a one-request attachment and must not become implicit long-term memory.
   return {
     role: "system",
     content: [
@@ -622,6 +572,7 @@ function createStudyTools({
   registerSources: (results: DocumentSemanticSearchResult[]) => AgentSource[];
   requestId: string;
 }) {
+  // Tools close over renderer callbacks so agents use the same editor and IPC contracts as the UI.
   function getTools() {
     return getCurrentDocumentTools();
   }
@@ -658,6 +609,7 @@ function createStudyTools({
   return [
     tool(
       async ({ limit = 6, query }) => {
+        // Search note embeddings first so answers can cite the user's saved material.
         if (!window.learner?.semanticSearchDocuments) {
           const message = "Semantic note search is not available in this environment.";
           logChatEvent("search_notes.failed", {
@@ -750,6 +702,7 @@ function createStudyTools({
     ),
     tool(
       async ({ folderPath = "" }) => {
+        // Inspect the document tree before broad open, read, or mutation requests.
         if (!window.learner?.listDocuments) {
           return "Document listing is not available in this environment.";
         }
@@ -778,6 +731,7 @@ function createStudyTools({
     ),
     tool(
       async ({ documentPath }) => {
+        // Open a background editor so later mutations can target a live document bridge.
         const normalizedPath = normalizeDocumentPath(documentPath);
         const tools = await ensureDocumentTools?.(normalizedPath);
 
@@ -806,6 +760,7 @@ function createStudyTools({
     ),
     tool(
       async ({ documentPath }) => {
+        // Prefer the open editor's exact Markdown, falling back to plain text for closed notes.
         const normalizedPath = normalizeDocumentPath(documentPath);
         const openTools = getToolsForPath(normalizedPath);
 
@@ -884,6 +839,7 @@ function createStudyTools({
     ),
     tool(
       async ({ documentPath, markdown }) => {
+        // Creation and initial content are kept together to avoid a fragile follow-up edit step.
         if (!window.learner?.createDocumentFile) {
           return "Document creation is not available in this environment.";
         }
@@ -965,6 +921,7 @@ function createStudyTools({
     ),
     tool(
       async ({ documentPath }) => {
+        // Close any matching renderer tab after deleting the backing note or folder.
         if (!window.learner?.deleteDocumentEntry) {
           return "Document deletion is not available in this environment.";
         }
@@ -1018,6 +975,7 @@ function createStudyTools({
     ),
     tool(
       async ({ documentPath, patchText, summary }) => {
+        // Build patches against the current editor hash so stale edits are rejected safely.
         const documentTools = await getToolsForMutation(documentPath);
         if (!documentTools) return `Could not open ${documentPath} in a background tab before applying a Markdown patch.`;
         const currentDocument = documentTools.read();
@@ -1056,6 +1014,7 @@ function createStudyTools({
     ),
     tool(
       async ({ documentPath, markdown, summary }) => {
+        // Full replacements are intended for larger rewrites that do not map cleanly to line hunks.
         const documentTools = await getToolsForMutation(documentPath);
         if (!documentTools) return `Could not open ${documentPath} in a background tab before replacing its body.`;
         const currentDocument = documentTools.read();
@@ -1094,6 +1053,7 @@ function createStudyTools({
     ),
     tool(
       async ({ documentPath }) => {
+        // Graph inspection is read-only and returns the same compact shape used by chat citations.
         const normalizedPath = normalizeDocumentPath(documentPath ?? getTools()?.path ?? "");
         if (!normalizedPath) return "No document path was provided and no document is currently open.";
         if (!window.learner?.getDocumentGraph) return "Knowledge graph APIs are not available.";
@@ -1118,6 +1078,7 @@ function createStudyTools({
     ),
     tool(
       async ({ documentPath }) => {
+        // Extract the graph from the current note snapshot, then return the refreshed artifact.
         const documentTools = await getToolsForMutation(documentPath);
         if (!documentTools) {
           return `Could not open ${documentPath ?? "the target note"} in a background tab before extracting its graph.`;
@@ -1171,6 +1132,7 @@ function createStudyTools({
     ),
     tool(
       async ({ aliases = [], limit = 8, name, summary = "", type = "" }) => {
+        // Check for semantically related concepts before creating a possible duplicate.
         if (!window.learner?.searchRelatedGraphConcepts) {
           return "Related concept vector search is not available.";
         }
@@ -1215,6 +1177,7 @@ function createStudyTools({
         summary,
         type,
       }) => {
+        // Attach note evidence to an existing concept or create a new concept for the note.
         const normalizedPath = normalizeDocumentPath(documentPath ?? getTools()?.path ?? "");
         if (!normalizedPath) return "No document path was provided and no document is currently open.";
         if (!window.learner?.addGraphConceptMention) return "Knowledge graph concept editing is not available.";
@@ -1264,6 +1227,7 @@ function createStudyTools({
     ),
     tool(
       async ({ conceptId, documentPath, explanation, name, summary, type }) => {
+        // Update only concept metadata while preserving mentions and graph relations.
         const normalizedPath = normalizeDocumentPath(documentPath ?? getTools()?.path ?? "");
         if (!normalizedPath) return "No document path was provided and no document is currently open.";
         if (!window.learner?.updateGraphConcept) return "Knowledge graph concept editing is not available.";
@@ -1299,6 +1263,7 @@ function createStudyTools({
     ),
     tool(
       async ({ conceptId, documentPath }) => {
+        // Remove the concept mention and relation evidence contributed by this note.
         const normalizedPath = normalizeDocumentPath(documentPath ?? getTools()?.path ?? "");
         if (!normalizedPath) return "No document path was provided and no document is currently open.";
         if (!window.learner?.deleteGraphConceptFromDocument) return "Knowledge graph concept deletion is not available.";
@@ -1325,6 +1290,7 @@ function createStudyTools({
     ),
     tool(
       async ({ documentPath, evidenceMarkdown, explanation, fromConceptId, relation, targetConceptName, targetExplanation, targetSummary, targetType, toConceptId }) => {
+        // Create a directed relation to an existing or newly described target concept.
         const normalizedPath = normalizeDocumentPath(documentPath ?? getTools()?.path ?? "");
         if (!normalizedPath) return "No document path was provided and no document is currently open.";
         if (!window.learner?.addGraphRelation) return "Knowledge graph relation editing is not available.";
@@ -1374,6 +1340,7 @@ function createStudyTools({
     ),
     tool(
       async ({ documentPath, explanation, relation, relationId }) => {
+        // Scope relation edits to one edge so the displayed graph can refresh deterministically.
         const normalizedPath = normalizeDocumentPath(documentPath ?? getTools()?.path ?? "");
         if (!normalizedPath) return "No document path was provided and no document is currently open.";
         if (!window.learner?.updateGraphRelation) return "Knowledge graph relation editing is not available.";
@@ -1405,6 +1372,7 @@ function createStudyTools({
     ),
     tool(
       async () => {
+        // The live editor snapshot is the source of truth for the current note.
         const documentTools = getTools();
         if (!documentTools) return "No document is currently open.";
 
@@ -1419,6 +1387,7 @@ function createStudyTools({
     ),
     tool(
       async ({ documentPath }) => {
+        // Combine current note text with persisted mastery concepts and practice cards.
         const normalizedPath = normalizeDocumentPath(documentPath ?? getTools()?.path ?? "");
         if (!normalizedPath) return "No document path was provided and no document is currently open.";
         if (!window.learner?.getDocumentMastery || !window.learner?.getDocumentMasteryCards) {
@@ -1447,6 +1416,7 @@ function createStudyTools({
     ),
     tool(
       async ({ conceptId, documentPath, explanationMarkdown, name, sourceExcerptMarkdown, type }) => {
+        // Preserve scores and review history while changing mastery teaching content.
         const normalizedPath = normalizeDocumentPath(documentPath ?? getTools()?.path ?? "");
         if (!normalizedPath) return "No document path was provided and no document is currently open.";
         if (!window.learner?.updateDocumentMasteryConcept) {

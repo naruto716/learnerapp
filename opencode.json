@@ -1,0 +1,18 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "aiyoyoo/gpt-5.5",
+  "provider": {
+    "aiyoyoo": {
+      "name": "AIYoyoo",
+      "npm": "@ai-sdk/openai",
+      "options": {
+        "baseURL": "https://www.aiyoyoo.com/v1"
+      },
+      "models": {
+        "gpt-5.5": {
+          "name": "GPT-5.5"
+        }
+      }
+    }
+  }
+}

@@ -1,5 +1,6 @@
 "use client";
 
+// Dialog provides the shared overlay and focus boundary for renderer modal workflows.
 import { XIcon } from "@phosphor-icons/react";
 import { useEffect, useEffectEvent, useId, useRef, useSyncExternalStore, type ReactNode } from "react";
 import { createPortal } from "react-dom";

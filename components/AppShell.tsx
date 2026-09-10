@@ -19,6 +19,7 @@ import KnowledgeGraphPanel from "@/components/graph/KnowledgeGraphPanel";
 import MasteryController from "@/components/mastery/MasteryController";
 import RevisionDialog from "@/components/mastery/RevisionDialog";
 import AiSettingsDialog from "@/components/settings/AiSettingsDialog";
+import SubjectWorkspace from "@/components/subjects/SubjectWorkspace";
 import { readAiSettings, writeAiSettings } from "./ai/aiSettings";
 import ChatBubble from "./ai/ChatBubble";
 import ChatPanel from "./ai/ChatPanel";
@@ -30,6 +31,7 @@ type WorkspaceState = {
   editorStates: Record<string, PersistedEditorState>;
 };
 
+// Normalize note paths to the persisted .json form used by the document runtime.
 function normalizeDocumentToolPath(documentPath: string) {
   const trimmedPath = documentPath.trim().replace(/^\/+/, "");
   if (!trimmedPath) return "";
@@ -74,6 +76,7 @@ function readWorkspaceState(): WorkspaceState {
 }
 
 function persistableEditorState(state: PersistedEditorState) {
+  // Persist only fields that are safe to restore across reloads.
   return {
     contentHash: state.contentHash,
     scrollTop: state.scrollTop,
@@ -170,6 +173,7 @@ export default function AppShell() {
   const [lastKnowledgeGraphExtractionChanged, setLastKnowledgeGraphExtractionChanged] = useState<boolean | null>(null);
   const [isMasteryOpen, setIsMasteryOpen] = useState(false);
   const [isRevisionOpen, setIsRevisionOpen] = useState(false);
+  const [subjectWorkspacePath, setSubjectWorkspacePath] = useState<string | null>(null);
   const [masteryForegroundContext, setMasteryForegroundContext] = useState<AgentForegroundContext | null>(null);
   const [revisionForegroundContext, setRevisionForegroundContext] = useState<AgentForegroundContext | null>(null);
   const [revisionRefreshKey, setRevisionRefreshKey] = useState(0);
@@ -195,6 +199,7 @@ export default function AppShell() {
   }, []);
 
   useEffect(() => {
+    // Root data attributes let CSS adapt to platform-specific window chrome.
     const root = document.documentElement;
     const platform = window.learner?.platform ?? navigator.platform.toLowerCase();
     root.dataset.platform = platform === "darwin" || platform.includes("mac") ? "darwin" : platform;
@@ -225,6 +230,7 @@ export default function AppShell() {
   }, []);
 
   useEffect(() => {
+    // Restore tabs and editor state once, then route to the last active note when appropriate.
     if (restoredWorkspaceRef.current) return;
     restoredWorkspaceRef.current = true;
 
@@ -244,6 +250,7 @@ export default function AppShell() {
   }, [pathname]);
 
   useEffect(() => {
+    // Keep workspace persistence synchronized with tabs, route state, and editor snapshots.
     if (!workspaceLoaded) return;
 
     const previousWorkspace = readWorkspaceState();
@@ -299,6 +306,7 @@ export default function AppShell() {
   }, [updateOpenTabs]);
 
   function openDocument(documentPath: string) {
+    // Normalize paths before updating both the tab list and browser history.
     const normalizedPath = normalizeDocumentToolPath(documentPath);
     updateOpenTabs((current) => (current.includes(normalizedPath) ? current : [...current, normalizedPath]));
     navigateToRoute(documentPathToRoute(normalizedPath));
@@ -309,6 +317,7 @@ export default function AppShell() {
   }, []);
 
   function handleDocumentMoved(oldPath: string, newPath: string) {
+    // A move must update tabs, cached editor state, and the current route together.
     updateOpenTabs((current) => replacePath(current, oldPath, newPath));
     setEditorStates((current) => {
       const next = { ...current };
@@ -329,6 +338,7 @@ export default function AppShell() {
   }
 
   function handleDocumentDeleted(deletedPath: string, deletedType: DocumentNode["type"]) {
+    // Clear every cached reference to a removed note or folder subtree.
     updateOpenTabs((current) => {
       const activeIndex = activeDocumentPath ? current.indexOf(activeDocumentPath) : -1;
       const nextTabs = current.filter((path) => !isDeletedDocumentPath(path, deletedPath, deletedType));
@@ -399,6 +409,7 @@ export default function AppShell() {
   }
 
   const updateEditorAgentTools = useCallback((documentPath: string, tools: CurrentDocumentAgentTools | null) => {
+    // The live editor bridge is the renderer contract used by AI read, patch, and undo tools.
     const normalizedPath = normalizeDocumentToolPath(documentPath);
 
     if (tools) {
@@ -427,6 +438,7 @@ export default function AppShell() {
   const getOpenDocumentPaths = useCallback(() => openTabsRef.current, []);
 
   const ensureDocumentTools = useCallback((documentPath: string) => {
+    // Open a background tab and wait briefly for its editor bridge when an agent targets a closed note.
     const normalizedPath = normalizeDocumentToolPath(documentPath);
     const existingTools = editorAgentToolsRef.current[normalizedPath];
     if (existingTools) return Promise.resolve(existingTools);
@@ -462,6 +474,7 @@ export default function AppShell() {
     : undefined;
 
   useEffect(() => {
+    // Refresh graph and mastery status whenever the active editor snapshot changes.
     if (!activeDocumentPath || !currentDocumentContentHash) return;
     let cancelled = false;
     const snapshot = getCurrentDocumentTools()?.read();
@@ -516,6 +529,7 @@ export default function AppShell() {
   }, [activeDocumentPath, currentDocumentContentHash, editorToolsVersion, getCurrentDocumentTools]);
 
   const editorForegroundContext = useMemo<AgentForegroundContext | null>(() => {
+    // Selection context is attached only while the editor is visible and no other panel has focus.
     if (
       !activeDocumentPath
       || isAiSettingsOpen
@@ -552,6 +566,7 @@ export default function AppShell() {
   ]);
 
   const generateKnowledgeGraph = useCallback(async ({ openPanel = false } = {}) => {
+    // Extract from the active editor snapshot so the graph reflects unsaved note content.
     if (openPanel) setIsKnowledgeGraphOpen(true);
     setKnowledgeGraphError(null);
     setLastKnowledgeGraphExtractionChanged(null);
@@ -661,6 +676,7 @@ export default function AppShell() {
   };
 
   const extractOpenTabGraphs = useCallback(async () => {
+    // Process tabs sequentially so progress and failures remain attributable to each note.
     const snapshots = openTabs
       .map((documentPath) => editorAgentToolsRef.current[documentPath]?.read())
       .filter((snapshot): snapshot is ReturnType<CurrentDocumentAgentTools["read"]> => Boolean(snapshot?.markdown.trim()));
@@ -724,6 +740,7 @@ export default function AppShell() {
   }, [activeDocumentPath, openTabs]);
 
   const deleteKnowledgeGraph = useCallback(async () => {
+    // Graph deletion removes derived graph data without deleting the source note.
     if (!activeDocumentPath) return;
 
     setKnowledgeGraphError(null);
@@ -759,6 +776,7 @@ export default function AppShell() {
         onOpenSearch={() => setIsDocumentSearchOpen(true)}
         onOpenSettings={() => setIsAiSettingsOpen(true)}
         onOpenRevision={() => setIsRevisionOpen(true)}
+        onOpenSubject={setSubjectWorkspacePath}
         onOpenDocument={openDocument}
         revisionRefreshKey={revisionRefreshKey}
       />
@@ -867,6 +885,15 @@ export default function AppShell() {
           setRevisionRefreshKey((current) => current + 1);
         }}
       />
+      {subjectWorkspacePath && (
+        <SubjectWorkspace
+          ensureDocumentTools={ensureDocumentTools}
+          onClose={() => setSubjectWorkspacePath(null)}
+          onDocumentsChanged={markDocumentsChanged}
+          onOpenDocument={openDocument}
+          subjectPath={subjectWorkspacePath}
+        />
+      )}
       <ChatBubble isOpen={isBubbleOpen} toggleBubbleOpen={() => setIsBubbleOpen((isOpen) => !isOpen)} />
     </div>
   );

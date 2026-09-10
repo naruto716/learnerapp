@@ -1,3 +1,5 @@
+/* Small provider adapter for model discovery and image generation. The API's
+ * base64 response remains intact so callers can persist it as an asset or URL. */
 const { getAiSettings } = require("./aiSettings");
 
 function dataUrlForImage(b64Json, outputFormat) {
@@ -63,6 +65,7 @@ async function generateImage({ prompt, settings = {} } = {}) {
   }
 
   const body = await response.json();
+  // Reject a response without binary data rather than creating an empty asset.
   const firstImage = body?.data?.[0];
   const b64Json = firstImage?.b64_json;
 

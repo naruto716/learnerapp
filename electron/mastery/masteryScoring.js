@@ -1,3 +1,6 @@
+/* Centralizes the scoring contract shared by generation, evaluation, mastery
+ * points, and revision scheduling. Settings are bounded so progression remains
+ * valid even when persisted input is malformed. */
 const cardKinds = [
   "feynman",
   "relationship",
@@ -58,6 +61,10 @@ function normalizeMasteryScoringSettings(value = {}) {
     (threshold, index) => threshold > 0 && (index === 0 || threshold > orderedThresholds[index - 1]),
   );
 
+  // Thresholds must be strictly increasing; otherwise fall back as a group so
+  // mastery levels remain unambiguous rather than partially accepting settings.
+  // Reject the complete threshold set when its order is impossible; partial
+  // acceptance would make mastery levels ambiguous.
   return {
     passingScore: Math.max(1, boundedInteger(source.passingScore, defaultMasteryScoringSettings.passingScore)),
     practiceCardCount: boundedPracticeCount(

@@ -1,4 +1,7 @@
-const { ChatOpenAI, OpenAIEmbeddings } = require("@langchain/openai");
+/* Single LangChain-based provider boundary for chat structured output and
+ * embeddings. Raw responses are bounded diagnostic data; callers receive
+ * validated data or the provider failure. */
+const { ChatOpenAI, OpenAIEmbeddings, tools } = require("@langchain/openai");
 const { getAiSettings, getEmbeddingSettings } = require("./aiSettings");
 const { operationLog } = require("./operationLog");
 
@@ -121,16 +124,6 @@ function createChatModel({
 
   assertConfigured(config, "AI chat model");
 
-  try {
-    operationLog("ai.client.created", {
-      model: config.model,
-      baseUrl: config.baseUrl,
-      apiKeyPresent: Boolean(config.apiKey),
-    });
-  } catch {
-    // ignore logging errors
-  }
-
   return {
     config,
     model: new ChatOpenAI({
@@ -175,19 +168,11 @@ async function requestStructuredOutput({
     name: schemaName,
     strict,
   });
-  try {
-    operationLog("ai.request.started", {
-      model: config.model,
-      baseUrl: config.baseUrl,
-      schemaName: schemaName || null,
-    });
-  } catch {
-    // ignore logging errors
-  }
-
   const response = await runnable.invoke(normalizeMessages(messages));
   let data = response.parsed;
 
+  // Some compatible endpoints return valid JSON in raw content without filling
+  // LangChain's parsed field; accept that fallback only after schema validation.
   if (data == null) {
     data = await parseRawStructuredOutput(response.raw, schema);
     operationLog("ai.structured_output.unparsed", {
@@ -203,6 +188,54 @@ async function requestStructuredOutput({
     metadata: response.raw?.response_metadata || response.raw?.usage_metadata || null,
     model: response.raw?.response_metadata?.model_name || config.model,
   };
+}
+
+async function requestWebResearch({ prompt, settings = {}, timeoutMs = 120_000 } = {}) {
+  const config = modelSettings(settings);
+  assertConfigured(config, "AI web research model");
+  let providerHost;
+  try {
+    providerHost = new URL(config.baseUrl).hostname.toLowerCase();
+  } catch {
+    throw new Error("Outside-source research requires a valid OpenAI base URL.");
+  }
+  if (providerHost !== "api.openai.com") {
+    throw new Error("Outside-source research is unsupported by the configured provider. Configure the official OpenAI API endpoint or disable outside sources.");
+  }
+
+  const model = new ChatOpenAI({
+    apiKey: config.apiKey,
+    configuration: openAiClientConfiguration(config),
+    model: config.model,
+    temperature: 0.1,
+    timeout: timeoutMs,
+    useResponsesApi: true,
+  });
+  try {
+    const response = await model.invoke(
+      [["system", "Research the request using web search. Return concise factual findings and include the full source URLs in the text."], ["human", String(prompt || "")]],
+      { tools: [tools.webSearch()] },
+    );
+    const text = rawMessageText(response);
+    const urls = [];
+    const visit = (value) => {
+      if (!value || typeof value !== "object") return;
+      for (const [key, child] of Object.entries(value)) {
+        if ((key === "url" || key === "source_url") && typeof child === "string" && /^https?:\/\//i.test(child)) {
+          urls.push(child);
+        } else if (typeof child === "object") visit(child);
+      }
+    };
+    visit(response.content);
+    for (const match of text.match(/https?:\/\/[^\s<>"')\]]+/g) || []) urls.push(match.replace(/[.,;:!?]+$/g, ""));
+    const uniqueUrls = [...new Set(urls)];
+    const research = [text, ...uniqueUrls].filter(Boolean).join("\n").trim();
+    if (!research) throw new Error("OpenAI web search returned no research text.");
+    return { text: research, urls: uniqueUrls };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`Outside-source web research failed: ${reason}`, { cause: error });
+  }
 }
 
 function createEmbeddingModel({ model, settings = {}, timeoutMs = 45_000 } = {}) {
@@ -258,5 +291,6 @@ module.exports = {
   embedTexts,
   parseRawStructuredOutput,
   requestStructuredOutput,
+  requestWebResearch,
   summarizeStructuredOutputRaw,
 };

@@ -1,3 +1,5 @@
+/* Worker tests cover lock-aware concurrency, error identity, polling, and
+ * graceful draining of dependent work. */
 const assert = require("node:assert/strict");
 const test = require("node:test");
 const { createTaskManagementQueue } = require("./taskMgmtQueue");

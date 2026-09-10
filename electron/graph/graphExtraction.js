@@ -1,3 +1,9 @@
+/*
+ * Coordinates the graph pipeline: extract note-grounded candidates, resolve them
+ * against canonical concepts, extract local relations, and persist one coherent
+ * document snapshot. Model output is treated as untrusted input and is filtered
+ * through the schemas below before it can reach the database or learner UI.
+ */
 const { z } = require("zod");
 const {
   findConceptResolutionCandidates,
@@ -166,6 +172,8 @@ function normalizeExtractedConcepts(concepts) {
 }
 
 async function mapWithConcurrency(items, concurrency, callback) {
+  // Keep the batch bounded without changing result order: each worker claims the
+  // next index, while the indexed result array preserves candidate ordering.
   const results = new Array(items.length);
   let nextIndex = 0;
 
@@ -496,6 +504,8 @@ async function resolveCandidateConcepts(candidates, documentPath, settings) {
 }
 
 function collapseResolvedConcepts(concepts) {
+  // Several candidates can resolve to the same canonical concept. Merge their
+  // evidence, but retain the highest-confidence description as the primary one.
   const conceptsByTarget = new Map();
 
   for (const concept of concepts) {
@@ -579,6 +589,8 @@ async function requestResolvedRelations({ concepts, documentPath, markdown, sett
     documentPath,
   });
 
+  // Relations are extracted only after endpoint resolution, so the model cannot
+  // invent a new node while describing an edge.
   const response = await requestStructuredJson({
     schemaName: "knowledge_graph_local_relations",
     jsonSchema: relationExtractionJsonSchema,
@@ -705,6 +717,8 @@ async function extractDocumentGraph(documentPath, document, markdown, settings) 
     model: config.model,
   });
 
+  // The cache is valid only when both source content and pipeline/model version
+  // match. A run with no renderable nodes is deliberately rebuilt.
   if (existingRun?.document_hash === documentHash && existingRun?.model === config.cacheModel) {
     const cachedGraph = getDocumentGraph(documentPath);
 

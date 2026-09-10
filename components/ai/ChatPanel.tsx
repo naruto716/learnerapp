@@ -44,6 +44,7 @@ const maxImages = 5;
 const maxImageSize = 4 * 1024 * 1024;
 const acceptedImageTypes = ["image/jpeg", "image/png", "image/gif", "image/webp"];
 
+// Chat sessions address notes using the normalized .json path understood by editor tools.
 function documentToolPath(documentPath: string) {
   const trimmedPath = documentPath.trim().replace(/^\/+/, "");
   return trimmedPath.toLowerCase().endsWith(".json") ? trimmedPath : `${trimmedPath}.json`;
@@ -396,6 +397,7 @@ function toolResultPatch(result: unknown) {
 }
 
 function sourcesForMessage(messages: ChatMessage[], messageIndex: number) {
+  // Sources belong to the nearest assistant turn, so stop collecting when the prior user turn is reached.
   const sourcesById = new Map<number, AgentSource>();
 
   for (let index = messageIndex - 1; index >= 0; index -= 1) {
@@ -624,6 +626,7 @@ export default function ChatPanel({
   );
 
   useEffect(() => {
+    // Defer localStorage reads until after mount to avoid server/client render differences.
     const timer = window.setTimeout(() => {
       oldSessionStorageKeys.forEach((storageKey) => localStorage.removeItem(storageKey));
 
@@ -692,6 +695,7 @@ export default function ChatPanel({
   }, []);
 
   function saveMessagesToSession(nextMessages: ChatMessage[], nextAgentContextState = agentContextState) {
+    // Store the active session as the newest entry while retaining older sessions for history.
     if (!currentSessionId || nextMessages.length === 0) return;
 
     setSessions((current) => {
@@ -710,6 +714,7 @@ export default function ChatPanel({
   }
 
   function startNewChat() {
+    // A new chat aborts the current request and releases any temporary image previews.
     abortControllerRef.current?.abort();
     setCurrentSessionId(generateId("session"));
     setMessages([]);
@@ -749,6 +754,7 @@ export default function ChatPanel({
   }
 
   async function processFiles(files: File[]) {
+    // Validate and cap attachments before converting them to persistent data URLs.
     const availableSlots = maxImages - images.length;
     const acceptedFiles = files
       .filter((file) => acceptedImageTypes.includes(file.type) && file.size <= maxImageSize)
@@ -826,6 +832,7 @@ export default function ChatPanel({
   }
 
   function updatePatch(patchId: string, update: (patch: ProposedDocumentPatch) => ProposedDocumentPatch) {
+    // Patch status lives in the transcript so review state survives rerenders and session saves.
     const nextMessages = messagesRef.current.map((message) => {
       if (!message.patches?.some((patch) => patch.id === patchId)) return message;
 
@@ -859,6 +866,7 @@ export default function ChatPanel({
   }
 
   function applyPatchToDocument(patch: ProposedDocumentPatch): ProposedDocumentPatch {
+    // Apply through the live editor bridge so document content and chat status update together.
     const documentTools = getPatchDocumentTools(patch);
     if (!documentTools) {
       return {
@@ -1002,6 +1010,7 @@ export default function ChatPanel({
       let streamingMessageId = "";
       let streamingContent = "";
 
+      // Stream tool activity and assistant text into the transcript as the agent works.
       for await (const chunk of runStudyAgentLoop({
         contextState: agentContextState,
         closeDocumentTab,
@@ -1038,6 +1047,7 @@ export default function ChatPanel({
         }
 
         if (chunk.type === "tool_result") {
+          // Tool results may contain patches that the editor applies immediately with undo available.
           const proposedPatch = toolResultPatch(chunk.result);
           const appliedPatch = proposedPatch ? applyPatchToDocument(proposedPatch) : null;
           const toolMessage: ChatMessage = {
@@ -1056,6 +1066,7 @@ export default function ChatPanel({
         }
 
         if (chunk.type === "text_delta") {
+          // Update one assistant message incrementally instead of appending a message per token.
           streamingContent += chunk.content;
 
           if (!streamingMessageId) {

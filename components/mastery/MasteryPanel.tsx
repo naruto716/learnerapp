@@ -1,5 +1,6 @@
 "use client";
 
+// MasteryPanel composes generation status, concept evidence, metaphor context, and practice entry points.
 import {
   ArrowsClockwiseIcon,
   CheckIcon,

@@ -1,3 +1,5 @@
+/* Minimal dotenv loader for packaged Electron startup. Files are read in order
+ * and never override environment variables already supplied by the process. */
 const fs = require("fs");
 const path = require("path");
 
@@ -31,6 +33,7 @@ function loadEnvFile(filePath) {
     const key = trimmedLine.slice(0, separatorIndex).trim();
     const value = stripQuotes(trimmedLine.slice(separatorIndex + 1));
 
+    // The process environment has precedence over local convenience files.
     if (!process.env[key]) {
       process.env[key] = value;
     }

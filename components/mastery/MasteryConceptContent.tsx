@@ -1,5 +1,6 @@
 "use client";
 
+// MasteryConceptContent renders concept explanations, scores, stage evidence, and edit actions.
 import RichMarkdown from "@/components/markdown/RichMarkdown";
 
 const markdownClassName =

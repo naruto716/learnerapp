@@ -147,3 +147,4 @@ export function writeMasterySettings(settings: MasteryScoringSettings) {
 export function resetMasterySettings() {
   return writeMasterySettings(cloneDefaults());
 }
+// Mastery settings are persisted locally and supplied to generation and scoring requests.

@@ -8,7 +8,6 @@ import { DOMSerializer, type Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import { EditorContent, useEditor } from "@tiptap/react";
-import { TableKit } from "@tiptap/extension-table";
 import StarterKit from "@tiptap/starter-kit";
 import {
   CaretDownIcon,
@@ -137,6 +136,7 @@ const emptyDocument: JSONContent = {
   ],
 };
 
+// Resolve relative note images through the learner:// document URL scheme.
 function resolveDocumentImageSrc(src: unknown) {
   if (typeof src !== "string") return "";
 
@@ -170,6 +170,7 @@ function pastedImageName(file: File, index: number) {
 }
 
 function sanitizePreviewHtml(html: string) {
+  // Strip active content before preview HTML is inserted into the editor surface.
   if (typeof window === "undefined") return html;
 
   const document = new DOMParser().parseFromString(html, "text/html");
@@ -194,6 +195,7 @@ function proposedChangeType(patch: ProposedDocumentPatch) {
 }
 
 function transformMarkdownOutsideCodeFences(markdown: string, transform: (segment: string) => string) {
+  // Normalize math only outside fenced code so code examples remain byte-for-byte intact.
   const lines = markdown.replace(/\r\n/g, "\n").match(/[^\n]*\n|[^\n]+$/g) ?? [];
   let result = "";
   let buffer = "";
@@ -270,6 +272,7 @@ function tiptapJsonToHtml(editor: Editor, content: JSONContent) {
 }
 
 function createPatchInsertionWidget(html: string, index: number) {
+  // Inline additions are rendered as non-editable review widgets inside ProseMirror.
   const wrapper = window.document.createElement("div");
   wrapper.className = "ai-diff-insert-widget";
   wrapper.contentEditable = "false";
@@ -287,6 +290,7 @@ function createPatchInsertionWidget(html: string, index: number) {
 }
 
 function createPatchControlsWidget(preview: NonNullable<AiPatchDecorationState>) {
+  // DOM widgets are required because these controls live inside ProseMirror decorations.
   const wrapper = window.document.createElement("div");
   wrapper.className = "ai-diff-controls-widget";
   wrapper.contentEditable = "false";
@@ -434,6 +438,7 @@ function createAiDiffPreviewBlockElement({
   patchId: string;
   removedHtml: string;
 }) {
+  // Full replacements are shown read-only with explicit apply and reject actions.
   const wrapper = window.document.createElement("div");
   wrapper.className = "ai-diff-replacement-widget";
   wrapper.contentEditable = "false";
@@ -570,6 +575,7 @@ const AiPatchPreviewExtension = Extension.create({
   name: "aiPatchPreview",
 
   addProseMirrorPlugins() {
+    // Store patch decorations in plugin state so they follow document transactions.
     return [
       new Plugin<AiPatchDecorationState>({
         key: aiPatchPreviewPluginKey,
@@ -631,6 +637,7 @@ const AiPatchPreviewExtension = Extension.create({
 });
 
 function findTextMatches(doc: ProseMirrorNode, query: string) {
+  // Text positions let the search overlay highlight and scroll to exact editor matches.
   const needle = query;
   if (!needle) return [];
 
@@ -682,6 +689,7 @@ const DocumentSearchExtension = Extension.create({
   name: "documentSearch",
 
   addProseMirrorPlugins() {
+    // Recompute matches after document changes so search never points at stale positions.
     return [
       new Plugin<SearchDecorationState>({
         key: documentSearchPluginKey,
@@ -743,6 +751,7 @@ const UnfocusedSelectionExtension = Extension.create({
   name: "unfocusedSelection",
 
   addProseMirrorPlugins() {
+    // Retain a subdued selection highlight when the editor loses focus.
     return [
       new Plugin<boolean>({
         key: unfocusedSelectionPluginKey,
@@ -804,6 +813,7 @@ function TiptapEditor({
   onPersistedStateChange: (documentPath: string, state: PersistedEditorState) => void;
   onRename: (oldPath: string, newPath: string) => void;
 }) {
+  // Own document loading, autosave, search, math editing, and AI patch application for one note tab.
   const [error, setError] = useState("");
   const [editingMath, setEditingMath] = useState<EditableMath | null>(null);
   const [searchActiveIndex, setSearchActiveIndex] = useState(0);
@@ -828,6 +838,7 @@ function TiptapEditor({
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   const buildEditorState = useCallback((currentEditor: Editor): PersistedEditorState => {
+    // Persist only selection, scroll, and content metadata needed by the shell on reload.
     const { from, to } = currentEditor.state.selection;
     const snapshot = documentSnapshotRef.current;
 
@@ -840,6 +851,7 @@ function TiptapEditor({
   }, []);
 
   const refreshDocumentSnapshot = useCallback((currentEditor: Editor, publish = true) => {
+    // The snapshot hash is the concurrency guard shared with AI patch tools.
     const patchableMarkdown = getPatchableMarkdown(currentEditor);
     documentSnapshotRef.current = {
       contentHash: hashDocumentPatchBase(patchableMarkdown),
@@ -853,6 +865,7 @@ function TiptapEditor({
   }, [buildEditorState, documentPath]);
 
   const scheduleEditorState = useCallback((currentEditor: Editor) => {
+    // Debounce persistence so typing does not cause a storage write for every transaction.
     if (persistedStateTimerRef.current) {
       clearTimeout(persistedStateTimerRef.current);
     }
@@ -879,7 +892,6 @@ function TiptapEditor({
       LearnerImage.configure({
         allowBase64: false,
       }),
-      TableKit,
       LatexDelimiters,
       Markdown.configure({
         markedOptions: {
@@ -952,6 +964,7 @@ function TiptapEditor({
     onUpdate({ editor }) {
       if (!loadedRef.current) return;
 
+      // Mark the snapshot stale and keep search decorations aligned with edited content.
       documentSnapshotDirtyRef.current = true;
       scheduleEditorState(editor);
 
@@ -994,6 +1007,7 @@ function TiptapEditor({
   }, [editor]);
 
   const updateSearch = useCallback((query: string, requestedIndex = 0, shouldScroll = false) => {
+    // Search state travels through an editor transaction so decorations remain position-aware.
     const currentEditor = editorRef.current;
     if (!currentEditor) return;
 
@@ -1086,6 +1100,7 @@ function TiptapEditor({
   }, [active, closeSearch, openSearch, searchOpen]);
 
   useEffect(() => {
+    // Load content only after the editor exists, then restore selection and scroll from the shell snapshot.
     let ignore = false;
 
     async function loadDocument() {
@@ -1151,6 +1166,7 @@ function TiptapEditor({
   }, [documentPath, editor, refreshDocumentSnapshot]);
 
   const renameDocumentTo = useCallback(async (nextTitleInput: string) => {
+    // Delegate renaming to the document backend so filename and tab path remain consistent.
     const nextTitle = nextTitleInput.trim();
     if (!nextTitle || nextTitle === documentTitle(documentPath)) {
       setTitle(documentTitle(documentPath));
@@ -1187,6 +1203,7 @@ function TiptapEditor({
   }
 
   async function insertPastedImages(files: File[]) {
+    // Save pasted bytes first, then insert the durable learner:// path into the document.
     if (!editor) return;
 
     try {
@@ -1233,6 +1250,7 @@ function TiptapEditor({
   }
 
   const resolvePatchPreview = useCallback((patch: ProposedDocumentPatch): DocumentPatchPreviewResult => {
+    // Validate target, hash, and patch syntax before showing any preview content.
     if (!editor) {
       return {
         failures: ["Editor is not ready."],
@@ -1288,6 +1306,7 @@ function TiptapEditor({
   }, [documentPath, editor]);
 
   useEffect(() => {
+    // Publish editor tools only after the requested note has finished loading.
     if (!editor || !onAgentToolsChange || loadedDocumentPath !== documentPath) return;
 
     const setEditorPatchPreview = (preview: AiPatchDecorationState) => {
@@ -1429,6 +1448,7 @@ function TiptapEditor({
       read: readDocument,
       markdownToDocument: (markdown) => markdownToTiptapJson(editor, markdown) as TiptapDocument,
       previewPatch: (patch, actions) => {
+        // Replace the editable view with a read-only diff until the user accepts or rejects it.
         restoreActivePatchPreview();
 
         const currentSource = getPatchableMarkdown(editor);
@@ -1583,6 +1603,7 @@ function TiptapEditor({
         clearEditorPatchPreview(patchId);
       },
       applyPatch: (patch) => {
+        // Capture an undo snapshot before mutating the current editor document.
         if (patch.documentPath !== documentPath) {
           return {
             appliedOperations: 0,
@@ -1693,6 +1714,7 @@ function TiptapEditor({
         return result;
       },
       undoPatch: (patchId) => {
+        // Restore the exact pre-application snapshot and remove its undo entry afterward.
         const snapshot = agentUndoSnapshotsRef.current[patchId];
 
         if (!snapshot) {

@@ -1,5 +1,6 @@
 "use client";
 
+// FloatingIconButton communicates asynchronous artifact status beside one primary action.
 import type { ReactNode } from "react";
 
 export type FloatingIconButtonStatus = "checking" | "not-generated" | "generating" | "ready" | "notes-changed";

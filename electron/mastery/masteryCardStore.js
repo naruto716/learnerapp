@@ -1,3 +1,6 @@
+/* CRUD boundary for generated cards and their derived links. Card rows may be
+ * retired or delayed, but practice sessions refer to immutable snapshots and
+ * therefore survive deck regeneration or clearing. */
 const {
   ensureMasteryStageStates,
   getMasteryDatabase,
@@ -82,6 +85,8 @@ function parseGraphEdgeIds(value) {
 }
 
 function cleanupInactiveTargets(db, documentPath) {
+  // Remove inactive targets first, then discard cards and weaknesses that no
+  // longer have any valid concept relationship.
   db
     .prepare(
       `DELETE FROM mastery_card_targets
@@ -319,6 +324,8 @@ function saveGeneratedCards({ cards, documentPath, generationPrompt, model }) {
   ensureMasteryCardSchema();
   const db = getMasteryDatabase();
   const now = Date.now();
+  // A partial card or link set is unusable, so generation is committed as one
+  // transaction and rolled back on any constraint failure.
   db.exec("BEGIN IMMEDIATE");
   try {
     cards.forEach((card) => insertCard(db, card, { documentPath, generationPrompt, model, now }));

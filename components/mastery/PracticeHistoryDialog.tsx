@@ -1,5 +1,6 @@
 "use client";
 
+// PracticeHistoryDialog exposes persisted attempts and grading evidence for a note.
 import { SpinnerGapIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import Dialog from "@/components/Dialog";

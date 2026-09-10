@@ -1,3 +1,6 @@
+/* AI adapter for mastery card generation, bounded discussions, and grading.
+ * Schemas validate model output first; application checks below enforce the
+ * stronger concept, graph-edge, interaction, and weakness contracts. */
 const { z } = require("zod");
 const { requestStructuredOutput } = require("../aiClient");
 const { readDocumentFile } = require("../documentUtil");
@@ -181,6 +184,8 @@ function prepareGeneratedCards(cards, mastery, graph, weaknesses, { skipInvalid 
     weaknesses.filter((weakness) => weakness.status === "active").map((weakness) => weakness.id),
   );
 
+  // Validate cards independently so one malformed model item does not discard
+  // otherwise valid cards when batch generation is configured to skip invalids.
   const prepared = [];
   cards.forEach((card, cardIndex) => {
     try {

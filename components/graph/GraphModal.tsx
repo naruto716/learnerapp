@@ -1,5 +1,6 @@
 "use client";
 
+// GraphModal supplies the shared dialog shell for concept and connection edits.
 import { XIcon } from "@phosphor-icons/react";
 import type { ReactNode } from "react";
 

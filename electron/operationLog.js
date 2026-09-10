@@ -1,3 +1,6 @@
+/* Writes append-only JSONL operation records. Sanitization drops credentials,
+ * markdown, and prompts by default because this is diagnostic telemetry, not a
+ * transcript store. */
 const { app } = require("electron");
 const fs = require("fs");
 const path = require("path");

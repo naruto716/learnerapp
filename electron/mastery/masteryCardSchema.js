@@ -1,3 +1,6 @@
+/* Defines the persisted card/practice contract and performs additive schema
+ * setup. Session cards store immutable JSON snapshots so later card or concept
+ * changes cannot rewrite historical practice evidence. */
 const { getMasteryDatabase } = require("./masteryConcepts");
 const { cardDifficulties, cardKinds } = require("./masteryScoring");
 
@@ -230,7 +233,8 @@ function ensureMasteryCardSchema() {
     db.exec("ALTER TABLE mastery_practice_session_cards ADD COLUMN manual_outcome TEXT");
   }
 
-  // Old cards were generated without an explicit interaction contract or visible context.
+  // Retire cards created under an incompatible interaction contract; preserving
+  // them as history is safer than silently presenting them with new semantics.
   db
     .prepare(
       `UPDATE mastery_cards

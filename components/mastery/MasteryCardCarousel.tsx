@@ -1,5 +1,6 @@
 "use client";
 
+// MasteryCardCarousel lets learners inspect generated cards without starting practice.
 import {
   useCallback,
   useEffect,

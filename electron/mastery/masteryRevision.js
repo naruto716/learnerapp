@@ -1,3 +1,6 @@
+/* Converts card scores and manual outcomes into deterministic FSRS reviews.
+ * Revision events record before/after schedule data and a dedupe key, allowing
+ * retries or repeated IPC delivery without applying the same review twice. */
 const {
   Rating,
   State,
@@ -76,6 +79,8 @@ function reviewStage({
   const prior = db
     .prepare("SELECT * FROM mastery_stage_states WHERE concept_id = ? AND stage = ?")
     .get(conceptId, stage);
+  // Manual review always means a lapse; graded outcomes map scores relative to
+  // the configured pass threshold.
   const rating = outcome === "review" ? Rating.Again : ratingForScore(score, masterySettings.passingScore);
   const scheduler = schedulerForSettings(masterySettings);
   const priorCard = startingCard || stageRowToFsrsCard(prior, reviewedAt);
@@ -83,6 +88,7 @@ function reviewStage({
   const next = result.card;
   const nextDueAt = next.due.getTime();
 
+  // The unique dedupe key makes the revision ledger idempotent.
   db.prepare(
     `UPDATE mastery_stage_states
      SET last_reviewed_at = ?, next_due_at = ?, fsrs_difficulty = ?, fsrs_stability = ?,
@@ -210,6 +216,10 @@ function rescheduleManualOutcome({
        ORDER BY id ASC LIMIT 1`,
     ).get(sessionCardId, target.conceptId, target.stage);
     let startingCard = null;
+    // Manual overrides start from the card state captured before the original
+    // graded review, rather than compounding a second FSRS transition on it.
+    // Manual overrides replay the pre-grade card captured in the event metadata
+    // instead of compounding another transition on the already graded state.
     if (gradedEvent) {
       try {
         const priorCard = JSON.parse(gradedEvent.metadata_json || "{}").priorCard;

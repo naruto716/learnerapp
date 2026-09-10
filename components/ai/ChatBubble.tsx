@@ -1,5 +1,6 @@
 import { SparkleIcon } from "@phosphor-icons/react";
 
+// ChatBubble is the compact entry point for the persistent AI chat panel.
 export default function ChatBubble({
   isOpen,
   toggleBubbleOpen,

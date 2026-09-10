@@ -1,4 +1,7 @@
-const { app, BrowserWindow, ipcMain, net, protocol, shell } = require("electron");
+/* Electron main process: establishes trusted origins, owns IPC handlers, and
+ * composes document, graph, mastery, search, and generation services. Renderer
+ * code reaches these services only through the explicit preload contract. */
+const { app, BrowserWindow, dialog, ipcMain, net, protocol, shell } = require("electron");
 const fs = require("fs");
 const path = require("path");
 const { pathToFileURL } = require("url");
@@ -28,6 +31,20 @@ const {
 } = require("./documentUtil");
 const { configureAiSettings } = require("./aiSettings");
 const { embedTexts } = require("./aiClient");
+const {
+  closeSubjectSourceDatabase,
+  deleteSubjectSourcePaths,
+  listSubjectSources,
+  removeSubjectSource,
+  replaceSubjectSourcePaths,
+} = require("./subjectSources/sourceStore");
+const {
+  addSubjectNoteSource,
+  addSubjectTextSource,
+  addSubjectUrlSource,
+  importSubjectFiles,
+} = require("./subjectSources/subjectSourceService");
+const { generateSubjectCheatSheet, generateSubjectNote } = require("./subjectSources/generation");
 const { generateImage, listAiModels } = require("./imageGeneration");
 const { transcribeSpeech } = require("./speechToText");
 const {
@@ -150,6 +167,8 @@ function notifyMaximizedChange(win) {
 
 function isTrustedAppOrigin(origin) {
   if (!origin) return false;
+  // Production trusts only the registered app scheme; development may also use
+  // the exact configured dev-server origin.
   if (origin.startsWith(`${appProtocol}://app`)) return true;
   if (!devServerUrl) return false;
 
@@ -223,21 +242,6 @@ function broadcastGenerationTask(task) {
 
 const aiOperationLock = createKeyedOperationLock(broadcastAiOperationStatus);
 const learnerGenerationManager = createLearnerGenerationManager({ onTaskChange: broadcastGenerationTask });
-const activeAiFetches = new Map();
-
-function assertAllowedAiRequestUrl(requestUrl, settings) {
-  const configuredSettings = configureAiSettings(settings);
-  const targetUrl = new URL(requestUrl);
-  const baseUrl = new URL(configuredSettings.baseUrl);
-  const basePath = baseUrl.pathname.replace(/\/+$/g, "");
-  const targetPathAllowed = targetUrl.pathname === basePath || targetUrl.pathname.startsWith(`${basePath}/`);
-
-  if (!["http:", "https:"].includes(targetUrl.protocol) || targetUrl.origin !== baseUrl.origin || !targetPathAllowed) {
-    throw new Error(`AI request URL is outside the configured base URL: ${targetUrl.origin}${targetUrl.pathname}`);
-  }
-
-  return targetUrl.toString();
-}
 
 async function runExclusiveAiOperation(key, label, operation) {
   try {
@@ -410,6 +414,7 @@ app.on("before-quit", (event) => {
     closeSearchDatabase();
     closeGraphDatabase();
     closeMasteryDatabase();
+    closeSubjectSourceDatabase();
     generationShutdownComplete = true;
     app.quit();
   });
@@ -453,12 +458,11 @@ ipcMain.handle("document:createFile", async (_event, filePath) => {
 
 ipcMain.handle("document:move", async (_event, sourcePath, targetFolderPath) => {
   await moveDocumentEntry(sourcePath, targetFolderPath);
-  replaceDocumentGraphPath(
-    sourcePath,
-    targetFolderPath
-      ? `${String(targetFolderPath).replace(/\/+$/g, "")}/${path.basename(sourcePath)}`
-      : path.basename(sourcePath),
-  );
+  const destinationPath = targetFolderPath
+    ? `${String(targetFolderPath).replace(/\/+$/g, "")}/${path.basename(sourcePath)}`
+    : path.basename(sourcePath);
+  replaceDocumentGraphPath(sourcePath, destinationPath);
+  replaceSubjectSourcePaths(sourcePath, destinationPath);
   await refreshSearchIndex("rebuild after move");
   return {
     directory: getDocumentRoot(),
@@ -469,6 +473,7 @@ ipcMain.handle("document:move", async (_event, sourcePath, targetFolderPath) => 
 ipcMain.handle("document:delete", async (_event, entryPath) => {
   const isDocumentFile = String(entryPath || "").toLowerCase().endsWith(".json");
   await deleteDocumentEntry(entryPath);
+  deleteSubjectSourcePaths(entryPath);
   if (isDocumentFile) {
     updateSearchIndex("delete", () => deleteIndexedDocument(entryPath));
     deleteDocumentGraph(entryPath);
@@ -489,6 +494,7 @@ ipcMain.handle("document:rename", async (_event, filePath, newTitle) => {
     upsertIndexedDocument(newPath, await readDocumentFile(newPath));
   });
   replaceDocumentGraphPath(filePath, newPath);
+  replaceSubjectSourcePaths(filePath, newPath);
   return {
     directory: getDocumentRoot(),
     newPath,
@@ -506,6 +512,32 @@ ipcMain.handle("document:reorder", async (_event, reorderRequest) => {
 
 ipcMain.handle("document:saveImage", async (_event, fileName, data) => {
   return saveDocumentImage(fileName, data);
+});
+
+ipcMain.handle("subjectSources:list", async (_event, subjectPath) => {
+  return listSubjectSources(subjectPath);
+});
+
+ipcMain.handle("subjectSources:importFiles", async (event, subjectPath) => {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  const result = await dialog.showOpenDialog(window, {
+    filters: [{ name: "Study sources", extensions: ["pdf", "docx", "txt", "md", "html", "htm"] }],
+    properties: ["openFile", "multiSelections"],
+  });
+  return result.canceled ? [] : importSubjectFiles(subjectPath, result.filePaths);
+});
+
+ipcMain.handle("subjectSources:addText", async (_event, request) => addSubjectTextSource(request));
+ipcMain.handle("subjectSources:addUrl", async (_event, request) => addSubjectUrlSource(request));
+ipcMain.handle("subjectSources:addNote", async (_event, request) => addSubjectNoteSource(request));
+ipcMain.handle("subjectSources:remove", async (_event, subjectPath, sourceId) => {
+  return removeSubjectSource(subjectPath, sourceId);
+});
+ipcMain.handle("subjectSources:generateNote", async (_event, request) => {
+  return runExclusiveAiOperation(`subject:${request?.subjectPath}`, "Generate subject note", () => generateSubjectNote(request));
+});
+ipcMain.handle("subjectSources:generateCheatSheet", async (_event, request) => {
+  return runExclusiveAiOperation(`subject:${request?.subjectPath}`, "Generate subject cheat sheet", () => generateSubjectCheatSheet(request));
 });
 
 ipcMain.handle("document:search", async (_event, query, limit) => {
@@ -532,58 +564,6 @@ ipcMain.handle("document:semanticSearch", async (_event, query, limit, settings,
 
 ipcMain.handle("ai:configure", async (_event, settings) => {
   return configureAiSettings(settings);
-});
-
-ipcMain.handle("ai:fetch", async (_event, request) => {
-  const requestId = String(request?.requestId || "").trim();
-  if (!requestId) throw new Error("AI fetch request ID is required.");
-
-  const requestUrl = assertAllowedAiRequestUrl(request?.url, request?.settings);
-  const abortController = new AbortController();
-  activeAiFetches.set(requestId, abortController);
-
-  operationLog("ai.chat.transport.main_request_started", {
-    baseUrl: request.settings?.baseUrl || null,
-    method: request.method || "GET",
-    requestId,
-    url: requestUrl,
-  });
-
-  try {
-    const response = await net.fetch(requestUrl, {
-      body: request.body?.byteLength ? request.body : undefined,
-      headers: request.headers,
-      method: request.method || "GET",
-      signal: abortController.signal,
-    });
-    const body = await response.arrayBuffer();
-
-    operationLog("ai.chat.transport.main_request_completed", {
-      requestId,
-      status: response.status,
-      url: requestUrl,
-    });
-
-    return {
-      body,
-      headers: Array.from(response.headers.entries()),
-      status: response.status,
-      statusText: response.statusText,
-    };
-  } catch (error) {
-    operationLog("ai.chat.transport.main_request_failed", {
-      error: error instanceof Error ? error.message : String(error),
-      requestId,
-      url: requestUrl,
-    });
-    throw error;
-  } finally {
-    activeAiFetches.delete(requestId);
-  }
-});
-
-ipcMain.on("ai:fetchAbort", (_event, requestId) => {
-  activeAiFetches.get(String(requestId || ""))?.abort();
 });
 
 ipcMain.on("ai:chatLog", (_event, eventName, details) => {

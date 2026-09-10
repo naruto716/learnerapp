@@ -1,3 +1,6 @@
+/* Resolves declarative task definitions into one atomic queue submission.
+ * Nodes may be persisted, joined to an exact active task ID, or newly created;
+ * asynchronous satisfaction checks are forbidden to preserve atomicity. */
 const { randomUUID } = require("crypto");
 
 class TaskDependencyResolutionError extends Error {
@@ -132,6 +135,8 @@ function createTaskDependencyResolver({ definitions, queue }) {
       const dedupKey = requiredString(definition, "dedupKey", type, context, artifactKey);
       const lockKey = requiredString(definition, "lockKey", type, context, artifactKey);
       const isForced = forcedTypes.has(type);
+      // Joining uses an immutable task ID, not a mutable dedup key, so a later
+      // forced task cannot accidentally satisfy this resolution.
       const activeTask = isForced ? null : queue.getActiveTaskByDedupKey(dedupKey);
 
       if (activeTask && (activeTask.status === "queued" || activeTask.status === "running")) {
@@ -204,6 +209,8 @@ function createTaskDependencyResolver({ definitions, queue }) {
     const uniqueTargets = [...new Set(targets)];
     uniqueTargets.forEach(resolveType);
 
+    // Queue insertion happens only after the complete dependency closure has
+    // been resolved, keeping resolver failure side-effect free.
     let workflowId = null;
     if (preparedTasks.length > 0) {
       const queued = queue.enqueueTasks(preparedTasks);

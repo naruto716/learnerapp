@@ -295,3 +295,4 @@ export function applyDocumentPatchText({
     patchedSource: result.patchedSource,
   };
 }
+// Patch helpers parse, preview, apply, and hash AI edits against exact Markdown sources.

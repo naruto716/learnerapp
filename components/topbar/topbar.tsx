@@ -1,5 +1,6 @@
 "use client";
 
+// TopBar owns tab navigation and titlebar-adjacent workspace controls.
 import { CaretLeftIcon, CaretRightIcon, SidebarIcon, XIcon } from "@phosphor-icons/react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";

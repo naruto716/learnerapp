@@ -1,5 +1,6 @@
 "use client";
 
+// IconButton standardizes compact accessible actions across workspace controls.
 import type { ReactNode } from "react";
 
 export default function IconButton({

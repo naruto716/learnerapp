@@ -1,3 +1,5 @@
+/* Resolver tests verify persisted fast-forwarding, exact task joining, cycle
+ * rejection, forced work, and side-effect-free failure before queue insertion. */
 const assert = require("node:assert/strict");
 const test = require("node:test");
 const { createTaskDependencyResolver, TaskDependencyResolutionError } = require("./taskDependencyResolver");

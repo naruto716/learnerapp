@@ -1,5 +1,6 @@
 "use client";
 
+// GraphField keeps labels, validation styling, and graph-edit inputs consistent.
 import type { ChangeEventHandler, ReactNode } from "react";
 
 export const graphInputClassName =

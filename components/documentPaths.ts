@@ -27,3 +27,4 @@ export function documentTitle(documentPath: string) {
 export function filePathWithExtension(filePath: string) {
   return filePath.toLowerCase().endsWith(".json") ? filePath : `${filePath}.json`;
 }
+// Route helpers keep filesystem-style note paths and Next routes in one canonical format.

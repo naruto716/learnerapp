@@ -60,3 +60,4 @@ export function foregroundContextBadges(context: AgentForegroundContext): Foregr
 
   return badges;
 }
+// Foreground context describes transient editor, mastery, or revision material attached to one chat turn.

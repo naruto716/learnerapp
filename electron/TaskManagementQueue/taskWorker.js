@@ -1,3 +1,5 @@
+/* Pumps a queue up to a fixed concurrency. Lock keys are tracked locally so
+ * unrelated documents can run in parallel while same-document tasks serialize. */
 function createTaskWorker({ concurrency = 4, onError = () => {}, pollIntervalMs = 50, queue }) {
   if (!queue || typeof queue.claimNextTask !== "function" || typeof queue.runTask !== "function") {
     throw new Error("A compatible task management queue is required.");
@@ -15,6 +17,8 @@ function createTaskWorker({ concurrency = 4, onError = () => {}, pollIntervalMs 
   let running = false;
 
   function executeClaimedTask(task) {
+    // The queue owns task state; the worker owns active promises and lock
+    // occupancy, releasing both before settling waiters.
     activeLockKeys.add(task.lockKey);
     const completion = queue.runTask(task.id, { settleWaiters: false })
       .catch((error) => {

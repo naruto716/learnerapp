@@ -14,3 +14,4 @@ export const LearnerCodeBlock = CodeBlockLowlight.extend({
   enableTabIndentation: true,
   lowlight,
 });
+// Code block node configuration shared by the editor and its custom node view.

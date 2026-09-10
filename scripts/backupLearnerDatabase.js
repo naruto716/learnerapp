@@ -1,3 +1,5 @@
+/* Creates a consistent SQLite backup, including WAL state, and deletes the
+ * output if quick_check does not confirm database integrity. */
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -17,6 +19,7 @@ const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
 const backupPath = path.join(backupDirectory, `learner-before-revision-${timestamp}.sqlite`);
 const quotedBackupPath = `'${backupPath.replaceAll("'", "''")}'`;
 
+// VACUUM INTO copies a consistent snapshot without modifying the source file.
 const source = new DatabaseSync(databasePath);
 source.exec("PRAGMA busy_timeout = 10000");
 source.exec("PRAGMA wal_checkpoint(PASSIVE)");

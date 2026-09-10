@@ -1,5 +1,6 @@
 "use client";
 
+// WindowControls maps renderer actions to the Electron window lifecycle bridge.
 import { CopyIcon, MinusIcon, SquareIcon, XIcon } from "@phosphor-icons/react";
 import { useEffect, useState, useSyncExternalStore } from "react";
 

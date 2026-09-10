@@ -1,5 +1,6 @@
 "use client";
 
+// AiSettingsDialog edits persisted provider settings and reports effective runtime values.
 import { CheckIcon, PlugIcon } from "@phosphor-icons/react";
 import { FormEvent, useEffect, useState } from "react";
 import type { ReactNode } from "react";

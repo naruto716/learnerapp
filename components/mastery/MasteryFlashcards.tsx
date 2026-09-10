@@ -1,5 +1,6 @@
 "use client";
 
+// MasteryFlashcards renders generated prompts and keeps card preferences near the deck.
 import {
   CheckIcon,
   EyeIcon,

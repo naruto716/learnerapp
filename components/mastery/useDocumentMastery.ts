@@ -1,5 +1,6 @@
 "use client";
 
+// Hook for loading note mastery, freshness, generation progress, and concept score updates.
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CurrentDocumentAgentTools } from "@/components/editor/TiptapEditor";
 import { readAiSettings } from "@/components/ai/aiSettings";

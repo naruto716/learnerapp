@@ -1,3 +1,5 @@
+/* Serializes operations per logical note and publishes a small status contract.
+ * Terminal statuses remain available after release for renderer diagnostics. */
 function createKeyedOperationLock(onStatusChange = () => {}) {
   const activeOperations = new Map();
   const operationStatuses = new Map();
@@ -16,6 +18,8 @@ function createKeyedOperationLock(onStatusChange = () => {}) {
       throw error;
     }
 
+    // Mark the operation before invoking user code so re-entrant requests fail
+    // deterministically rather than racing the first operation.
     activeOperations.set(key, label);
     const startedAt = Date.now();
     saveStatus(key, {

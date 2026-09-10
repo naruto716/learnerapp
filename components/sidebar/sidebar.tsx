@@ -1,5 +1,6 @@
 "use client";
 
+// SideBar presents the document tree and routes document-management actions to the shell.
 import {
   CaretDownIcon,
   CaretRightIcon,
@@ -9,6 +10,7 @@ import {
   FolderPlusIcon,
   GearSixIcon,
   MagnifyingGlassIcon,
+  NotebookIcon,
   TrashIcon,
 } from "@phosphor-icons/react";
 import { DragEvent, MouseEvent, useEffect, useState } from "react";
@@ -59,6 +61,7 @@ export default function SideBar({
   onOpenSearch,
   onOpenSettings,
   onOpenRevision,
+  onOpenSubject,
   onOpenDocument,
   revisionRefreshKey,
 }: {
@@ -71,6 +74,7 @@ export default function SideBar({
   onOpenSearch: () => void;
   onOpenSettings: () => void;
   onOpenRevision: () => void;
+  onOpenSubject: (subjectPath: string) => void;
   onOpenDocument: (documentPath: string) => void;
   revisionRefreshKey: number;
 }) {
@@ -399,6 +403,19 @@ export default function SideBar({
             className="app-no-drag fixed z-50 min-w-32 rounded-lg bg-[#252525] p-1 text-sm shadow-xl ring-1 ring-white/10"
             style={{ left: contextMenu.x, top: contextMenu.y }}
           >
+            {contextMenu.node.type === "folder" && (
+              <button
+                type="button"
+                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-white/80 transition-colors hover:bg-white/10"
+                onClick={() => {
+                  onOpenSubject(contextMenu.node.path);
+                  setContextMenu(null);
+                }}
+              >
+                <NotebookIcon size={15} />
+                Open subject
+              </button>
+            )}
             <button
               type="button"
               className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-red-200 transition-colors hover:bg-red-400/10"

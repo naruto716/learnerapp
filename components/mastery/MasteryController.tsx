@@ -33,6 +33,7 @@ export default function MasteryController({
   onForegroundContextChange,
   onOpenChange,
 }: MasteryControllerProps) {
+  // Coordinate mastery data, practice cards, generation status, and the floating action button.
   const masteryController = useDocumentMastery({
     activeDocumentPath,
     documentContentHash,
@@ -63,6 +64,7 @@ export default function MasteryController({
   });
 
   const masteryAssetsCardRequest = () => {
+    // Reuse saved card preferences when generating the mastery bundle.
     const preferences = cardsController.cardState?.preferences ?? {
       generationPrompt: "",
       targetProficiency: "proficient" as const,
@@ -108,6 +110,7 @@ export default function MasteryController({
   }[masteryStatus];
 
   const handleMasteryButton = () => {
+    // Open complete mastery data or start generation when the current note has no assets yet.
     if (masteryStatus === "ready" || masteryStatus === "notes-changed") {
       void openAndPrepareMastery();
       return;
@@ -126,6 +129,7 @@ export default function MasteryController({
   };
 
   const clearAndSyncCards = async () => {
+    // Clearing mastery also refreshes cards so derived practice data cannot remain stale.
     const cleared = await clearMastery();
     if (cleared) await cardsController.loadCards();
     return cleared;
@@ -138,6 +142,7 @@ export default function MasteryController({
   const loadCards = cardsController.loadCards;
 
   const syncAfterPractice = useCallback(async () => {
+    // Practice changes both card state and mastery evidence, so refresh both surfaces.
     await Promise.all([loadCards(), refreshMastery()]);
   }, [loadCards, refreshMastery]);
 

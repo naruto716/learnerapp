@@ -1,3 +1,6 @@
+/* Runtime AI configuration. Overrides are normalized at every read; embedding
+ * credentials intentionally come from the OpenAI-specific environment settings
+ * rather than local chat-proxy credentials. */
 const defaultAiSettings = {
   apiKey: "sk-cliproxy-michael-2026",
   baseUrl: "http://127.0.0.1:8317/v1",

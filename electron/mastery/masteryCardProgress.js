@@ -1,3 +1,6 @@
+/* Applies evaluation outcomes to weaknesses, stage scores, card lifecycle, and
+ * FSRS schedules in one transaction. Practice retries are idempotent at the
+ * submission/run boundary, while the graded transcript remains immutable. */
 const crypto = require("crypto");
 const {
   ensureMasteryStageStates,
@@ -31,6 +34,8 @@ function normalizeWeaknessKey(value) {
 
 function upsertWeakness(db, { card, documentPath, outcome, passingScore, score, targetedIds, now }) {
   const requestedId = outcome.weaknessId && targetedIds.has(outcome.weaknessId) ? outcome.weaknessId : null;
+  // A model may resolve only a weakness it was explicitly given, and only on a
+  // passing answer; new or unrelated IDs cannot mutate learner state.
   const resolved = Boolean(requestedId && score >= passingScore && outcome.state === "resolved");
   let row = requestedId ? db.prepare("SELECT * FROM mastery_weaknesses WHERE id = ?").get(requestedId) : null;
 
@@ -91,6 +96,8 @@ function upsertWeakness(db, { card, documentPath, outcome, passingScore, score, 
 
 function updateStageEvidence(db, card, score, now, masterySettings) {
   const cleared = score >= masterySettings.passingScore;
+  // Points are additive evidence and are capped at 100. A failed attempt still
+  // records a lapse, but cannot reduce accumulated mastery points.
   const awardedPoints = cleared ? masterySettings.points[card.kind][card.difficulty] : 0;
   const update = db.prepare(
     `UPDATE mastery_stage_states
@@ -259,7 +266,8 @@ function saveCardEvaluation({
         now,
         card.id,
       );
-    // The graded attempt retains the complete transcript. A future retry must start a new drill.
+    // The graded attempt retains its complete transcript; a future retry starts
+    // a new drill instead of appending to an already graded interaction.
     db.prepare("DELETE FROM mastery_card_messages WHERE card_id = ?").run(card.id);
     db.exec("COMMIT");
     return attemptId;

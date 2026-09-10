@@ -1,3 +1,6 @@
+/* Owns practice-session state transitions and the asynchronous grading queue.
+ * Submissions are immutable, grading runs are retryable records, and effects
+ * are applied at most once even if a worker is restarted or IPC repeats. */
 const { getDocumentMastery, getMasteryDatabase, normalizeDocumentPath } = require("./masteryConcepts");
 const { ensureMasteryCardSchema } = require("./masteryCardSchema");
 const { requestCardEvaluation, requestRevisionCards } = require("./masteryCardAi");
@@ -38,6 +41,8 @@ function snapshotTargetedWeaknesses(card, snapshot) {
 
 function ensurePracticeSchema() {
   ensureMasteryCardSchema();
+  // Requeue only runs older than the lease window so a crashed worker can be
+  // recovered without duplicating an active provider request.
   getMasteryDatabase()
     .prepare(
       `UPDATE mastery_practice_grading_runs
@@ -77,6 +82,8 @@ function refreshSessionStatus(sessionId) {
        WHERE cards.session_id = ?`,
     )
     .get(sessionId).count;
+  // A session is complete only when every card has a submission and no latest
+  // grading run remains queued, running, or failed.
   if (submissionCount < cardCount) {
     db.prepare("UPDATE mastery_practice_sessions SET status = 'active', updated_at = ? WHERE id = ?")
       .run(Date.now(), sessionId);
@@ -374,6 +381,8 @@ function revisionPreparationPlan({ masterySettings = {}, now = Date.now() } = {}
     });
   });
 
+  // Prefer cards covering the most uncovered due targets; generate only the
+  // remaining concepts that cannot be covered within the daily limit.
   while (selected.length < normalizedSettings.revisionDailyCardLimit) {
     const best = candidateCards
       .filter((candidate) => !selected.some((entry) => entry.card.id === candidate.card.id))
@@ -601,6 +610,8 @@ function createRevisionSession({ masterySettings = {} } = {}) {
 function claimNextRun() {
   ensurePracticeSchema();
   const db = getMasteryDatabase();
+  // Claiming is transactional, so concurrent pumps cannot process one queued
+  // run at the same time.
   db.exec("BEGIN IMMEDIATE");
   try {
     const run = db
@@ -665,6 +676,8 @@ async function gradeRun(run) {
 
   const db = getMasteryDatabase();
   if (!db.prepare("SELECT id FROM mastery_practice_grading_runs WHERE id = ?").get(run.id)) return;
+  // Regrading may produce a new evaluation, but the submission's mastery
+  // effects are applied once regardless of how many runs it has.
   const effectsAlreadyApplied = Boolean(
     db.prepare(
       `SELECT 1 FROM mastery_practice_grading_runs
@@ -757,6 +770,8 @@ function submitPracticeAnswer({ answerMarkdown, sessionCardId }) {
   }
 
   const now = Date.now();
+  // Persist the submission and its initial queued run together; a worker never
+  // observes one without the other.
   db.exec("BEGIN IMMEDIATE");
   try {
     const submission = db

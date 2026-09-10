@@ -45,3 +45,4 @@ export async function layoutKnowledgeGraph(graph: KnowledgeDocumentGraph) {
     ]),
   );
 }
+// Layout helpers turn graph nodes into stable positions for the React Flow canvas.

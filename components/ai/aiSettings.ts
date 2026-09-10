@@ -95,3 +95,4 @@ export function resetAiSettings() {
   writeAiSettings(defaultAiSettings);
   return defaultAiSettings;
 }
+// AI settings persistence shared by dialogs, agent tools, and generation controllers.

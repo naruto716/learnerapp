@@ -59,6 +59,7 @@ const textButtonClassName =
 type NodeVisualState = "selected" | "incoming" | "outgoing" | "current" | "dim" | "default";
 type EdgeVisualState = "selected" | "incoming" | "outgoing" | "dim" | "default";
 
+// Highlight adjacent nodes so selecting a concept reads as a focused local subgraph.
 function getNodeVisualState(graph: KnowledgeDocumentGraph, node: KnowledgeGraphNode, selectedNodeId: number | null): NodeVisualState {
   if (!selectedNodeId) return node.inCurrentDocument ? "current" : "default";
   if (node.id === selectedNodeId) return "selected";
@@ -120,6 +121,7 @@ function nodeColors(state: NodeVisualState, inCurrentDocument: boolean) {
 }
 
 function getEdgeVisualState(edge: KnowledgeGraphEdge, selectedNodeId: number | null, selectedEdgeId: number | null): EdgeVisualState {
+  // Edge emphasis mirrors node emphasis and keeps dense relation labels readable.
   if (selectedEdgeId === edge.id) return "selected";
   if (selectedEdgeId !== null) return "dim";
   if (!selectedNodeId) return "default";
@@ -174,6 +176,7 @@ function buildFlowNodes(
   selectedNodeId: number | null,
   selectedEdgeId: number | null,
 ): Node[] {
+  // React Flow nodes are derived from graph data plus the asynchronous layout positions.
   return graph.nodes.map((node) => {
     const selectedEdge = graph.edges.find((edge) => edge.id === selectedEdgeId);
     const visualState =
@@ -219,6 +222,7 @@ function buildFlowNodes(
 }
 
 function buildFlowEdges(graph: KnowledgeDocumentGraph, selectedNodeId: number | null, selectedEdgeId: number | null): Edge[] {
+  // Hide unrelated labels until a node or edge is selected to reduce visual noise.
   return graph.edges.map((edge) => {
     const visualState = getEdgeVisualState(edge, selectedNodeId, selectedEdgeId);
     const colors = edgeColors(visualState);
@@ -275,6 +279,7 @@ function GraphHeaderButton({
 }
 
 function latestMentionPerDocument(mentions: KnowledgeConceptMention[]) {
+  // Show one current mention per note so the inspector remains useful for widely linked concepts.
   const mentionsByDocument = new Map<string, KnowledgeConceptMention>();
 
   for (const mention of mentions) {
@@ -343,6 +348,7 @@ export default function KnowledgeGraphPanel({
   open,
   progress,
 }: KnowledgeGraphPanelProps) {
+  // Own graph layout, selection, editing dialogs, and the selected-node or selected-edge inspector.
   const [deleteConfirming, setDeleteConfirming] = useState(false);
   const [conceptDeleteConfirming, setConceptDeleteConfirming] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
@@ -372,6 +378,7 @@ export default function KnowledgeGraphPanel({
   const [edgeRelationExplanation, setEdgeRelationExplanation] = useState("");
 
   useEffect(() => {
+    // Layout is asynchronous to keep large graph renders responsive.
     let active = true;
 
     if (!graph || graph.nodes.length === 0) {
@@ -421,6 +428,7 @@ export default function KnowledgeGraphPanel({
   }
 
   function openCreateConceptDialog() {
+    // Start creation with a clean form rather than leaking the prior selection's values.
     setEditError(null);
     setConceptDialogMode("create");
     setConceptName("");
@@ -431,6 +439,7 @@ export default function KnowledgeGraphPanel({
   }
 
   function openEditConceptDialog() {
+    // Seed the edit form from the selected concept so only intentional changes are submitted.
     if (!selectedNode) return;
 
     setEditError(null);
@@ -443,6 +452,7 @@ export default function KnowledgeGraphPanel({
   }
 
   function openConnectionDialog() {
+    // A new relation always starts from the selected source concept.
     if (!selectedNode) return;
 
     setEditError(null);
@@ -456,6 +466,7 @@ export default function KnowledgeGraphPanel({
   }
 
   function openEdgeDialog() {
+    // Relation editing is scoped to the selected edge.
     if (!selectedEdge) return;
 
     setEditError(null);
@@ -465,6 +476,7 @@ export default function KnowledgeGraphPanel({
   }
 
   async function submitConceptDialog() {
+    // Submit either a concept update or a note-backed concept creation.
     if (!graph) return;
 
     const cleanName = conceptName.trim();
@@ -520,6 +532,7 @@ export default function KnowledgeGraphPanel({
   }
 
   async function removeSelectedConceptFromCurrentNote() {
+    // Removing a note mention also clears selection from the now-detached concept.
     if (!graph || !selectedNode) return;
 
     setEditError(null);
@@ -538,6 +551,7 @@ export default function KnowledgeGraphPanel({
   }
 
   async function submitConnectionDialog() {
+    // The target may be an existing concept or a new concept described in the form.
     if (!graph || !selectedNode) return;
 
     const cleanRelation = relationName.trim();
@@ -583,6 +597,7 @@ export default function KnowledgeGraphPanel({
   }
 
   async function submitEdgeDialog() {
+    // Save only the selected relation's label and explanation.
     if (!graph || !selectedEdge) return;
 
     const cleanRelation = edgeRelationName.trim();

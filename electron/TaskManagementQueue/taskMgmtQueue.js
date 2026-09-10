@@ -1,3 +1,6 @@
+/* In-memory workflow queue with atomic batch insertion. Tasks move through
+ * pending -> queued -> running -> terminal states; dependency failure blocks
+ * descendants, while deduplication and lock keys prevent conflicting work. */
 const { randomUUID } = require("crypto");
 
 const terminalStatuses = new Set(["blocked", "completed", "failed"]);
@@ -177,6 +180,8 @@ function createTaskManagementQueue({ onListenerError = () => {} } = {}) {
             throw new TaskQueueError("enqueueTasks requires a non-empty task array.", "INVALID_BATCH");
         }
 
+        // Validate and prepare the entire batch before mutating queue maps, so
+        // invalid input leaves no partial workflow behind.
         const workflowId = randomUUID();
         const createdAt = Date.now();
         const taskIdsByKey = new Map();
@@ -356,6 +361,8 @@ function createTaskManagementQueue({ onListenerError = () => {} } = {}) {
     }
 
     function blockDependents(taskId, failedTaskId) {
+        // Propagate the original failure recursively so transitive dependents
+        // are blocked without ever invoking their callbacks.
         const dependentTaskIds = [...(dependents.get(taskId) || [])];
         dependents.delete(taskId);
 

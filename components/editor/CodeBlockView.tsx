@@ -1,5 +1,6 @@
 "use client";
 
+// CodeBlockView renders editable syntax-highlighted code and optional Mermaid previews.
 import type { ReactNodeViewProps } from "@tiptap/react";
 import { NodeViewContent, NodeViewWrapper } from "@tiptap/react";
 import { TextSelection } from "@tiptap/pm/state";

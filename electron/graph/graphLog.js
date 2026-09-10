@@ -1,3 +1,5 @@
+/* Graph diagnostics are intentionally separate from learner-facing results and
+ * are sanitized before both console and persistent operation logging. */
 const disabledValues = new Set(["0", "false", "off", "no"]);
 const { operationLog } = require("../operationLog");
 
@@ -12,6 +14,8 @@ function graphDebugEnabled() {
 function sanitizeDetails(details) {
   if (!details || typeof details !== "object") return details;
 
+  // Do not let credentials or bearer tokens enter logs, including nested values
+  // handled by the operation logger.
   return Object.fromEntries(
     Object.entries(details).filter(([key]) => !/api[-_]?key|authorization|token|secret/i.test(key)),
   );

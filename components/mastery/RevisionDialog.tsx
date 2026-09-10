@@ -1,5 +1,6 @@
 "use client";
 
+// RevisionDialog manages the global due-card review flow independently from note mastery.
 import {
   CalendarBlankIcon,
   CaretLeftIcon,

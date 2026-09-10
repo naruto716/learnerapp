@@ -1,5 +1,6 @@
 "use client";
 
+// Hook for loading, generating, and clearing the practice deck associated with the active note.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { readAiSettings } from "@/components/ai/aiSettings";
 import type { CurrentDocumentAgentTools } from "@/components/editor/TiptapEditor";

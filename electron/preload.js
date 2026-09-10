@@ -1,3 +1,5 @@
+/* Narrow renderer/backend IPC contract. Functions return invoke promises, while
+ * event subscriptions return unsubscribe callbacks to prevent listener leaks. */
 const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("learner", {
@@ -54,6 +56,30 @@ contextBridge.exposeInMainWorld("learner", {
   saveDocumentImage: (fileName, data) => {
     return ipcRenderer.invoke("document:saveImage", fileName, data);
   },
+  listSubjectSources: (subjectPath) => {
+    return ipcRenderer.invoke("subjectSources:list", subjectPath);
+  },
+  importSubjectFiles: (subjectPath) => {
+    return ipcRenderer.invoke("subjectSources:importFiles", subjectPath);
+  },
+  addSubjectTextSource: (request) => {
+    return ipcRenderer.invoke("subjectSources:addText", request);
+  },
+  addSubjectUrlSource: (request) => {
+    return ipcRenderer.invoke("subjectSources:addUrl", request);
+  },
+  addSubjectNoteSource: (request) => {
+    return ipcRenderer.invoke("subjectSources:addNote", request);
+  },
+  removeSubjectSource: (subjectPath, sourceId) => {
+    return ipcRenderer.invoke("subjectSources:remove", subjectPath, sourceId);
+  },
+  generateSubjectNote: (request) => {
+    return ipcRenderer.invoke("subjectSources:generateNote", request);
+  },
+  generateSubjectCheatSheet: (request) => {
+    return ipcRenderer.invoke("subjectSources:generateCheatSheet", request);
+  },
   searchDocuments: (query, limit) => {
     return ipcRenderer.invoke("document:search", query, limit);
   },
@@ -62,12 +88,6 @@ contextBridge.exposeInMainWorld("learner", {
   },
   configureAi: (settings) => {
     return ipcRenderer.invoke("ai:configure", settings);
-  },
-  fetchAi: (request) => {
-    return ipcRenderer.invoke("ai:fetch", request);
-  },
-  abortAiFetch: (requestId) => {
-    ipcRenderer.send("ai:fetchAbort", requestId);
   },
   logAiChatEvent: (eventName, details) => {
     ipcRenderer.send("ai:chatLog", eventName, details);

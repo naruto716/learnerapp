@@ -1,3 +1,6 @@
+/* Maintains SQLite FTS and optional semantic-search projections of documents.
+ * Text/chunks are committed first; embeddings are derived asynchronously and
+ * keyed by chunk hash plus model so unchanged content is not re-embedded. */
 const { app } = require("electron");
 const crypto = require("crypto");
 const fsSync = require("fs");
@@ -278,6 +281,8 @@ function upsertIndexedDocument(documentPath, document) {
   const deleteFts = db.prepare("DELETE FROM document_fts WHERE path = ?");
   const insertFts = db.prepare("INSERT INTO document_fts(path, title, text) VALUES (?, ?, ?)");
 
+  // Replace FTS rows and chunks atomically. Identical chunk hashes retain valid
+  // embeddings across edits, so embedding work remains asynchronous and sparse.
   db.exec("BEGIN IMMEDIATE");
   try {
     insertDocument.run(normalizedPath, title, text, updatedAt, contentHash);
@@ -491,6 +496,8 @@ function cosineSimilarity(a, b) {
 async function requestEmbeddings(input, settings) {
   const config = getEmbeddingConfig(settings);
   const apiKey = config.apiKey;
+  // Missing credentials are a soft failure: lexical search remains available
+  // while queued semantic work is discarded until it is explicitly requeued.
   if (!apiKey) {
     throw new Error("AI API key is not configured in settings.");
   }
@@ -517,6 +524,7 @@ function saveChunkEmbeddings(chunks, embeddings, settings) {
   const updatedAt = Date.now();
 
   db.exec("BEGIN IMMEDIATE");
+  // Keep provider, database, and ranking stages distinct in diagnostics.
   try {
     chunks.forEach((chunk, index) => {
       const embedding = embeddings[index];

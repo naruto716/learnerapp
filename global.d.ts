@@ -1,12 +1,8 @@
-      getDocumentMastery: (
-        filePath: string,
-        markdown?: string,
-        options?: { checkFreshness?: boolean },
-      ) => Promise<DocumentMastery>;
-// learnerapp/global.d.ts
+// Shared renderer/Electron contract for documents, AI, subjects, graph, and mastery IPC.
 export {};
 
 declare global {
+  // Global aliases keep component props aligned with the data returned by the desktop bridge.
   type TiptapDocument = {
     type: string;
     content?: unknown[];
@@ -81,22 +77,6 @@ declare global {
     owned_by?: string;
   };
 
-  type LearnerAiFetchRequest = {
-    body?: Uint8Array;
-    headers: Array<[string, string]>;
-    method: string;
-    requestId: string;
-    settings: LearnerAiSettings;
-    url: string;
-  };
-
-  type LearnerAiFetchResponse = {
-    body: ArrayBuffer;
-    headers: Array<[string, string]>;
-    status: number;
-    statusText: string;
-  };
-
   type LearnerImageGenerationRequest = {
     prompt: string;
     settings?: LearnerAiSettings;
@@ -113,6 +93,104 @@ declare global {
     quality: string;
     size: string;
     usage: unknown;
+  };
+
+  type SubjectSource = {
+    content: string;
+    contentHash: string;
+    createdAt: number;
+    fileName: string | null;
+    id: string;
+    kind: "text" | "url" | "note" | "file";
+    mediaType: string | null;
+    notePath: string | null;
+    originalPath: string | null;
+    subjectPath: string;
+    title: string;
+    updatedAt: number;
+    url: string | null;
+  };
+
+  type SubjectSourceCitation = {
+    excerpt: string;
+    sourceId: string | null;
+    title: string;
+    url: string | null;
+  };
+
+  type SubjectSourceGenerationSettings = LearnerAiSettings & {
+    customInstructions?: string;
+    detail?: "concise" | "standard" | "detailed";
+    maxWordsPerSide?: number;
+    orientation?: "portrait" | "landscape";
+    paperSize?: "a4" | "letter";
+    restrictions?: {
+      columns?: number;
+      customInstructions?: string;
+      doubleSided?: boolean;
+      fontFamily?: "Inter" | "Arial" | "Georgia" | "Times New Roman" | "Courier New";
+      fontSize?: number;
+      lineSpacing?: number;
+      margins?: number;
+      maxWordsPerSide?: number;
+      orientation?: "portrait" | "landscape";
+      paperSize?: "a4" | "letter";
+      physicalSheetCount?: number;
+      sideCount?: number;
+    };
+    sideCount?: number;
+  };
+
+  type SubjectSourceGenerationRequest = {
+    includeOutsideSources: boolean;
+    selectedSourceIds: string[];
+    professorInstructions?: string;
+    restrictions?: {
+      columns: number;
+      doubleSided: boolean;
+      fontFamily: "Inter" | "Arial" | "Georgia" | "Times New Roman" | "Courier New";
+      fontSize: number;
+      lineSpacing: number;
+      margins: number;
+      orientation: "portrait" | "landscape";
+      paperSize: "Letter" | "A4";
+      physicalSheetCount: number;
+    };
+    settings?: SubjectSourceGenerationSettings;
+    subjectPath: string;
+    title?: string;
+  };
+
+  type SubjectNoteGenerationResult = {
+    citations: SubjectSourceCitation[];
+    markdown: string;
+    title: string;
+  };
+
+  type SubjectCheatSheetRestrictions = {
+    columns: number;
+    customInstructions: string;
+    doubleSided: boolean;
+    fontFamily: "Inter" | "Arial" | "Georgia" | "Times New Roman" | "Courier New";
+    fontSize: number;
+    lineSpacing: number;
+    margins: number;
+    maxWordsPerSide: number;
+    orientation: "portrait" | "landscape";
+    paperSize: "a4" | "letter";
+    physicalSheetCount: number;
+    sideCount: number;
+  };
+
+  type SubjectCheatSheetGenerationResult = {
+    citations: SubjectSourceCitation[];
+    restrictions: SubjectCheatSheetRestrictions;
+    sides: Array<{
+      citations: SubjectSourceCitation[];
+      markdown: string;
+      side: number;
+    }>;
+    title: string;
   };
 
   type DocumentSemanticSearchResult = {
@@ -712,11 +790,32 @@ declare global {
         tree: DocumentNode[];
       }>;
       saveDocumentImage: (fileName: string, data: Uint8Array) => Promise<string>;
+      listSubjectSources: (subjectPath: string) => Promise<SubjectSource[]>;
+      importSubjectFiles: (subjectPath: string) => Promise<SubjectSource[]>;
+      addSubjectTextSource: (request: {
+        content?: string;
+        subjectPath: string;
+        text?: string;
+        title?: string;
+      }) => Promise<SubjectSource>;
+      addSubjectUrlSource: (request: {
+        subjectPath: string;
+        title?: string;
+        url: string;
+      }) => Promise<SubjectSource>;
+      addSubjectNoteSource: (request: {
+        notePath: string;
+        subjectPath: string;
+        title?: string;
+      }) => Promise<SubjectSource>;
+      removeSubjectSource: (subjectPath: string, sourceId: string) => Promise<boolean>;
+      generateSubjectNote: (request: SubjectSourceGenerationRequest) => Promise<SubjectNoteGenerationResult>;
+      generateSubjectCheatSheet: (
+        request: SubjectSourceGenerationRequest,
+      ) => Promise<SubjectCheatSheetGenerationResult>;
       searchDocuments: (query: string, limit?: number) => Promise<DocumentSearchResult[]>;
       rebuildDocumentSearchIndex: () => Promise<void>;
       configureAi: (settings?: LearnerAiSettings) => Promise<LearnerAiSettings>;
-      fetchAi: (request: LearnerAiFetchRequest) => Promise<LearnerAiFetchResponse>;
-      abortAiFetch: (requestId: string) => void;
       logAiChatEvent: (eventName: string, details?: Record<string, unknown>) => void;
       listAiModels: (settings?: LearnerAiSettings) => Promise<LearnerAiModel[]>;
       testAiEmbedding: (settings?: LearnerAiSettings) => Promise<{ dimensions: number; model: string }>;

@@ -1,5 +1,6 @@
 "use client";
 
+// RichMarkdown centralizes safe Markdown rendering for AI and mastery surfaces.
 import { Children, isValidElement, memo, useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
@@ -81,14 +82,6 @@ function MarkdownPre({ children }: { children?: ReactNode }) {
   return <pre>{children}</pre>;
 }
 
-function MarkdownTable({ children }: { children?: ReactNode }) {
-  return (
-    <div className="learner-markdown-table-wrap">
-      <table>{children}</table>
-    </div>
-  );
-}
-
 const RichMarkdown = memo(function RichMarkdown({
   children,
   className = "",
@@ -106,7 +99,6 @@ const RichMarkdown = memo(function RichMarkdown({
         components={{
           ...components,
           pre: MarkdownPre,
-          table: MarkdownTable,
         }}
         rehypePlugins={[rehypeKatex, rehypeHighlight]}
         remarkPlugins={[remarkGfm, remarkMath]}

@@ -1,5 +1,6 @@
 "use client";
 
+// MasteryCardLayout provides the shared visual frame for different practice card modes.
 import { CaretLeftIcon, CaretRightIcon } from "@phosphor-icons/react";
 import type { CSSProperties, ReactNode } from "react";
 

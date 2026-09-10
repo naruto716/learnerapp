@@ -1,3 +1,6 @@
+/* End-to-end persistence smoke test. It seeds a legacy database, exercises
+ * migrations and card/practice flows, and removes the temporary user-data tree
+ * even when an assertion fails. */
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
@@ -11,6 +14,8 @@ const documentPath = "smoke/topic.json";
 const now = Date.now();
 
 function seedLegacyDatabase() {
+  // This schema intentionally represents the pre-migration shape so the smoke
+  // test verifies upgrades rather than merely testing a fresh database.
   const db = new DatabaseSync(databasePath);
   db.exec(`
     PRAGMA foreign_keys = ON;

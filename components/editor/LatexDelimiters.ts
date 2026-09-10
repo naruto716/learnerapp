@@ -44,3 +44,4 @@ export const LatexDelimiters = Extension.create({
     ];
   },
 });
+// Tiptap extension support for the delimiter forms used in imported Markdown math.

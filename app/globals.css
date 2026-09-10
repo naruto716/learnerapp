@@ -4,17 +4,20 @@
 @import "@xyflow/react/dist/style.css";
 @import "tailwindcss";
 
+/* Global dark-theme tokens shared by the document workspace and overlay panels. */
 :root {
   --background: #1f1f1f;
   --foreground: #ededed;
 }
 
+/* Base typography is centralized so editor and panel content inherit the same readable system stack. */
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: 'Inter', system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", "Liberation Sans", sans-serif;
 }
 
+/* Shared scrollbar styling keeps nested workspace surfaces visually consistent. */
 * {
   scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
   scrollbar-width: thin;
@@ -52,12 +55,14 @@ body {
   background-color: rgba(255, 255, 255, 0.10);
 }
 
+/* React Flow markers are rendered separately from edges and should not intercept pointer input. */
 .react-flow__marker {
   width: 0;
   height: 0;
   pointer-events: none;
 }
 
+/* Electron titlebar regions opt into native dragging only where explicitly marked. */
 .app-drag {
   -webkit-app-region: drag;
 }
@@ -66,6 +71,7 @@ body {
   -webkit-app-region: no-drag;
 }
 
+/* macOS traffic-light offsets are selected by the platform/fullscreen data attributes from AppShell. */
 .mac-traffic-padding {
   padding-left: 0.75rem;
 }
@@ -133,6 +139,7 @@ html[data-platform="darwin"][data-fullscreen="true"] .mac-traffic-spacer {
   border-top: 1px solid rgba(255, 255, 255, 0.18);
 }
 
+/* Editor search and unfocused selections are overlays, so they do not alter document content. */
 .ProseMirror .document-search-match {
   border-radius: 3px;
   background: rgba(250, 204, 21, 0.26);
@@ -488,29 +495,6 @@ html[data-platform="darwin"][data-fullscreen="true"] .mac-traffic-spacer {
   text-transform: uppercase;
 }
 
-.ProseMirror table {
-  border-collapse: collapse;
-  margin: 1rem 0;
-  min-width: 32rem;
-  table-layout: fixed;
-  width: 100%;
-}
-
-.ProseMirror th,
-.ProseMirror td {
-  border: 1px solid rgb(255 255 255 / 12%);
-  min-width: 8rem;
-  padding: 0.5rem 0.75rem;
-  position: relative;
-  text-align: center !important;
-  vertical-align: middle;
-}
-
-.ProseMirror th {
-  background: rgb(255 255 255 / 6%);
-  font-weight: 600;
-}
-
 .ProseMirror img {
   display: block;
   max-width: min(100%, 720px);
@@ -658,54 +642,144 @@ html[data-platform="darwin"][data-fullscreen="true"] .mac-traffic-spacer {
   font-size: 1.02em;
 }
 
-.learner-markdown-table-wrap {
+.learner-ai-markdown table {
+  display: block;
   max-width: 100%;
   overflow-x: auto;
-  padding-bottom: 0.25rem;
-}
-
-.learner-ai-markdown table {
-  width: max-content;
-  min-width: 100%;
   border-collapse: collapse;
-  border-spacing: 0;
-  font-size: 0.84rem;
-  line-height: 1.45;
+  font-size: 0.82rem;
 }
 
 .learner-ai-markdown th,
 .learner-ai-markdown td {
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  padding: 0.65rem 0.9rem;
-  text-align: center !important;
-  vertical-align: middle;
-  white-space: normal;
+  padding: 0.35rem 0.5rem;
+  text-align: left;
 }
 
 .learner-ai-markdown th {
-  border-top: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.06);
   color: rgba(255, 255, 255, 0.9);
   font-weight: 650;
-  white-space: nowrap;
 }
 
-.learner-ai-markdown th:first-child {
-  border-top-left-radius: 6px;
+/* Cheat-sheet pages retain real paper proportions on screen and at print time. */
+.subject-paper-wrap {
+  width: min(100%, 816px);
+  margin-inline: auto;
 }
 
-.learner-ai-markdown th:last-child {
-  border-top-right-radius: 6px;
+.subject-paper {
+  position: relative;
+  width: 100%;
+  aspect-ratio: var(--paper-ratio);
+  overflow: hidden;
+  background: #fff;
+  color: #111;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.28);
 }
 
-.learner-ai-markdown tbody tr:nth-child(even) {
-  background: rgba(255, 255, 255, 0.025);
+.subject-paper-content {
+  position: absolute;
+  inset: var(--paper-margin);
+  overflow: hidden;
+  font-family: var(--paper-font), sans-serif;
+  font-size: var(--paper-font-size);
+  line-height: var(--paper-leading);
+  column-count: var(--paper-columns);
+  column-gap: 0.22in;
+  column-fill: auto;
 }
 
-.learner-ai-markdown tbody tr:last-child td:first-child {
-  border-bottom-left-radius: 6px;
+.subject-paper-content .learner-ai-markdown {
+  color: #111;
+  font: inherit;
+  line-height: inherit;
 }
 
-.learner-ai-markdown tbody tr:last-child td:last-child {
-  border-bottom-right-radius: 6px;
+.subject-paper-content .learner-ai-markdown h1,
+.subject-paper-content .learner-ai-markdown h2,
+.subject-paper-content .learner-ai-markdown h3,
+.subject-paper-content .learner-ai-markdown strong,
+.subject-paper-content .learner-ai-markdown .katex {
+  color: #050505;
+}
+
+.subject-paper-content .learner-ai-markdown h1,
+.subject-paper-content .learner-ai-markdown h2,
+.subject-paper-content .learner-ai-markdown h3 {
+  break-after: avoid;
+  font-size: 1.1em;
+  margin: 0.45em 0 0.2em;
+}
+
+.subject-paper-content .learner-ai-markdown p,
+.subject-paper-content .learner-ai-markdown ul,
+.subject-paper-content .learner-ai-markdown ol,
+.subject-paper-content .learner-ai-markdown table,
+.subject-paper-content .learner-ai-markdown blockquote {
+  margin-bottom: 0.35em;
+}
+
+.subject-paper-content .learner-ai-markdown code {
+  background: #eee;
+}
+
+.subject-paper-content .learner-ai-markdown th,
+.subject-paper-content .learner-ai-markdown td {
+  border-color: #bbb;
+  padding: 0.15em 0.25em;
+}
+
+@media print {
+  body {
+    background: #fff !important;
+  }
+
+  body > * {
+    visibility: hidden !important;
+  }
+
+  .subject-print-root,
+  .subject-print-root * {
+    visibility: visible !important;
+  }
+
+  .subject-print-root {
+    position: absolute !important;
+    inset: 0 !important;
+    width: 100% !important;
+    border: 0 !important;
+    background: #fff !important;
+    padding: 0 !important;
+  }
+
+  .subject-no-print {
+    display: none !important;
+  }
+
+  .subject-print-sides {
+    display: block !important;
+  }
+
+  .subject-paper-wrap,
+  .subject-paper {
+    width: var(--paper-width) !important;
+    height: var(--paper-height) !important;
+    max-width: none !important;
+    margin: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .subject-paper-wrap {
+    break-after: page;
+  }
+
+  .subject-paper-wrap:last-child {
+    break-after: auto;
+  }
+
+  .subject-paper-content {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
 }

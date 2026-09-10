@@ -1,3 +1,5 @@
+/* Queue contract tests: atomic validation, dependency ordering, failure
+ * propagation, snapshots, deduplication, and progress publication. */
 const assert = require("node:assert/strict");
 const test = require("node:test");
 const { TaskQueueError, createTaskManagementQueue } = require("./taskMgmtQueue");

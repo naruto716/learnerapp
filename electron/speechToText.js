@@ -1,3 +1,5 @@
+/* Converts recorded renderer audio into the provider multipart contract and
+ * returns only the normalized transcript metadata needed by the app. */
 const { getAiSettings } = require("./aiSettings");
 
 const speechToTextUrl = "https://api.elevenlabs.io/v1/speech-to-text";
@@ -39,6 +41,8 @@ async function transcribeSpeech(request = {}) {
     headers: { "xi-api-key": settings.speechToTextApiKey },
     method: "POST",
   });
+  // Providers may return non-JSON failures, so preserve the HTTP status while
+  // using structured detail only when decoding succeeds.
   const payload = await response.json().catch(() => null);
 
   if (!response.ok) {

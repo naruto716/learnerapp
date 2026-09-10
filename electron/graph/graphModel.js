@@ -1,7 +1,11 @@
+/* Shared LangChain boundary for graph chat and embedding requests. Keeping all
+ * provider calls here ensures graph code gets one configuration, timeout, and
+ * diagnostic/error-reporting policy. */
 const { graphError, graphLog, startTimer } = require("./graphLog");
 const { getAiSettings, getEmbeddingSettings } = require("../aiSettings");
 const { embedTexts, requestStructuredOutput } = require("../aiClient");
 
+// Changing this value invalidates persisted graph extraction cache entries.
 const graphPipelineVersion = "concept-resolver-v8";
 
 function getGraphModelConfig(settings = {}) {
@@ -36,6 +40,8 @@ async function requestStructuredJson({ jsonSchema, messages, schemaName, setting
     temperature,
   });
 
+  // The shared client returns parsed structured data; failures are logged with
+  // timing and schema context but are rethrown for the caller to handle.
   try {
     const response = await requestStructuredOutput({
       messages,

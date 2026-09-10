@@ -1,3 +1,6 @@
+/* Versioned, component-scoped migrations for the shared learner database.
+ * Each migration is backed up, runs in an IMMEDIATE transaction, validates
+ * foreign keys, and records its version only after the schema change succeeds. */
 const { app } = require("electron");
 const fs = require("fs");
 const path = require("path");
@@ -83,7 +86,8 @@ function applyMigration(db, version, migrate) {
     try {
       db.exec("ROLLBACK");
     } catch {
-      // Preserve the migration error.
+      // The original migration failure is more actionable than a rollback
+      // failure, so intentionally preserve it for the caller.
     }
     throw error;
   }
@@ -220,6 +224,8 @@ function runMasteryMigrations() {
     currentVersion = migrationVersion(probe);
     probe.close();
   }
+  // Back up before any version change. VACUUM INTO produces a consistent copy
+  // of the WAL-backed database, and verifyBackup removes corrupt copies.
   if (currentVersion < latestVersion) {
     const backupPath = backupDatabase(databasePath, latestVersion);
     if (backupPath) console.info("Mastery migration backup created:", backupPath);

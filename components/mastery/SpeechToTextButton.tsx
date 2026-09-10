@@ -1,5 +1,6 @@
 "use client";
 
+// SpeechToTextButton sends recorded audio through the shared renderer speech bridge.
 import { MicrophoneIcon, SpinnerGapIcon, StopIcon } from "@phosphor-icons/react";
 import { useEffect, useRef, useState } from "react";
 import { readAiSettings } from "@/components/ai/aiSettings";

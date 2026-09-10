@@ -1,5 +1,6 @@
 "use client";
 
+// MasteryPracticeWorkspace drives answering, feedback, retries, and card progression for a session.
 import {
   ArrowsClockwiseIcon,
   CheckIcon,

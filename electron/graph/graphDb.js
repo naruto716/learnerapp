@@ -1,3 +1,9 @@
+/*
+ * Owns the SQLite graph store. Concept names and aliases are globally unique,
+ * while mentions and relation evidence remain document-scoped. Document saves
+ * replace only that document's evidence inside an IMMEDIATE transaction, then
+ * remove concepts and relations that no longer have supporting evidence.
+ */
 const { app } = require("electron");
 const crypto = require("crypto");
 const fs = require("fs");
@@ -191,6 +197,8 @@ function getGraphDatabase() {
     );
   `);
 
+  // These additive checks keep older learner databases readable before the
+  // component migration system has had an opportunity to run.
   ensureColumn(graphDatabase, "concepts", "explanation", "TEXT");
   ensureColumn(graphDatabase, "concept_mentions", "contribution", "TEXT");
   ensureColumn(graphDatabase, "concept_relations", "source", "TEXT NOT NULL DEFAULT 'local'");
@@ -370,6 +378,8 @@ function insertConceptMention(conceptId, documentPath, documentHash, mention, no
   const excerptMarkdown = String(mention.excerptMarkdown || mention.excerpt || "").trim();
   if (!excerptMarkdown) return false;
 
+  // A document may contribute only its current set of excerpts for a concept;
+  // deleting the old rows prevents stale evidence from surviving re-extraction.
   getGraphDatabase()
     .prepare("DELETE FROM concept_mentions WHERE concept_id = ? AND document_path = ?")
     .run(conceptId, documentPath);
@@ -793,6 +803,8 @@ function mergeConceptInto(targetConceptId, sourceConceptId, now) {
     targetName: targetConcept?.name ?? null,
   });
 
+  // Foreign keys cascade on final deletion, so move aliases, mentions, relation
+  // evidence, and embeddings explicitly before removing the absorbed concept.
   const sourceAliases = getConceptAliases(sourceConceptId);
   db.prepare("DELETE FROM concept_aliases WHERE concept_id = ?").run(sourceConceptId);
   insertConceptAliases(targetConceptId, [sourceConcept.name, ...sourceAliases], now);
@@ -853,6 +865,9 @@ function mergeConcepts(targetConceptId, sourceConceptIds, now) {
 }
 
 function pruneGraphOrphans(db) {
+  // Evidence is the retention rule for relations; mentions or relations are the
+  // retention rule for concepts. Embeddings are derived data and never preserve
+  // an otherwise orphaned concept.
   db.prepare("DELETE FROM concept_relations WHERE id NOT IN (SELECT DISTINCT relation_id FROM relation_evidence)").run();
   db.prepare(`
     DELETE FROM concepts
@@ -955,6 +970,8 @@ function saveResolvedDocumentGraph({ documentHash, documentPath, graphBuild, mod
     relationCount: relations.length,
   });
 
+  // Replace the document snapshot atomically. The no-mention guard prevents a
+  // malformed model response from marking an empty graph as a successful cache.
   db.exec("BEGIN IMMEDIATE");
   try {
     deleteDocumentGraphRows(documentPath);
@@ -1120,6 +1137,8 @@ function getRelationEvidence(relationId, currentDocumentPath) {
 function getDocumentGraph(documentPath) {
   const db = getGraphDatabase();
   const run = getExtractionRun(documentPath);
+  // Nodes mentioned by the current document are primary; relation endpoints
+  // outside that set are included as contextual neighbors and marked inactive.
   const currentConceptRows = db
     .prepare(
       `

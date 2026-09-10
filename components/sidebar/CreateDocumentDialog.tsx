@@ -1,5 +1,6 @@
 "use client";
 
+// CreateDocumentDialog validates a new note or folder name before invoking the document bridge.
 import type { FormEvent } from "react";
 import Dialog from "../Dialog";
 

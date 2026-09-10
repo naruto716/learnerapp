@@ -1,5 +1,6 @@
 "use client";
 
+// MasteryCardGenerationDialog collects generation scope and proficiency preferences.
 import { type FormEvent, useState } from "react";
 import Dialog from "@/components/Dialog";
 import { masteryThresholdLevels } from "./masterySettings";

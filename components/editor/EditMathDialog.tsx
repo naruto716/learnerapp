@@ -1,5 +1,6 @@
 "use client";
 
+// EditMathDialog edits the LaTeX payload of an inline or block math node.
 import type { FormEvent } from "react";
 import Dialog from "../Dialog";
 

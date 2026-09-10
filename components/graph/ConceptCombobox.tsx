@@ -1,5 +1,6 @@
 "use client";
 
+// ConceptCombobox searches existing concepts while allowing a new target to be typed.
 import { MagnifyingGlassIcon } from "@phosphor-icons/react";
 import { useEffect, useRef, useState } from "react";
 import { GraphFieldShell, graphInputClassName } from "./GraphField";

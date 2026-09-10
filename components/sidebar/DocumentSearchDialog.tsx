@@ -1,5 +1,6 @@
 "use client";
 
+// DocumentSearchDialog searches indexed notes and opens the selected result in a workspace tab.
 import { FileIcon, MagnifyingGlassIcon, XIcon } from "@phosphor-icons/react";
 import { KeyboardEvent, useEffect, useRef, useState } from "react";
 import { documentTitle } from "../documentPaths";

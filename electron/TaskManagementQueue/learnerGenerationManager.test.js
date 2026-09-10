@@ -1,3 +1,5 @@
+/* Generation-manager contract tests keep the production DAG and latest-task
+ * selection behavior explicit without invoking external providers. */
 const assert = require("node:assert/strict");
 const test = require("node:test");
 const {

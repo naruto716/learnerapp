@@ -1,3 +1,6 @@
+/* Coordinates card generation, multi-turn discussion, and evaluation while
+ * delegating schema validation, persistence, scoring, and weakness updates to
+ * the card-owned modules. */
 const { getDocumentMastery, normalizeDocumentPath } = require("./masteryConcepts");
 const { answerModes, cardKinds, ensureMasteryCardSchema } = require("./masteryCardSchema");
 const { normalizeMasteryScoringSettings } = require("./masteryScoring");
@@ -60,6 +63,8 @@ async function generateDocumentMasteryCards({
   const graph = await ensureGraphForCards({ documentPath: normalizedPath, markdown, onProgress, settings });
   const state = getDocumentMasteryCards(normalizedPath);
   const readyCardCount = state.cards.filter((card) => card.status === "active").length;
+  // Count existing ready cards before asking the model for more; this prevents
+  // a requested minimum from causing unnecessary generation.
   const minimumNewCards = minimumReadyCards === undefined
     ? null
     : Math.max(0, Math.ceil(Number(minimumReadyCards) || 0) - readyCardCount);
@@ -129,6 +134,8 @@ async function continueMasteryCardDiscussion({ cardId, documentPath, markdown = 
 }
 
 function formatAttemptAnswer(card, answerMarkdown) {
+  // Multi-turn cards are graded from the complete dialogue, whereas single-turn
+  // cards use the submitted answer verbatim.
   if (card.answerMode !== "multi_turn") return String(answerMarkdown || "").trim();
   return card.messages
     .map((message) => `${message.role === "assistant" ? "Drill" : "Learner"}: ${message.contentMarkdown}`)

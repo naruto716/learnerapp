@@ -3,6 +3,7 @@ import "./globals.css";
 import AppShell from "@/components/AppShell";
 import AppToaster from "@/components/AppToaster";
 
+// Keep the root layout minimal so the shell and global toast surface stay mounted for every route.
 const geistSans = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],
